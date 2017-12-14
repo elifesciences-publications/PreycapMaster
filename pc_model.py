@@ -9,6 +9,10 @@ import math
 from master import fishxyz_to_unitvecs, sphericalbout_to_xyz, p_map_to_fish
 from para_hmm_final import ParaMarkovModel
 import pomegranate
+import bayeslite as bl
+from iventure.utils_bql import query
+from iventure.utils_bql import subsample_table_columns
+from collections import deque
 
 # this program depends on master, para_hmm_final, csv output from fish data.
 # first magit try1
@@ -27,7 +31,7 @@ class PreyCap_Simulation:
         self.fish_bases = []
         self.fish_pitch = [0]
         self.fish_yaw = [0]
-        self.validation = []
+        self.bdb_file = bl.bayesdb_open('Bolton_HuntingBouts.bdb')
 
 # have to start with an XYZ velocity that reflects the velocity profile of
 # d_az, d_alt, d_dist that the fish likes. can randomly draw a para
@@ -48,24 +52,43 @@ class PreyCap_Simulation:
             # this will be done by importing the csv file of all para. restrict to
             # bout indicies of and para of type 1 or 2. then you align the fish based on the initial az, alt, and dist (i.e. put it in the place it started the hunt, then start it).
 
-                    
     def run_simulation(self):
+
+        
         framecounter = 0
+        # spacing is an integer describing the sampling of vectors by the para. i.e.       # draws a new accel vector every 'spacing' frames
         spacing = np.load('spacing.npy')
+        vel_history = 6
         interbouts = self.fishmodel.generate_interbouts(100000)
         # fish_basis is origin, x, y, z unit vecs
         print("Para Shape")
         print self.para_xyz[0].shape[0]
+        p_az_hist = deque(maxlen=vel_history)
+        p_alt_hist = deque(maxlen=vel_history)
+        p_dist_hist = deque(maxlen=vel_history)
+        px_intrp = np.interp(
+            np.linspace(0,
+                        self.para_xyz[0].shape[0],
+                        self.para_xyz[0].shape[0] * spacing),
+            range(self.para_xyz[0].shape[0]),
+            self.para_xyz[0])
+        py_intrp = np.interp(
+            np.linspace(0,
+                        self.para_xyz[1].shape[0],
+                        self.para_xyz[1].shape[0] * spacing),
+            range(self.para_xyz[1].shape[0]),
+            self.para_xyz[1])
+        pz_intrp = np.interp(
+            np.linspace(0,
+                        self.para_xyz[2].shape[0],
+                        self.para_xyz[2].shape[0] * spacing),
+            range(self.para_xyz[2].shape[0]),
+            self.para_xyz[2])
+                    
         while True:
 
             # MAKE SURE YOU KNOW WHY YOU HAVE TO CUT ONE OFF THE END
-            p_frame = int(np.floor(framecounter / spacing))
-            if p_frame == self.para_xyz[0].shape[0]:
-                self.fish_xyz = self.fish_xyz[::spacing][:-1]
-                self.fish_pitch = self.fish_pitch[::spacing][:-1]
-                self.fish_yaw = self.fish_yaw[::spacing][:-1]
-                self.fish_bases = self.fish_bases[::spacing]
-                break
+
             fish_basis = fishxyz_to_unitvecs(self.fish_xyz[-1],
                                              self.fish_yaw[-1],
                                              self.fish_pitch[-1])
@@ -74,31 +97,33 @@ class PreyCap_Simulation:
                                            fish_basis[0],
                                            fish_basis[3],
                                            fish_basis[2],
-                                           [self.para_xyz[0][p_frame],
-                                            self.para_xyz[1][p_frame],
-                                            self.para_xyz[2][p_frame]],
+                                           [px_intrp[framecounter],
+                                            py_intrp[framecounter],
+                                            pz_intrp[framecounter]],
                                            0)
+            p_az_hist.append(para_spherical[0])
+            p_alt_hist.append(para_spherical[1])
+            p_dist_hist.append(para_spherical[2])
             para_varbs = {"Para Az": para_spherical[0],
                           "Para Alt": para_spherical[1],
-                          "Para Dist": para_spherical[2]}
-#                          "Delta Az";
-
+                          "Para Dist": para_spherical[2],
+                          "Para Az Velocity": np.mean(np.diff(p_az_hist)),
+                          "Para Alt Velocity": np.mean(np.diff(p_alt_hist)),
+                          "Para Dist Velocity": np.mean(np.diff(p_dist_hist))
+                          }
+            
             if self.fishmodel.strike(para_varbs):
                 print("Para Before Strike")
                 print para_varbs
                 print("STRIKE!!!!!!!!")
                 nanstretch = np.full(
-                    len(self.para_xyz[0])-p_frame, np.nan).tolist()
+                    len(px_intrp)-framecounter, np.nan).tolist()
                 self.para_xyz[0] = np.concatenate(
-                    (self.para_xyz[0][0:p_frame], nanstretch), axis=0)
+                    (px_intrp[0:framecounter], nanstretch), axis=0)
                 self.para_xyz[1] = np.concatenate(
-                    (self.para_xyz[1][0:p_frame], nanstretch), axis=0)
+                    (py_intrp[0:framecounter], nanstretch), axis=0)
                 self.para_xyz[2] = np.concatenate(
-                    (self.para_xyz[2][0:p_frame], nanstretch), axis=0)
-                self.fish_xyz = self.fish_xyz[::spacing][:-1]
-                self.fish_pitch = self.fish_pitch[::spacing][:-1]
-                self.fish_yaw = self.fish_yaw[::spacing][:-1]
-                self.fish_bases = self.fish_bases[::spacing]
+                    (pz_intrp[0:framecounter], nanstretch), axis=0)
                 break
             
             ''' you will store these vals in a
@@ -114,21 +139,6 @@ class PreyCap_Simulation:
                                                   fish_basis[3],
                                                   fish_basis[2])
                 new_xyz = self.fish_xyz[-1] + np.array([dx, dy, dz])
-                self.validation.append([['Para Coords XYZ',
-                                        self.para_xyz[0][p_frame],
-                                        self.para_xyz[1][p_frame],
-                                        self.para_xyz[2][p_frame]],
-                                       ['Prebout Fish XYZ',
-                                        self.fish_xyz[-1]],
-                                       ['Prebout Pitch and Yaw',
-                                        [self.fish_pitch[-1],
-                                         self.fish_yaw[-1]]],
-                                       ['Fish XYZ to Unit', fish_basis],
-                                       ['Para Varbs', para_varbs],
-                                       ['Fish Bout', fish_bout],
-                                       ['Delta X,Y,Z from Spherical Transform',
-                                        [dx, dy, dz]]])
-                                                                              
                 self.fish_xyz.append(new_xyz)
                 self.fish_pitch.append(self.fish_pitch[-1] + fish_bout[3])
                 self.fish_yaw.append(self.fish_yaw[-1] + fish_bout[4])
@@ -174,7 +184,8 @@ class FishModel:
         ''' first import all para coords where strikes occurred. create a strike distribution, smooth with kde. ask prob of strike on each bout. execute a strike based on this prob. '''
 
 
-# bout distance isn't getting translated correctly. if you take away the bout dist, fish are aligning well to the stimulus. 
+# bout distance isn't getting translated correctly.
+# if you take away the bout dist, fish are aligning well to the stimulus.
     def regression_model(self, para_varbs):
         bout_az = (para_varbs['Para Az'] * 1.36) + .02
         bout_yaw = -1 * ((.46 * para_varbs['Para Az']) - .02)
@@ -190,7 +201,21 @@ class FishModel:
  #           [(np.random.random() * .4) + .8 for i in bout_array])
         bout = (bout_array * noise_array).tolist()
         return bout
-    
+
+    def bdb_model(self, para_varbs):
+        df_sim = query(self.bdb_file,
+                       ''' SIMULATE "Bout Az", "Bout Alt",
+                       "Bout Dist", "Bout Delta Pitch", "Bout Delta Yaw"
+                       FROM bout_population
+                       GIVEN "Para Az" = {Para Az},
+                       "Para Alt" = {Para Alt},
+                       "Para Dist" = {Para Dist},
+                       "Para Az Velocity" = {Para Az Velocity},
+                       "Para Alt Velocity" = {Para Alt Velocity},
+                       "Para Dist velocity" = {Para Dist Velocity}
+                       LIMIT 5000 '''.format(**para_varbs))
+        medianbout = df_sim.median(axis=0).as_matrix()
+        return medianbout
 
 def mapped_para_generator(hb_data):
     ind = np.int(np.random.random() * len(hb_data['Para Az']))
