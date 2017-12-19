@@ -157,7 +157,7 @@ class PreyCap_Simulation:
 
 class FishModel:
     def __init__(self, modchoice, strike_params):
-        self.bdb_file = bl.bayesdb_open('Bolton_HuntingBouts.bdb')
+        self.bdb_file = bl.bayesdb_open('Bolton_HuntingBouts_100models.bdb')
         if modchoice == 0:
             self.model = (lambda pv: self.regression_model(pv))
         #this will be the bayesDB model or otehr models
@@ -198,8 +198,8 @@ class FishModel:
                                bout_alt,
                                bout_dist, bout_pitch, bout_yaw])
         noise_array = np.ones(5)
-#        noise_array = np.array(
- #           [(np.random.random() * .4) + .8 for i in bout_array])
+        # noise_array = np.array(
+        # [(np.random.random() * .4) + .8 for i in bout_array])
         bout = bout_array * noise_array
         return bout
 
@@ -216,11 +216,11 @@ class FishModel:
                        "Para Alt Velocity" = {Para Alt Velocity},
                        "Para Dist velocity" = {Para Dist Velocity}
                        LIMIT 5000 '''.format(**para_varbs))
-        bout_az = np.median(df_sim['Bout Az'])
-        bout_alt = np.median(df_sim['Bout Az'])
-        bout_dist = np.median(df_sim['Bout Dist'])
-        bout_pitch = np.median(df_sim['Bout Delta Pitch'])
-        bout_yaw = -1 * np.median(df_sim['Bout Delta Yaw'])
+        bout_az = df_sim['Bout Az'].median()
+        bout_alt = df_sim['Bout Az'].median()
+        bout_dist = df_sim['Bout Dist'].median()
+        bout_pitch = df_sim['Bout Delta Pitch'].median()
+        bout_yaw = -1 * df_sim['Bout Delta Yaw'].median()
         bout = np.array([bout_az,
                          bout_alt,
                          bout_dist, bout_pitch, bout_yaw])
