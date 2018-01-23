@@ -157,7 +157,7 @@ class PreyCap_Simulation:
 
 class FishModel:
     def __init__(self, modchoice, strike_params):
-        self.bdb_file = bl.bayesdb_open('Bolton_HuntingBouts_100models.bdb')
+        self.bdb_file = bl.bayesdb_open('Bolton_HuntingBouts_extended.bdb')
         if modchoice == 0:
             self.model = (lambda pv: self.regression_model(pv))
         #this will be the bayesDB model or otehr models
@@ -217,7 +217,7 @@ class FishModel:
                        "Para Dist velocity" = {Para Dist Velocity}
                        LIMIT 5000 '''.format(**para_varbs))
         bout_az = df_sim['Bout Az'].median()
-        bout_alt = df_sim['Bout Az'].median()
+        bout_alt = df_sim['Bout Alt'].median()
         bout_dist = df_sim['Bout Dist'].median()
         bout_pitch = df_sim['Bout Delta Pitch'].median()
         bout_yaw = -1 * df_sim['Bout Delta Yaw'].median()
@@ -296,18 +296,7 @@ np.save('/home/nightcrawler/PandaModels/uf_model.npy', sim.fish_bases)
 
 
 
-
-
-
-
-
 # There are two functions in master: fishxyz_to_unitvecs and p_map_to_fish that will be useful for the model. You will get an initial XYZ coordinate of the para
-
-
-
-
-
-
 # Make a paramecium model that is based on your data. This should be straightforward given how many paramecium records you have.
 # Next, start the para at a location defined by your hunt initiation statistics. You will probably have to
 # import para_master so you can run map para to heading on the fish.
