@@ -834,12 +834,9 @@ class Experiment():
         for z in sliding_window(2, self.fishdata.low_res_z):
             z_diffs.append(z[1]-z[0])
 
-        for bout, bout_duration in zip(bout_windows, self.bout_durations):
+        for bindex, bout, bout_duration in enumerate(
+                zip(bout_windows, self.bout_durations)):
             bout_vec = []
-            #this is a bad way to filter bouts. rejects 2 bouts if one is a miscall. wrote better function in bout detector
-            # if bout[1]-bout[0] < self.minboutlength:
-            #     rejected_bouts.append([bout[0], 'too short'])
-            #     continue
             ha_init = np.nanmean(self.fishdata.headingangle[bout[0]:bout[0]+5])
             x_init = np.nanmean(self.fishdata.x[bout[0]:bout[0]+5])
             y_init = np.nanmean(self.fishdata.y[bout[0]:bout[0]+5])
@@ -858,6 +855,11 @@ class Experiment():
                     continue
                         
             interbout = np.copy(bout[1] - bout[0])
+            if bindex > 0:
+                interbout_from_previous = np.copy(
+                    bout[0] - bout_windows[bindex - 1][0])
+            else:
+                interbout_from_previous = np.nan
             bout = (bout[0], bout[0] + self.minboutlength)
             full_window = (bout[0]-self.para_win, bout[1])
 # This allows you to require continuity before and during bout so heading vector is continuous
@@ -904,6 +906,8 @@ class Experiment():
                             bout_vec.append(
                                 phileft_filt[ind] -
                                 phil_start + phiright_filt[ind] - phir_start)
+                        elif self.bout_dict[str(key)] == 'Interbout_Back':
+                            bout_vec.append(interbout_from_previous)
 
 # sets first ha_diff and xydiff to 0 given that there is no info about previous vals outside of window 
                 dz = get_var_index('Delta Z')
@@ -2452,7 +2456,8 @@ if __name__ == '__main__':
         '10': 'Delta Heading Angle',
         '11': 'Eye1 Angle',
         '12': 'Eye2 Angle',
-        '13': 'Eye Sum'}
+        '13': 'Eye Sum',
+        '14': 'Interbout_Back'}
 
 # This dictionary describes the variables to use for clustering.
 
@@ -2471,6 +2476,7 @@ if __name__ == '__main__':
 #        '11': 'Eye1 Angle',
 #       '12': 'Eye2 Angle',
         '13': 'Eye Sum'}
+#        '14': 'Interbout_Back'}
 
 # This dictionary describes a flag set of variables that should be calculated for each bout that describes characteristics of the bout    
 
