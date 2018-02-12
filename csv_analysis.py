@@ -279,69 +279,6 @@ def twod_scatter(data, var1, var2):
     return attended1, attended2, ignored1, ignored2
 
 
-def velocity_correlation(data, az_or_alt):
-    fish_v_strikes_posvel_same = []
-    fish_v_aborts_posvel_same = []
-    para_v_strikes_posvel_same = []
-    para_v_aborts_posvel_same = []
-    fish_v_strikes_posvel_diff = []
-    fish_v_aborts_posvel_diff = []
-    para_v_strikes_posvel_diff = []
-    para_v_aborts_posvel_diff = []
-    for i in range(len(data["Bout Number"])):
-        if az_or_alt == 'Az':
-            fish_v = -1*np.radians(data["Bout Delta Yaw"][i])
-            para_pos = data["Para Az"][i]
-            para_v = data["Para Az Velocity"][i]
-        elif az_or_alt == 'Alt':
-            fish_v = np.radians(data["Bout Delta Pitch"][i])
-            para_pos = data["Para Alt"][i]
-            para_v = data["Para Alt Velocity"][i]
-        if math.isnan(fish_v) or math.isnan(para_v) or math.isnan(para_pos):
-            continue
-        if data["Strike Or Abort"][i] <= 2:
-            if np.sign(para_pos) == np.sign(para_v):
-                fish_v_strikes_posvel_same.append(fish_v)
-                para_v_strikes_posvel_same.append(para_v)
-            else:
-                fish_v_strikes_posvel_diff.append(fish_v)
-                para_v_strikes_posvel_diff.append(para_v)
-        elif data["Strike Or Abort"][i] == 3:
-            if np.sign(para_pos) == np.sign(para_v):
-                fish_v_aborts_posvel_same.append(fish_v)
-                para_v_aborts_posvel_same.append(para_v)
-            else:
-                fish_v_aborts_posvel_diff.append(fish_v)
-                para_v_aborts_posvel_diff.append(para_v)
-    return [fish_v_strikes_posvel_same,
-            fish_v_aborts_posvel_same,
-            para_v_strikes_posvel_same,
-            para_v_aborts_posvel_same,
-            fish_v_strikes_posvel_diff,
-            fish_v_aborts_posvel_diff,
-            para_v_strikes_posvel_diff,
-            para_v_aborts_posvel_diff]
-
-
-def position_vel_query(data, az_val, conditions):
-
-    sliced_df_posvel = data[(data["Para Az"] >= -az_val) & (
-            data["Para Az"] <= az_val) & (
-                data["Strike Or Abort"].isin(conditions)) & (
-                    data["Para Az Velocity"] > 0)]
-
-    sliced_df_negvel = data[(data["Para Az"] >= -az_val) & (
-            data["Para Az"] <= az_val) & (
-                data["Strike Or Abort"].isin(conditions)) & (
-                    data["Para Az Velocity"] < 0)]
-    print sliced_df_posvel["Bout Delta Yaw"].describe()
-    print sliced_df_negvel["Bout Delta Yaw"].describe()
-    print sliced_df_posvel["Bout Az"].describe()
-    print sliced_df_negvel["Bout Az"].describe()
-
-                     
-
-
 
 #csv_file = 'huntingbouts_all.csv'
 #csv_file = 'stimuli_all.csv'
@@ -421,7 +358,6 @@ if csv_file == 'huntingbouts_all.csv':
             v1_cond1 *= -1
             v1_cond2 *= -1
     print('Regression Fitting')
-#    colorcode(v2_cond2, v3, v1_cond2, [v2_char, v3_char, v1_char])
     make_regression_plots(v2_cond1,
                           v1_cond1,
                           v2_cond2, v1_cond2, [v2_char, v1_char])
