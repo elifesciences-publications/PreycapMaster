@@ -116,7 +116,7 @@ class ParaMaster():
         self.visited_xz = []
         self.long_xy = []
         self.long_xz = []
-        
+        self.interp_indices = []
         
     def exporter(self):
         print('exporting ParaMaster')
@@ -208,14 +208,6 @@ class ParaMaster():
         all_xy.reverse()
         all_xz = sorted(all_xz, key=lambda z: len(z.location))
         all_xz.reverse()
-        # self.all_xy = [para for para in all_xy
-        #                if len(para.location) >= length_thresh]
-        # #and np.mean(
-        #  #                      para.location, axis=0)[0] > 20]
-        # self.all_xz = [para for para in all_xz
-        #                if len(para.location) >= length_thresh]
-                       #and np.mean(
-                        #       para.location, axis=0)[0] > 20]
         self.all_xy = [para for para in all_xy
                        if len(para.location) > 0 and
                        para.timestamp + len(para.location) > self.pcw]
@@ -243,8 +235,7 @@ class ParaMaster():
     def clear_frames(self):
         self.topframes = copy.deepcopy(self.topframes_original)
         self.sideframes = copy.deepcopy(self.sideframes_original)
-
-    
+        
     def makecorrmat(self):
         print('yo my brotha')
         self.corr_mat = np.zeros(
@@ -390,18 +381,6 @@ class ParaMaster():
             xy_overlap = np.where(map_func(corrmat_copy[:, xy]['time']))
             corrmat_copy[xz][xz_overlap] = (0, 1, np.array([]))
             corrmat_copy[:, xy][xy_overlap] = (0, 1, np.array([]))
-            
-            # for column, entry in enumerate(corrmat_copy[xz]):
-            #     if not entry['time'].any():
-            #         continue
-            #     if tau[0] in entry['time'] or entry['time'][0] in tau:
-            #         corrmat_copy[xz, column] = (0, 1, np.array([]))
-                    
-            # for row, entry in enumerate(corrmat_copy[:, xy]):
-            #     if not entry['time'].any():
-            #         continue
-            #     if tau[0] in entry['time'] or entry['time'][0] in tau:
-            #         corrmat_copy[row, xy] = (0, 1, np.array([]))
             return corrmat_copy
 
 # Each XYZrecord is a set of pairs ordered in time. Between correlation matching, this function checks if any XYZ records should be matched to another XYZ record to create a new longer record (i.e. the first or last pair in a record is sufficiently close in time and distance to the first or last pair in another XYZ record). Can think of this as a double stranded break being mended.
@@ -1204,7 +1183,7 @@ class ParaMaster():
                     1]].timestamp + len(self.all_xz[pair[1]].location)] = z
             return nan_base_x, nan_base_y, nan_base_z
 
-        def z_inference(z_in):
+        def coord_inference(z_in):
             duration_thresh = 200
             nanstretch = False
             nan_start_ind = 0
@@ -1216,7 +1195,6 @@ class ParaMaster():
                     if not math.isnan(z_in[ind-1]):
                         nan_start_ind = ind
                         nanstretch = True
-#                elif math.isnan(z) and nanstretch:
 
                 elif nanstretch and not math.isnan(z):
                     nan_end_ind = ind
@@ -1224,8 +1202,6 @@ class ParaMaster():
                     nanstretch = False
 #this checks if you are at the end of the record and have no z info.
 # create a linear interpolation based on most recent 10 z coords
-#                elif nanstretch and ind == len(z_in) -1:
- #                   nan_windows.append([nan_start_ind, ind])
 
             for win in nan_windows:
                 if win[1]-win[0] < duration_thresh:
@@ -1243,19 +1219,7 @@ class ParaMaster():
                             z_in[win[0]-1],
                             z_in[win[1]],
                             win[1]-win[0]).astype(np.int)
-
-                # elif win[1]-win[0] >= duration_thresh:
-                #     slope = (z_in[win[0]-1] - z_in[win[0]-11]) / 10.0
-                #     width = duration_thresh
-                #     endpoint = int(slope * width) + z_in[win[0]-1]
-                #     if not math.isnan(slope):
-                #         z_out[win[0]:win[0]+width] = np.linspace(
-                #             z_in[win[0]-1],
-                #             endpoint,
-                #             width).astype(np.int)
-#            pl.plot(z_out)
-#            pl.plot(z_in)
-#            pl.show()
+                        self.interp_indices.append(win)
             return z_out
 
         for recnumber, rec in enumerate(self.xyzrecords):
@@ -1263,9 +1227,9 @@ class ParaMaster():
             index = recnumber * 3
             yinv = [1888 - ycoord for ycoord in y]
             zinv = [1888 - zcoord for zcoord in z]
-            zinv_nonan = z_inference(zinv)
-            xinf = z_inference(x)
-            yinf = z_inference(yinv)
+            zinv_nonan = coord_inference(zinv)
+            xinf = coord_inference(x)
+            yinf = coord_inference(yinv)
             self.para3Dcoords[index] = xinf
             self.para3Dcoords[index + 1] = yinf
 #these inversions put paracoords in same reference frame as fish

@@ -1036,8 +1036,6 @@ class Experiment():
         pl.plot(yaw_all, 'b')
         pl.plot(orientation_track, 'r')
         pl.title('Bouts from Orientation')
-#        bouts_orientation = boutfilter_recur(
-#            bouts_orientation, ha_winlength / 2)
         tailanglesum = [tail[-1] for tail in self.fishdata.tailangle]
         tailangle_std = []
         var_inds = []
@@ -1435,6 +1433,9 @@ class Experiment():
 
         np.save(self.directory + '/para3D' + str(h_index).zfill(2) + '.npy',
                 self.paradata.para3Dcoords)
+        np.save(self.directory +
+                '/para_interp_windows' + str(h_index).zfill(2) + '.npy',
+                self.paradata.interp_indices)
         np.save(self.directory + '/wrth' + str(h_index).zfill(2) + '.npy',
                 para_wrt_heading)
         np.save(self.directory + '/wrth_xy' + str(h_index).zfill(2) + '.npy',
