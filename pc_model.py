@@ -111,13 +111,20 @@ class PreyCap_Simulation:
                           "Para Alt Velocity": np.mean(np.diff(p_alt_hist)),
                           "Para Dist Velocity": np.mean(np.diff(p_dist_hist))}
 
-            if framecounter == px_intrp.shape[0]:
-                print("EVASIVE PARA!!")
+            # if framecounter == px_intrp.shape[0]:
+            #     print("EVASIVE PARA!!!!!")
+            #     self.para_xyz[0] = px_intrp
+            #     self.para_xyz[1] = py_intrp
+            #     self.para_xyz[2] = pz_intrp
+            #     break
+
+            if framecounter == 2000:
+                print("EVASIVE PARA!!!!!")
                 self.para_xyz[0] = px_intrp
                 self.para_xyz[1] = py_intrp
                 self.para_xyz[2] = pz_intrp
                 break
-
+            
             if self.fishmodel.strike(para_varbs):
                 print("Para Before Strike")
                 print para_varbs
@@ -220,10 +227,11 @@ class FishModel:
         bout_alt = df_sim['Bout Alt'].median()
         bout_dist = df_sim['Bout Dist'].median()
         bout_pitch = df_sim['Bout Delta Pitch'].median()
-        bout_yaw = -1 * df_sim['Bout Delta Yaw'].median()
+        bout_yaw = -1*df_sim['Bout Delta Yaw'].median()
         bout = np.array([bout_az,
                          bout_alt,
                          bout_dist, bout_pitch, bout_yaw])
+        print df_sim.describe()
         return bout
 
 
