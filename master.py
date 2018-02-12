@@ -25,8 +25,8 @@ import mpl_toolkits.mplot3d.axes3d as p3
 from collections import Counter
 import matplotlib.animation as anim
 from scipy.spatial.distance import pdist, squareform
-cd = '/Users/andrewbolton/Desktop/PreyCap/'
-os.chdir(cd)
+#cd = '/Users/andrewbolton/Desktop/PreyCap/'
+#os.chdir(cd)
 from phinalIR import Variables
 from phinalFL import Fluorescence_Analyzer
 #from pvidFINAL_updatedNP import Para, ParaMaster, return_paramaster_object
