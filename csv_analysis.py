@@ -27,13 +27,13 @@ def generate_random_data(raw_data, invert):
             random_row_values = inverted_row.values
         else:
             random_row_values = random_row_dict.values
-        row_w_noise = create_noise(random_row)
+        row_w_noise = create_noise(random_row_values)
         if not np.isfinite(row_w_noise).all():
             continue
 
 #        new_csv.loc[i+data.shape[0]] = row_w_noise
         new_csv.loc[i] = row_w_noise
-    new_csv.to_csv('huntbouts_extended.csv')
+    new_csv.to_csv('huntbouts_extended_inverted.csv')
 
 
 # here you will invert all bouts wrt para position so that you only have right side and upward para.
@@ -42,16 +42,16 @@ def generate_random_data(raw_data, invert):
     
 def bout_inversion(row):
     inverted_row = copy.deepcopy(row)
-    if row("Para Az") < 0:
-        inverted_row("Para Az") *= -1
-        inverted_row("Para Az Velocity") *= -1
-        inverted_row("Bout Az") *= -1
-        inverted_row("Bout Delta Yaw") *= -1
-    if row("Para Alt") < 0:
-        inverted_row("Para Alt") *= -1
-        inverted_row("Para Alt Velocity") *= -1
-        inverted_row("Bout Alt") *= -1
-        inverted_row("Bout Delta Pitch") *= -1
+    if row["Para Az"] < 0:
+        inverted_row["Para Az"] *= -1
+        inverted_row["Para Az Velocity"] *= -1
+        inverted_row["Bout Az"] *= -1
+        inverted_row["Bout Delta Yaw"] *= -1
+    if row["Para Alt"] < 0:
+        inverted_row["Para Alt"] *= -1
+        inverted_row["Para Alt Velocity"] *= -1
+        inverted_row["Bout Alt"] *= -1
+        inverted_row["Bout Delta Pitch"] *= -1
     return inverted_row
         
 
@@ -282,13 +282,14 @@ def twod_scatter(data, var1, var2):
 
 #csv_file = 'huntingbouts_all.csv'
 #csv_file = 'stimuli_all.csv'
-#csv_file = 'huntbouts1_2s.csv'
-csv_file = 'huntbouts_rad.csv'
+csv_file = 'huntbouts1_2s.csv'
+#csv_file = 'huntbouts_rad.csv'
 data = pd.read_csv(csv_file)
 
 
 if csv_file == 'huntbouts1_2s.csv':
     generate_random_data(data, True)
+    
 
 
 
@@ -363,7 +364,7 @@ if csv_file == 'huntingbouts_all.csv':
                           v2_cond2, v1_cond2, [v2_char, v1_char])
 
 
-pred_wrapper(data, [[0, .1], [.1, .2], [.3, .4], [.4, .5]], [3])
+#pred_wrapper(data, [[0, .1], [.1, .2], [.3, .4], [.4, .5]], [3])
 #pred_wrapper(data, [[0, .05], [.05, .1], [.1, .15], [.15, .2]], [3])
     
 #pred = prediction_calculator(data)
