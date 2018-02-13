@@ -211,7 +211,33 @@ class FishModel:
         return bout
 
     def bdb_model(self, para_varbs):
-        print para_varbs
+
+        def invert_pvarbs(pvarbs):
+            pvcopy = copy.deepcopy(pvarbs)
+            invert_az = False
+            invert_alt = False
+            if pvcopy("Para Az") < 0:
+                pvcopy("Para Az") *= -1
+                pvcopy("Para Az Velocity") *= -1
+                invert_az = True
+            if pvcopy("Para Alt") < 0:
+                pvcopy("Para Alt") *= -1
+                pvcopy("Para Alt Velocity") *= -1
+                invert_alt = True
+            return pvcopy, invert_az, invert_alt
+
+        def invert_bout(bout_dic, invert_az, invert_alt):
+            bdic_copy = copy.deepcopy(bout_dic)
+            if invert_az:
+                bdic_copy("Bout Az") *= -1
+                bdic_copy("Bout Delta Yaw") *= -1
+            if invert_alt:
+                bdic_copy("Bout Alt") *= -1
+                bdic_copy("Bout Delta Pitch") *= -1
+            return bdic_copy
+                
+        para_varbs, inv_az, inv_alt = invert_pvarbs(para_varbs)
+                
         df_sim = query(self.bdb_file,
                        ''' SIMULATE "Bout Az", "Bout Alt",
                        "Bout Dist", "Bout Delta Pitch", "Bout Delta Yaw"
@@ -228,12 +254,32 @@ class FishModel:
         bout_dist = df_sim['Bout Dist'].median()
         bout_pitch = df_sim['Bout Delta Pitch'].median()
         bout_yaw = -1*df_sim['Bout Delta Yaw'].median()
-        bout = np.array([bout_az,
-                         bout_alt,
-                         bout_dist, bout_pitch, bout_yaw])
-        print df_sim.describe()
+        b_dict = {"Bout Az": bout_az,
+                  "Bout Alt": bout_alt,
+                  "Bout Dist": bout_dist,
+                  "Bout Delta Yaw": bout_yaw,
+                  "Bout Delta Pitch": bout_pitch}
+        b_dict = invert_bout(bdict, inv_az, inv_alt)
+        bout = np.array([bdict["Bout Az"],
+                         bdict["Bout Alt"],
+                         bdict["Bout Dist"],
+                         bdict["Bout Delta Pitch"],
+                         bdict["Bout Delta Yaw"]])
         return bout
 
+def bout_inversion(row):
+    inverted_row = copy.deepcopy(row)
+    if row("Para Az") < 0:
+        inverted_row("Para Az") *= -1
+        inverted_row("Para Az Velocity") *= -1
+        inverted_row("Bout Az") *= -1
+        inverted_row("Bout Delta Yaw") *= -1
+    if row("Para Alt") < 0:
+        inverted_row("Para Alt") *= -1
+        inverted_row("Para Alt Velocity") *= -1
+    return inverted_row
+
+    
 
 def mapped_para_generator(hb_data):
     ind = np.int(np.random.random() * len(hb_data['Para Az']))
