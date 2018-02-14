@@ -1,3 +1,5 @@
+import csv
+import os
 import copy
 import numpy as np
 import pandas as pd
@@ -9,6 +11,36 @@ import seaborn as sb
 from matplotlib import pyplot as pl
 from matplotlib.ticker import MaxNLocator
 from matplotlib.colors import Normalize, ListedColormap
+
+
+# Make this a real analysis program instead of a bunch of discontinuous junk.
+
+# Make sure you go into the files here and DE-invert the yaw and pitch. convert all
+# pitches to radians, convert all yaws to negative radians in the original csv compiler. 
+
+
+def concatenate_all_csv(fish_list, file_name, invert):
+    with open(os.getcwd() + '/all_huntingbouts.csv', 'wb') as csvfile:
+        output_data = csv.writer(csvfile)
+        firstfile = True
+        for fish in fish_list:
+            file_id = os.getcwd() + "/" + fish + "/" + file_name
+            data = pd.read_csv(file_id)
+            num_entries = len(data[data.dtypes.index[0]])
+            data["Fish ID"] = [fish] * num_entries
+            if firstfile:
+                output_data.writerow(data.dtypes.index)
+                firstfile = False
+            for row in range(num_entries):
+                row_dict = data.iloc[row]
+                row_dict["Bout Delta Yaw"] = -1 * np.radians(
+                    row_dict["Bout Delta Yaw"])
+                row_dict["Bout Delta Pitch"] = np.radians(
+                    row_dict["Bout Delta Pitch"])
+                if invert:
+                    row_dict = bout_inversion(row_dict)
+                output_data.writerow(row_dict.values)
+        return output_data
 
 
 def generate_random_data(raw_data, invert):
@@ -91,26 +123,6 @@ def make_regression_plots(x1, y1, x2, y2, labels):
     pl.show()
 
 
-def colorcode(v1, v2, v3, labels):
-    if np.min(v3) >= 0:
-        cmap = sb.cubehelix_palette(8, start=.5, rot=-.75, as_cmap=True)
-        norm = Normalize(np.min(v3), np.max(v3))
-    else:
-        cmap = sb.diverging_palette(260, 10, s=99, l=30, as_cmap=True)
-        v3max = np.max(np.abs(v3))
-        norm = Normalize(-v3max, v3max)
- #       norm = Normalize(-1, 1)
-    f, ax = pl.subplots()
-    points = ax.scatter(v1, v2,
-                        c=v3, s=40, cmap=cmap, norm=norm)
-    ax.set_xlabel(labels[0], fontsize=16)
-    ax.set_ylabel(labels[1], fontsize=16)
-    ax.tick_params(labelsize=13)
-    ax.set_axis_bgcolor('w')
-    f.colorbar(points)
-    pl.show()
-
-
 def value_over_hunt(data, valstring, actions, f_or_r, absval):
     def nanfill(f_or_r, huntlist):
         new_huntlist = []
@@ -160,17 +172,12 @@ def value_over_hunt(data, valstring, actions, f_or_r, absval):
                        estimator=np.nanmean, color=p_color, ci=95)
     e_plot.set_ylabel(valstring, fontsize=16)
     e_plot.set_xlabel('Bout Number During Hunt', fontsize=16)
-#    e_plot.set_ylim([-.6, .6])
     e_plot.xaxis.set_major_locator(MaxNLocator(integer=True))
-    # if f_or_r:
-    #     e_plot.set_xlim([0, 5])
-    # else:
-    #     e_plot.set_xlim([-5, 0])
     e_plot.tick_params(labelsize=13)
     pl.show()
         
 
-def prediction_plotter(pred):
+def prediction_conditionals(pred):
     counts = [len(x) for x in pred]
     lead_lead_intersect = np.intersect1d(pred[0], pred[2])
     lag_lag_intersect = np.intersect1d(pred[1], pred[3])
@@ -206,16 +213,12 @@ def prediction_calculator(data, limit, condition):
     leading_alt = []
     lagging_alt = []
     for i in range(len(data["Para Az"])):
-
         if not (limit[0] <= np.abs(data["Para Az"][i]) < limit[1]):
             continue
-                    
         if data["Strike Or Abort"][i] not in condition:
             continue
-
         if data["Bout Number"][i] < 1:
             continue
-        
         if not np.isfinite([data["Para Az Velocity"][i],
                             data["Para Alt Velocity"][i],
                             data["Para Az"][i],
@@ -279,25 +282,7 @@ def twod_scatter(data, var1, var2):
     return attended1, attended2, ignored1, ignored2
 
 
-
-#csv_file = 'huntingbouts_all.csv'
-#csv_file = 'stimuli_all.csv'
-csv_file = 'huntbouts1_2s.csv'
-#csv_file = 'huntbouts_rad.csv'
-data = pd.read_csv(csv_file)
-
-
-if csv_file == 'huntbouts1_2s.csv':
-    generate_random_data(data, True)
-    
-
-
-
-        
-
-# #Filter vals here
-
-if csv_file == 'stimuli_all.csv':
+def stim_analyzer(data):
     colorpal = sb.color_palette("husl", 8)
     hittypes = [1, 2, 3, 4]
     attended = []
@@ -320,7 +305,10 @@ if csv_file == 'stimuli_all.csv':
     dp.set_ylabel('Probability Density', fontsize=16)
     pl.show()
 
-if csv_file == 'huntingbouts_all.csv':
+
+#Make this a function
+    
+def huntbouts_plotter(data):
     v1_cond1 = []
     v2_cond1 = []
     v1_cond2 = []
@@ -330,7 +318,6 @@ if csv_file == 'huntingbouts_all.csv':
     v2_char = "Para Az"
     v3_char = "Para Az Velocity"
 #    to_reject = [-1]
-    bout_limit = 1
     for bn, action, val1, val2, val3 in zip(data["Bout Number"],
                                             data["Strike Or Abort"],
                                             data[v1_char],
@@ -340,9 +327,6 @@ if csv_file == 'huntingbouts_all.csv':
             continue
         if bn < 1:
             continue
-        # if v3_char == 'Bout Dist':
-        #     if v3 < 0:
-        #         continue
         if action == 3:
             v1_cond1.append(val1)
             v2_cond1.append(val2)
@@ -351,24 +335,27 @@ if csv_file == 'huntingbouts_all.csv':
             v2_cond2.append(val2)
             v3.append(val3)
             
-    if v1_char == 'Bout Delta Pitch' or v1_char == "Bout Delta Yaw":
-        v1_cond1 = np.radians(v1_cond1)
-        v1_cond2 = np.radians(v1_cond2)
-        # Right turns create negative delta yaws b/c yaw is on unit circle. 
-        if v1_char == "Bout Delta Yaw":
-            v1_cond1 *= -1
-            v1_cond2 *= -1
     print('Regression Fitting')
     make_regression_plots(v2_cond1,
                           v1_cond1,
                           v2_cond2, v1_cond2, [v2_char, v1_char])
 
 
+
+
+#NOTE ONLY RUN FUNCTIONS AFTER YOU HAVE NORMALIZED THE YAW AND PITCH
+#TO RADIANS. 
+    
+#csv_file = 'huntingbouts_all.csv'
+#csv_file = 'stimuli_all.csv'
+csv_file = 'huntbouts1_2s.csv'
+#csv_file = 'huntbouts_rad.csv'
+data = pd.read_csv(csv_file)
+
+    
 #pred_wrapper(data, [[0, .1], [.1, .2], [.3, .4], [.4, .5]], [3])
 #pred_wrapper(data, [[0, .05], [.05, .1], [.1, .15], [.15, .2]], [3])
     
-#pred = prediction_calculator(data)
-#prediction_plotter(pred)
 #a = twod_scatter(data, "Az Coord", "Alt Coord")
 #a = twod_scatter(data, "Raw Velocity", "Dot Product")
 
@@ -382,3 +369,5 @@ if csv_file == 'huntingbouts_all.csv':
 
 # try seaborn pairplot across the entire dataframe. 
 # randomize paramecium motion and see if it still correlates. 
+
+

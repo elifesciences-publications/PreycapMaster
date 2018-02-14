@@ -31,36 +31,20 @@ from phinalIR import Variables
 from phinalFL import Fluorescence_Analyzer
 #from pvidFINAL_updatedNP import Para, ParaMaster, return_paramaster_object
 from pvidFINAL import Para, ParaMaster, return_paramaster_object
-
-
-
 sb.set_style('darkgrid')
+
 
 # The Experiment class wraps all methods one level up from finding fish and para related variables. It reveals how fish and para interact. Para can be mapped to the eyes of the fish and the heading angle of the fish. Behavior of paramecia during hunting epochs can be analyzed.
 
-# Workflow: First run flparse2 from commandline. Flparse 2 only requires that you give it a fluorescent frame frequency and two streams of raw movies. Next, run phinalIR. This will yield all fish related data. Finally, run master. Master will create an Experiment class. The experiment class will find all hunts using methods internal to phinalIR's Varbs class.
-
-# Use 01, 02 notation for numbers under 10.  
-
-# 12/8/16: A MAJOR QUESTION TO ASK IS WHETHER THE FISH AFTER A BOUT IS MORE ALIGNED TO THE STIMULUS SPACE BEFORE THE BOUT THAN AFTER THE BOUT. I.E. IS THE FISH ORIENTING TO OLD LOCATIONS OF THE PARA? I.E. TAKE A SNAPSHOT OF THE WORLD, MOVE TO THE LOCATION OF THE SNAPSHOT THAT IS MOST ADVANTAGEOUS, OR MAKE PREDICTIONS ABOUT THE FUTURE STATE WHEN CALCULATTING THE BOUT, WHICH WOULD BE REFLECTED IN THE WORLD AT THE END OF THE BOUT. I.E IS THE SNAPSHOT OR THE WORLD A BETTER PREDICTIOR OF THE FISH'S FINAL LOCATION AFTER THE BOUT? 
-
-# here you will be able to cluster and plot para windows from all bouts 
-
-#paracluster is for a single trial. this is for many. 
-
-
-# VALUE ERROR IN PARADURINWINDOW COMES FROM A TUPLE BEING IN THE WRTH 3rd POSITION. I BET THIS IS FROM A LENGTH EXTENSION??
-
 
 class Hunt_Descriptor:
-    def __init__(self, fish_id):
+    def __init__(self, directory):
         self.hunt_ind_list = []
         self.para_id_list = []
         self.actions = []
         self.ignored_para = []
         self.endbout = []
-        self.directory = os.getcwd() + '/Fish' + fish_id
-        self.fish_id = fish_id
+        self.directory = directory
 
     def exporter(self):
         with open(self.directory + '/hunt_descriptor.pkl', 'wb') as file:
@@ -74,7 +58,7 @@ class Hunt_Descriptor:
         print self.endbout
 
     def slice_hd(self, hunt_id):
-        hd_slice = Hunt_Descriptor(self.fish_id)
+        hd_slice = Hunt_Descriptor(self.directory)
         hunt_id_index = self.hunt_ind_list.index(hunt_id)
         hd_slice.update_hunt_data(hunt_id,
                                   self.para_id_list[hunt_id_index],
@@ -99,9 +83,6 @@ class Hunt_Descriptor:
         self.exporter()
         
 
-
-# "possible positions matrix" that is the same size as the decimated matrix.
-    
 # for each para env, you will get a coordinate matrix that is scalexscalexscale, representing
 # 3270 x 2 pixels in all directions. the scale must be ODD!! this guarantees that it will have a center
 # cube. make a coordinate matrix by adding each unit vector representing the fish basis to the scale / 2, scale /2 , scale / 2 coordinate.
@@ -109,9 +90,10 @@ class Hunt_Descriptor:
 # -5, -5, -5. when you multiply the scaled unit vectors of the basis by these coords and add to ufish origin, you get a real x,y,z coord of tank position. if# all coords are less than 1888, give the coordinate of env_mat a 1 bump. if not, give a zero bump. never give a bump to negative x coordinates! (i.e. start # the loop at scale / 2 for x, 0 for y and z.
 
 
+
 class ParaEnv:
 
-    def __init__(self, index, fish_number, directory):
+    def __init__(self, index, directory):
         self.wrth = np.load(
             directory + '/wrth' + str(index).zfill(2) + '.npy')
         self.ufish = np.load('/Users/andrewbolton/ufish.npy')
@@ -125,7 +107,6 @@ class ParaEnv:
         self.velocity_mags = []
         self.target = []
         self.bout_number = str(index)
-        self.fish_id = fish_number
         self.vector_spacing = 3
 
 # Question is whether fish wait, follow, or move to the predicted location of para behind barriers. 
@@ -133,9 +114,7 @@ class ParaEnv:
 # With the coordinates of a barrier.
 
     def exporter(self):
-        with open('p_env' +
-                  self.fish_id +
-                  self.bout_number + '.pkl', 'wb') as file:
+        with open('p_env' + self.bout_number + '.pkl', 'wb') as file:
             pickle.dump(self, file)
 
 #Use ufish vectors here to see if the para is behind an occluder. If it is, give it a flag.             
@@ -244,31 +223,30 @@ class ParaEnv:
 
 class BoutsAndFlags():
 
-    def __init__(self, fish_id, bouts, flags):
+    def __init__(self, directory, bouts, flags):
         self.bouts = bouts
         self.flags = flags
-        self.fish_id = fish_id
-        self.dirct = os.getcwd() + '/Fish' + fish_id
+        self.dirct = directory
 
     def exporter(self):
         with open(
-                self.dirct + '/bouts' + self.fish_id + '.pkl', 'wb') as file:
-            pickle.dump(self, file)
-        with open('bouts' + self.fish_id + '.pkl', 'wb') as file:
+                self.dirct + '/bouts.pkl', 'wb') as file:
             pickle.dump(self, file)
 
         
 # This class will take in BoutsAndFlags objects for each fish then run TSNE on the combined dataset
 
 
+# Want this to be able to take the boutsandflags from ALL fish. You want to add a dictionary with the fishids you want to cluster on.
+# 
+
 class DimensionalityReduce():
 
-    def __init__(self, bout_dict, flag_dict, all_varbs_dict, *fish_id):
+    def __init__(self,
+                 bout_dict,
+                 flag_dict, all_varbs_dict, directory, fish_id_dict):
 
-        if fish_id != ():
-            self.directory = os.getcwd() + '/Fish' + fish_id[0]
-        else:
-            self.directory = os.getcwd()
+        self.directory = directory
         self.cluster_input = []
         self.num_dp = len(all_varbs_dict)
         self.all_varbs_dict = all_varbs_dict
@@ -281,14 +259,27 @@ class DimensionalityReduce():
         self.flag_dict = flag_dict
         self.inv_fdict = {v: k for k, v in flag_dict.iteritems()}
         self.transition_matrix = np.array([])
-        self.bouts_flags = [self.extract_and_assignID(self.directory + '/' +  f_id)
-                                for f_id in os.listdir(self.directory) 
-                                if f_id[0:4] == 'bout']
+#        self.bouts_flags = [self.extract_and_assignID(self.directory + '/' +  f_id)
+#                                for f_id in os.listdir(self.directory) 
+#                                if f_id[0:4] == 'bout']
+        self.bouts_flags = [pickle.load(open(directory + '/bouts.pkl'))]
         self.cluster_count = 9
         self.hunt_cluster = []
         self.deconverge_cluster = []
         self.hunt_wins = []
 
+# This will be for the future if you want to cluster all fish in the fish_id_dict. Just add the IDs from the dict to the flag data. 
+    def extract_and_assignID(self, file_id):
+        boutdata = pickle.load(open(file_id, 'rb'))
+        num_bouts = len(boutdata.bouts)
+        self.num_bouts_per_fish.append(num_bouts)
+        new_flags = []
+        for flag in boutdata.flags:
+            flag.append(fish_id)
+            new_flags.append(flag)
+        boutdata.flags = new_flags
+        return boutdata
+        
     def exporter(self):
         with open(self.directory + '/dim_reduce.pkl', 'wb') as file:
             pickle.dump(self, file)
@@ -302,18 +293,6 @@ class DimensionalityReduce():
         orig = self.hunt_wins[exp.current_hunt_ind][0]
         self.hunt_wins[exp.current_hunt_ind] = [orig, orig+10]
             
-    def extract_and_assignID(self, file_id):
-        boutdata = pickle.load(open(file_id, 'rb'))
-        num_bouts = len(boutdata.bouts)
-        self.num_bouts_per_fish.append(num_bouts)
-        fish_id = int(file_id[-6:-4])
-        new_flags = []
-        for flag in boutdata.flags:
-            flag.append(fish_id)
-            new_flags.append(flag)
-        boutdata.flags = new_flags
-        return boutdata
-
     def concatenate_records(self):
         for record in self.bouts_flags:
             self.all_bouts = self.all_bouts + record.bouts
@@ -581,7 +560,7 @@ class DimensionalityReduce():
 
 
 class Experiment():
-    def __init__(self, minboutlength, bout_dict, flag_dict, fish_id):
+    def __init__(self, minboutlength, bout_dict, flag_dict, dirct):
         self.ufish = []
         self.ufish_origin = []
         self.uperp = []
@@ -589,9 +568,8 @@ class Experiment():
         self.invert = True
         self.bout_dict = bout_dict
         self.flag_dict = flag_dict
-        self.fish_id = int(fish_id)
         self.inv_bdict = {v: k for k, v in bout_dict.iteritems()}
-        self.directory = os.getcwd() + '/Fish' + fish_id
+        self.directory = dirct
         self.fishdata = pickle.load(open(
            self.directory + '/fishdata.pkl', 'rb'))
 #        self.fluor_data = pickle.load(open('fluordata.pkl', 'rb'))
@@ -610,7 +588,6 @@ class Experiment():
         self.bout_flags = []
         self.minboutlength = minboutlength
         self.num_dp = len(bout_dict)
-        self.frames_of_interest = []
         self.para_win = 20
 #just assures that 20 frames before bout is also continuous in order for para reconstructions to be accurate per bout. 
 # This allows trajectory matching over x frames to improve correlation
@@ -675,47 +652,6 @@ class Experiment():
         for i in range(len(temp_tail[0])):
             temp_tail[:, i] = fill_in_nans(temp_tail[:, i])
         self.fishdata.tailangle = temp_tail.tolist()
-
-    def assign_frames_of_interest(self, datalist,
-                                  bouts_per_fish, *filt_key_and_operator):
-    
-        def dlist_generator(dlist, filt_key, operator):
-            filt_list = []
-            for d in dlist:
-                if operator(d, filt_key):
-                    filt_list.append(1)
-                else:
-                    filt_list.append(0)
-            return filt_list
-        
-        fish_id = self.fish_id
-        csum = np.cumsum(bouts_per_fish)
-        if fish_id > 0:
-            lb = csum[fish_id]
-            ub = csum[fish_id+1]
-        else:
-            lb = 0
-            ub = csum[0]
-        crop_dlist = datalist[lb:ub]
-        self.frames_of_interest = []
-        if filt_key_and_operator != ():
-            filter_key = filt_key_and_operator[0]
-            operator = filt_key_and_operator[1]
-            final_dlist = dlist_generator(crop_dlist, filter_key, operator)
-        else:
-            final_dlist = crop_dlist
-        for bout_frame, dig in zip(self.bout_frames, final_dlist):
-            if dig == 1:
-                self.frames_of_interest.append(bout_frame)
-
-
-#this function should transform datapoints into frames where interesting
-# things occur. i have been passing a cluster membership list and filtering
-# according to bout. there are X bouts per fish. when you pass from dim,
-# it contains every bout. you only want the ones for thsi particular fish,
-# because myexp objects are fish restricted. this is all ok. you just have to pass this a series of len(TOTAL BOUTS IN ALL FISH). for hunts, for example,
-# 
-
 
 
 # This function will take in the ha_diff flag (total ha_diff) and invert ha, switch the eyes, and invert the tail angles.
@@ -1163,7 +1099,7 @@ class Experiment():
             return False
         print("Starts At Frame " + str(ind1))
         print("Ends At Frame " + str(ind2))
-        dirct = os.getcwd() + '/Fish' + str(self.fish_id).zfill(2) + '/'
+        dirct = self.directory + '/'
         if cont_side == 0:
             vid = imageio.get_reader(dirct + 'conts.AVI', 'ffmpeg')
         elif cont_side == 1:
@@ -1173,10 +1109,7 @@ class Experiment():
         else:
             print('unspecified stream')
             return False
-#        for i in range(ind1, ind2):
-#            frames.append(vid.get_data(i))
-        cv2.namedWindow('vid', flags=cv2.cv.CV_WINDOW_NORMAL)        
-#        for im in frames:
+        cv2.namedWindow('vid', flags=cv2.cv.CV_WINDOW_NORMAL)
         for i in range(ind1-30, ind2):
             im = vid.get_data(i)
             im = cv2.resize(im, (700, 700))
@@ -1206,50 +1139,9 @@ class Experiment():
                 self.paradata.watch_event(0)
         cv2.destroyAllWindows()
         return True
-            
-    def watch_event(self, index, cont_side, delay, *vidlen):
-        # length is minboutlength. ind is bout init.
-        index = self.frames_of_interest[index]
-        vidlength = 0
-        dirct = os.getcwd() + '/Fish' + str(self.fish_id).zfill(2) + '/'
-        if vidlen == ():
-            vidlength = self.minboutlength
-        else:
-            vidlength = vidlen[0]
-        if cont_side == 0:
-            vid = imageio.get_reader(dirct + 'conts.AVI', 'ffmpeg')
-        elif cont_side == 1:
-            vid = imageio.get_reader(dirct + 'top_contrasted.AVI', 'ffmpeg')
-        elif cont_side == 2:
-            vid = imageio.get_reader(dirct + 'sideconts.AVI', 'ffmpeg')
-        else:
-            print('unspecified stream')
-            return
-        frames = []
-        for i in range(index, index+vidlength):
-            frames.append(vid.get_data(i))
-        cv2.namedWindow('vid', flags=cv2.cv.CV_WINDOW_NORMAL)
-        for im in frames:
-            im = cv2.resize(im, (700, 700))
-            cv2.imshow('vid', im)
-            cv2.waitKey(delay)
-        cv2.destroyAllWindows()
-        vid.close()
 
-    def watch_event_wrap(self, c_or_s, delay, *vidlen):
-
-        for i in range(len(self.frames_of_interest)):
-            print i
-            if vidlen != ():
-                self.watch_event(i, c_or_s, delay, vidlen[0])
-            else:
-                self.watch_event(i, c_or_s, delay)
-            cv2.waitKey(500)
-
+# Eye1 is the eye on the side of the direction of the turn.
     def summary_stats(self, bout_index):
-
-# Eye1 is the eye on the side of the direction of the turn. 
-
         bout = self.bout_data[bout_index]
         num_cols = int(np.ceil(self.num_dp/3.0))
         num_rows = 3
@@ -1690,7 +1582,7 @@ def pvec_wrapper(exp, hd):
         
 
 def para_vec_plot(exp, h_id, p_id, animate):
-    penv = ParaEnv(h_id, exp.fish_id, exp.directory)
+    penv = ParaEnv(h_id, exp.directory)
     penv.find_paravectors(False)
     pvec = []
     non_nan_indices = []
@@ -1793,7 +1685,7 @@ def para_state_plot(hd, exp):
     vels = []
     c_pallete = np.array(sb.color_palette('husl', len(hunt_inds)))
     for hunt, p in zip(hunt_inds, poi):
-        penv = ParaEnv(hunt, exp.fish_id, exp.directory)
+        penv = ParaEnv(hunt, exp.directory)
         penv.find_paravectors(False, p)
         dps.append(np.copy(penv.dotprod))
         vels.append(np.copy(penv.velocity_mags))
@@ -1970,7 +1862,7 @@ def hunted_para_descriptor(dim, exp, hd):
     for hi, hp, ac, eb in zip(hd.hunt_ind_list,
                               hd.para_id_list, hd.actions, hd.endbout):
         poi_wrth = create_poirec(hi, 3, exp.directory, hp)
-        penv = ParaEnv(hi, exp.fish_id, exp.directory)
+        penv = ParaEnv(hi, exp.directory)
         penv.find_paravectors(False)
         dp = penv.dotprod[hp][cont_win:]
         vel = penv.velocity_mags[hp][cont_win:]
@@ -2098,7 +1990,7 @@ def para_stimuli(dim, exp, hd):
         #get to the hunted para, 
         p3D = np.load(exp.directory + '/para3D' + str(h).zfill(2) + '.npy')
         distmat = make_distance_matrix(p3D)
-        penv = ParaEnv(h, exp.fish_id, exp.directory)
+        penv = ParaEnv(h, exp.directory)
         penv.find_paravectors(False)
         wrth = np.load(
             exp.directory + '/wrth' + str(h).zfill(2) + '.npy')
@@ -2476,8 +2368,8 @@ if __name__ == '__main__':
         # '10': 'Delta Heading Angle',
 #        '11': 'Eye1 Angle',
 #       '12': 'Eye2 Angle',
-        '13': 'Eye Sum'}
-#        '14': 'Interbout_Back'}
+        '13': 'Eye Sum',
+        '14': 'Interbout_Back'}
 
 # This dictionary describes a flag set of variables that should be calculated for each bout that describes characteristics of the bout    
 
@@ -2491,8 +2383,9 @@ if __name__ == '__main__':
         '6': 'Total Heading Angle Change',
         '7': 'Fluorescence Level',
         '8': 'Bout Duration',
-        '9': 'Fish ID',
-        '10': 'Cluster ID'}
+        '9': 'Cluster ID'}
+#        '9': 'Fish ID',
+ 
 
 
 # Experiment arg is how many continuous frames are required for a bout call
@@ -2509,30 +2402,31 @@ if __name__ == '__main__':
 # whose only role is to contain the bouts and corresponding flags for each fish. 
 
     fish_id = '01'
-    drct = os.getcwd() + '/Fish' + fish_id
+    drct = os.getcwd() + '/' + fish_id
     new_exp = False
     dimreduce = False
-    num_fish = 1
+    
     if new_exp:
-        if num_fish != 1:
-            for fish_id in range(num_fish):
-                fish_id = str(fish_id).zfill(2)
-                myexp = Experiment(10, all_varbs_dict, flag_dict, fish_id)
-                myexp.bout_detector(True, 'tail')
-                myexp.bout_nanfilt_and_arrange(False)
-                bouts_flags = BoutsAndFlags(fish_id,
-                                            myexp.bout_data, myexp.bout_flags)
-                bouts_flags.exporter()
-        else:
-            myexp = Experiment(10, all_varbs_dict, flag_dict, fish_id)
-            myexp.bout_detector(True, 'combined')
-            myexp.bout_nanfilt_and_arrange(False)
-            bouts_flags = BoutsAndFlags(fish_id,
-                                        myexp.bout_data, myexp.bout_flags)
-            bouts_flags.exporter()
-            print("Creating Unit Vectors")
-            myexp.create_unit_vectors()
-            myexp.exporter()
+        # HERE IF YOU WANT TO CLUSTER MANY FISH IN THE FUTURE, MAKE A DICT OF FISH_IDs AND RUN THROUGH THIS LOOP
+        # if num_fish != 1:
+        #     FISH ID DICTIONARY HERE, LOOP THROUGH
+        #         myexp = Experiment(10, all_varbs_dict, flag_dict, drct)
+        #         myexp.bout_detector(True, 'tail')
+        #         myexp.bout_nanfilt_and_arrange(False)
+        #         bouts_flags = BoutsAndFlags(fish_id,
+        #                                     myexp.bout_data, myexp.bout_flags)
+        #         bouts_flags.exporter()
+#        else:
+        
+        myexp = Experiment(10, all_varbs_dict, flag_dict, drct)
+        myexp.bout_detector(True, 'combined')
+        myexp.bout_nanfilt_and_arrange(False)
+        bouts_flags = BoutsAndFlags(drct,
+                                    myexp.bout_data, myexp.bout_flags)
+        bouts_flags.exporter()
+        print("Creating Unit Vectors")
+        myexp.create_unit_vectors()
+        myexp.exporter()
 
     else:
         myexp = pickle.load(open(drct + '/master.pkl', 'rb'))
@@ -2541,7 +2435,7 @@ if __name__ == '__main__':
         dim = DimensionalityReduce(bout_dict,
                                    flag_dict,
                                    all_varbs_dict,
-                                   fish_id)
+                                   drct, {})
         dim.concatenate_records()
         dim.dim_reduction(2)
         dim.exporter()
@@ -2553,11 +2447,12 @@ if __name__ == '__main__':
         dim.clear_huntwins()
         dim.find_hunts([7],[4,6])
         dim.exporter()
-        hd = Hunt_Descriptor(fish_id)
+        hd = Hunt_Descriptor(drct)
     else:
         import_hd = raw_input('Import Hunt Descriptor?: ')
         if import_hd == 'y':
             hd = hd_import(myexp.directory)
+            
 #    yaw, pitch, z = bouts_during_hunt(hd.hunt_ind_list[0], dim, myexp)
 
 
