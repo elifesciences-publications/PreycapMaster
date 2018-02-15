@@ -86,12 +86,18 @@ class RealFishControl:
             self.initial_conditions.append([self.fish_xyz[firstframe],
                                             self.pitch_all[firstframe],
                                             self.yaw_all[firstframe]])
-                        
+
+    def model_input(hunt_num):
+        return {"Hunt Dataframe": self.hunt_dataframes[hunt_num],
+                "Para XYZ": self.para_xyz_per_hunt[hunt_num],
+                "Initial Conditions": self.initial_conditions[hunt_num],
+                "Interbouts": self.hunt_interbouts[hunt_num]}
+
     def exporter(self):
         self.find_initial_conditions()
         with open(
                 self.directory +
-                '/RealFishData_' + self.fish_id + '.pkl', 'wb')
+                '/RealHuntData_' + self.fish_id + '.pkl', 'wb')
         as file:
             pickle.dump(self, file)
         

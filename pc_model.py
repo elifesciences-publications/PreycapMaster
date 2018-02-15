@@ -6,13 +6,14 @@ import seaborn as sb
 import pandas as pd
 import os
 import math
-from master import fishxyz_to_unitvecs, sphericalbout_to_xyz, p_map_to_fish
 from para_hmm_final import ParaMarkovModel
 import pomegranate
 import bayeslite as bl
 from iventure.utils_bql import query
 from iventure.utils_bql import subsample_table_columns
 from collections import deque
+from master import fishxyz_to_unitvecs, sphericalbout_to_xyz,
+p_map_to_fish, RealFishControl
 
 # this program depends on master, para_hmm_final, csv output from fish data.
 # first magit try1
@@ -27,10 +28,12 @@ class PreyCap_Simulation:
         self.para_states = []
         self.para_xyz = []
         self.para_spherical = []
-        self.fish_xyz = [np.array([944, 944, 944])]
+        self.fish_xyz = [fishmodel.real_hunt_dict["Initial Conditions"][0]]
         self.fish_bases = []
-        self.fish_pitch = [0]
-        self.fish_yaw = [0]
+        self.fish_pitch = [fishmodel.real_hunt_dict["Initial Conditions"][1]]
+        self.fish_yaw = [fishmodel.real_hunt_dict["Initial Conditions"][2]]
+        self.simulated_para = False
+        self.interbouts = self.fishmodel.interbouts
 
 
 # have to start with an XYZ velocity that reflects the velocity profile of
@@ -40,50 +43,57 @@ class PreyCap_Simulation:
 
     def create_para_trajectory(self):
         if isinstance(self.paramodel.model, pomegranate.hmm.HiddenMarkovModel):
+            random_start_vector = np.array([np.random.random(),
+                                            np.random.random(),
+                                            np.random.random()])
+            para_initial_conditions = [
+                np.array([1000, 1000, 1000]), random_start_vector]
             px, py, pz, states, vmax = self.paramodel.generate_para(
-                self.para_initial_conditions[1],
-                self.para_initial_conditions[0], self.sim_length)
+                para_initial_conditions[1],
+                para_initial_conditions[0], self.sim_length)
             self.para_xyz = [np.array(px), np.array(py), np.array(pz)]
             self.para_states = states
-        else:
-            pass
-        return vmax
-            # this will import a real para trajectory of a hunted para.
-            # this will be done by importing the csv file of all para. restrict to
-            # bout indicies of and para of type 1 or 2. then you align the fish based on the initial az, alt, and dist (i.e. put it in the place it started the hunt, then start it).
-
+            self.simulated_para = True
+        elif isinstance(self.paramodel.model, dict):
+            self.para_xyz = [np.array(self.paramodel.model["Para XYZ"][0]),
+                             np.array(self.paramodel.model["Para XYZ"][1]),
+                             np.array(self.paramodel.model["Para XYZ"][2])]
+            
     def run_simulation(self):
 
-        
         framecounter = 0
         # spacing is an integer describing the sampling of vectors by the para. i.e.       # draws a new accel vector every 'spacing' frames
         spacing = np.load('spacing.npy')
         vel_history = 6
-        interbouts = self.fishmodel.generate_interbouts(100000)
         # fish_basis is origin, x, y, z unit vecs
         print("Para Shape")
         print self.para_xyz[0].shape[0]
         p_az_hist = deque(maxlen=vel_history)
         p_alt_hist = deque(maxlen=vel_history)
         p_dist_hist = deque(maxlen=vel_history)
-        px_intrp = np.interp(
-            np.linspace(0,
-                        self.para_xyz[0].shape[0],
-                        self.para_xyz[0].shape[0] * spacing),
-            range(self.para_xyz[0].shape[0]),
-            self.para_xyz[0])
-        py_intrp = np.interp(
-            np.linspace(0,
-                        self.para_xyz[1].shape[0],
-                        self.para_xyz[1].shape[0] * spacing),
-            range(self.para_xyz[1].shape[0]),
-            self.para_xyz[1])
-        pz_intrp = np.interp(
-            np.linspace(0,
-                        self.para_xyz[2].shape[0],
-                        self.para_xyz[2].shape[0] * spacing),
-            range(self.para_xyz[2].shape[0]),
-            self.para_xyz[2])
+        if self.simulated_para:
+            px = np.interp(
+                np.linspace(0,
+                            self.para_xyz[0].shape[0],
+                            self.para_xyz[0].shape[0] * spacing),
+                range(self.para_xyz[0].shape[0]),
+                self.para_xyz[0])
+            py = np.interp(
+                np.linspace(0,
+                            self.para_xyz[1].shape[0],
+                            self.para_xyz[1].shape[0] * spacing),
+                range(self.para_xyz[1].shape[0]),
+                self.para_xyz[1])
+            pz = np.interp(
+                np.linspace(0,
+                            self.para_xyz[2].shape[0],
+                            self.para_xyz[2].shape[0] * spacing),
+                range(self.para_xyz[2].shape[0]),
+                self.para_xyz[2])
+        else:
+            px = self.para_xyz[0]
+            py = self.para_xyz[1]
+            pz = self.para_xyz[2]
                     
         while True:
 
@@ -97,9 +107,9 @@ class PreyCap_Simulation:
                                            fish_basis[0],
                                            fish_basis[3],
                                            fish_basis[2],
-                                           [px_intrp[framecounter],
-                                            py_intrp[framecounter],
-                                            pz_intrp[framecounter]],
+                                           [px[framecounter],
+                                            py[framecounter],
+                                            pz[framecounter]],
                                            0)
             p_az_hist.append(para_spherical[0])
             p_alt_hist.append(para_spherical[1])
@@ -111,18 +121,11 @@ class PreyCap_Simulation:
                           "Para Alt Velocity": np.mean(np.diff(p_alt_hist)),
                           "Para Dist Velocity": np.mean(np.diff(p_dist_hist))}
 
-            # if framecounter == px_intrp.shape[0]:
-            #     print("EVASIVE PARA!!!!!")
-            #     self.para_xyz[0] = px_intrp
-            #     self.para_xyz[1] = py_intrp
-            #     self.para_xyz[2] = pz_intrp
-            #     break
-
             if framecounter == 2000:
                 print("EVASIVE PARA!!!!!")
-                self.para_xyz[0] = px_intrp
-                self.para_xyz[1] = py_intrp
-                self.para_xyz[2] = pz_intrp
+                self.para_xyz[0] = px
+                self.para_xyz[1] = py
+                self.para_xyz[2] = pz
                 break
             
             if self.fishmodel.strike(para_varbs):
@@ -130,19 +133,19 @@ class PreyCap_Simulation:
                 print para_varbs
                 print("STRIKE!!!!!!!!")
                 nanstretch = np.full(
-                    len(px_intrp)-framecounter, np.nan).tolist()
+                    len(px)-framecounter, np.nan).tolist()
                 self.para_xyz[0] = np.concatenate(
-                    (px_intrp[0:framecounter], nanstretch), axis=0)
+                    (px[0:framecounter], nanstretch), axis=0)
                 self.para_xyz[1] = np.concatenate(
-                    (py_intrp[0:framecounter], nanstretch), axis=0)
+                    (py[0:framecounter], nanstretch), axis=0)
                 self.para_xyz[2] = np.concatenate(
-                    (pz_intrp[0:framecounter], nanstretch), axis=0)
+                    (pz[0:framecounter], nanstretch), axis=0)
                 break
 
             ''' you will store these vals in a
             list so you can determine velocities and accelerations '''
 
-            if framecounter in interbouts:
+            if framecounter in self.interbouts:
                 fish_bout = self.fishmodel.model(para_varbs)
                 dx, dy, dz = sphericalbout_to_xyz(fish_bout[0],
                                                   fish_bout[1],
@@ -160,21 +163,27 @@ class PreyCap_Simulation:
                 self.fish_yaw.append(self.fish_yaw[-1])
 
             framecounter += 1
-
+        return fishmodel.number_bouts_generated
+    
 
 class FishModel:
-    def __init__(self, modchoice, strike_params):
+    def __init__(self, modchoice, strike_params, real_hunt_dict):
         self.bdb_file = bl.bayesdb_open('Bolton_HuntingBouts_extended.bdb')
         if modchoice == 0:
             self.model = (lambda pv: self.regression_model(pv))
-        #this will be the bayesDB model or otehr models
         elif modchoice == 1:
             self.model = (lambda pv: self.bdb_model(pv))
+        elif modchoice == 2:
+            self.model = (lambda pv: self.real_hunt(pv))
+            
         self.strike_params = strike_params
+        self.real_hunt_dict = real_hunt_dict
+        self.interbouts = real_hunt_dict["Interbouts"]
+        self.number_bouts_generated = 0
+#        self.interbouts = generate_random_interbouts(5000)
 
-    def generate_interbouts(self, num_bouts):
+    def generate_random_interbouts(self, num_bouts):
         all_ibs = np.floor(np.random.random(num_bouts) * 100)
-#        all_ibs = np.floor(np.random.uniform(low=20, high=60, size=num_bouts))
         bout_indices = np.cumsum(all_ibs)
         return bout_indices
 
@@ -187,6 +196,17 @@ class FishModel:
         else:
             return False
 
+    def real_fish(self, para_varbs):
+        hunt_df = self.real_hunt_dict[
+            "Hunt Dataframe"][self.number_bouts_generated]
+        bout = np.array([hunt_df["Bout Az"],
+                         hunt_df["Bout Alt"],
+                         hunt_df["Bout Dist"],
+                         hunt_df["Bout Delta Pitch"],
+                         hunt_df["Bout Delta Yaw"]])
+        self.number_bouts_generated += 1
+        return bout
+
     def ideal_model(self):
 
     # This model will assess the postbout az, alt, and dist and ask while whether there was a better bout to be had. can do this purely from
@@ -195,6 +215,7 @@ class FishModel:
         pass
 
     def regression_model(self, para_varbs):
+        self.number_bouts_generated += 1
         bout_az = (para_varbs['Para Az'] * 1.36) + .02
         bout_yaw = -1 * ((.46 * para_varbs['Para Az']) - .02)
         bout_alt = (1.5 * para_varbs['Para Alt']) + -.37
@@ -211,7 +232,9 @@ class FishModel:
         return bout
 
     def bdb_model(self, para_varbs):
-
+        self.number_bouts_generated += 1
+        invert = True
+        
         def invert_pvarbs(pvarbs):
             pvcopy = copy.deepcopy(pvarbs)
             invert_az = False
@@ -235,8 +258,9 @@ class FishModel:
                 bdic_copy["Bout Alt"] *= -1
                 bdic_copy["Bout Delta Pitch"] *= -1
             return bdic_copy
-                
-        para_varbs, inv_az, inv_alt = invert_pvarbs(para_varbs)
+
+        if invert:
+            para_varbs, inv_az, inv_alt = invert_pvarbs(para_varbs)
                 
         df_sim = query(self.bdb_file,
                        ''' SIMULATE "Bout Az", "Bout Alt",
@@ -259,7 +283,8 @@ class FishModel:
                   "Bout Dist": bout_dist,
                   "Bout Delta Yaw": bout_yaw,
                   "Bout Delta Pitch": bout_pitch}
-        b_dict = invert_bout(b_dict, inv_az, inv_alt)
+        if invert:
+            b_dict = invert_bout(b_dict, inv_az, inv_alt)
         bout = np.array([b_dict["Bout Az"],
                          b_dict["Bout Alt"],
                          b_dict["Bout Dist"],
@@ -314,21 +339,23 @@ def characterize_strikes(hb_data):
 
 csv_file = 'huntbouts_rad.csv'
 hb = pd.read_csv(csv_file)
+real = pickle.load(open(drct + '/RealHuntData_ID.pkl', 'rb'))
+para_model = pickle.load(open(os.getcwd() + '/pmm.pkl', 'rb'))
+
+random_start_vector
+
 
 np.random.seed()
 sequence_length = 10000
-para_model = pickle.load(open(os.getcwd() + '/pmm.pkl', 'rb'))
-random_start_vector = np.array([np.random.random(),
-                                np.random.random(),
-                                np.random.random()])
+
 strike_params = characterize_strikes(hb)
 fish = FishModel(1, strike_params)
 print('Creating Simulator')
 sim = PreyCap_Simulation(
     fish,
     para_model,
-    [np.array([1000, 1000, 1000]), random_start_vector],
     sequence_length)
+
 sim.create_para_trajectory()
 sim.run_simulation()
 np.save('/home/nightcrawler/PandaModels/para_simulation.npy', sim.para_xyz)
