@@ -1,6 +1,5 @@
 import os
 import copy
-import sys
 import csv
 import cv2
 import pandas
@@ -19,22 +18,84 @@ from toolz.itertoolz import sliding_window, partition
 import matplotlib.cm as cm
 from sympy import Point3D, Plane
 import seaborn as sb
-from skimage.feature import peak_local_max
-from skimage.morphology import watershed
 import mpl_toolkits.mplot3d.axes3d as p3
-from collections import Counter
 import matplotlib.animation as anim
 from scipy.spatial.distance import pdist, squareform
-#cd = '/Users/andrewbolton/Desktop/PreyCap/'
-#os.chdir(cd)
 from phinalIR import Variables
 from phinalFL import Fluorescence_Analyzer
-#from pvidFINAL_updatedNP import Para, ParaMaster, return_paramaster_object
 from pvidFINAL import Para, ParaMaster, return_paramaster_object
 sb.set_style('darkgrid')
 
 
+
+# ADD INTERPOLATION FLAG TO THE CSV FILES. 
+
+
+''' Instructions for using prey cap master code:
+
+To begin, first create an Experiment class and use its bout_detector method to find all bouts. A nanfilter is run over the fish variables to assign values to unknown fish coords. Next, create a bouts and flags (BoutsFlags) instance for every Experiment bout detection. This is used by the DimensionalityReduce class to cluster either single fish behaviors or multiple fish. Finally, use the Experiment class method create_unit_vectors to eventually map all bouts to self-referenced spherical coordinates. 
+
+Once the Experiment class has been set up, you have the option to cluster behaviors on one or many fish. Start with single fish clustering and see what you can pull out. Create a DimensionalityReduce instance and run dim_reduce(2) on it (3 if you want 3D clustering, which doesn't really help). Based on your choice of clusters, you now enter the hunt_windows into the class by calling find_hunts on your chosen hunt and deconverge clusters. 
+
+
+To interact with hunts, first call watch_hunt on the first index. Every hunt is      dim.extend_hunt_window extends the dimensions of the hunt, while dim.cap_window ends the hunt at a particular index. 
+
+Once you are finished with your HuntDescriptor, call para_stimuli to generate a csv file with all initial stimuli information, hunted_para_descriptor to generate a csv file with all hunting bouts characterized relative to para location. You can also call huntbouts_wrapped to obtain the 
+z and eye angle trajectories over each hunt
+
+
+
+'''
+
+
+
+
 # The Experiment class wraps all methods one level up from finding fish and para related variables. It reveals how fish and para interact. Para can be mapped to the eyes of the fish and the heading angle of the fish. Behavior of paramecia during hunting epochs can be analyzed.
+
+
+# Make a Pandas Dataframe for each hunt. Include the post-continuity window coordinates
+# for every hunted paramecium. Put the initial conditions in a separate dictionary. 
+
+
+class IdealFishData:
+    
+
+
+class RealFishControl:
+    def __init__(self, exp):
+        self.fish_xyz = exp.ufish_origin
+        filter_sd = 1
+        self.pitch_all = np.radians(
+            gaussian_filter(exp.fishdata.pitch,
+                            filter_sd))
+        self.yaw_all = np.radians(unit_to_angle(
+            filter_uvec(
+                ang_to_unit(self.fishdata.headingangle), 1)))
+        self.fish_id = exp.directory[-8:]
+        self.hunt_results = []
+        self.hunt_firstframes = []
+        self.hunt_interbouts = []
+        self.initial_conditions = []
+        self.hunt_dataframes = []
+        self.para_xyz_per_hunt = []
+
+# exp contains all relevant fish data. frames will come from hunted_para_descriptor, which will
+# create realfishcontrol objects as it runs. 
+    def find_initial_conditions():
+        for firstframe in self.hunt_firstframes:
+            self.initial_conditions.append([self.fish_xyz[firstframe],
+                                            self.pitch_all[firstframe],
+                                            self.yaw_all[firstframe]])
+                        
+    def exporter(self):
+        self.find_initial_conditions()
+        with open(
+                self.directory +
+                '/RealFishData_' + self.fish_id + '.pkl', 'wb')
+        as file:
+            pickle.dump(self, file)
+        
+
 
 
 class Hunt_Descriptor:
@@ -288,10 +349,6 @@ class DimensionalityReduce():
         self.hunt_wins = []
         self.hunt_cluster = []
         self.deconverge_cluster = []
-
-    def reset(self, exp):
-        orig = self.hunt_wins[exp.current_hunt_ind][0]
-        self.hunt_wins[exp.current_hunt_ind] = [orig, orig+10]
             
     def concatenate_records(self):
         for record in self.bouts_flags:
@@ -365,6 +422,9 @@ class DimensionalityReduce():
         self.hunt_wins[exp.current_hunt_ind][1] += numbouts
         self.exporter()
 
+    def reset_hunt_window(self, exp):
+        orig = self.hunt_wins[exp.current_hunt_ind][0]
+        self.hunt_wins[exp.current_hunt_ind] = [orig, orig+10]
 
 # one bug is deconverge_cluster should be cleared when find_hunts is called        
     def cap_hunt_window(self, exp):
@@ -1400,30 +1460,6 @@ def p_map_to_fish(uf, uf_origin, u_prp, u_paral, p_xyz, p_index):
             azimuth = -np.pi + azimuth
     return azimuth, altitude, nb_mag, new_basis_wrt_heading, angle_to_para_3D
     
-    
-def reduce_paramat(pcoords, p_frame):
-    size = 99
-    sigma = 5
-    p_reduced = np.zeros([size+1, size+1, size+1])
-    reduce_ratio = size / 1888.0
-    for par_index in range(0, pcoords.shape[0], 3):
-        para_xyz = pcoords[
-            par_index:par_index + 3,
-            p_frame]*reduce_ratio
-# this catches inferences made to coords greater than 1888
-        if np.isfinite(para_xyz).all() and (para_xyz <= size).all():
-            para_xyz = para_xyz.astype(np.int32)
-            p_reduced[para_xyz[0], para_xyz[1], para_xyz[2]] += 1
-    p_reduce_filt = gaussian_filter(p_reduced, sigma, mode='constant')
-# important to keep edge constant. else will enrich edges by putting whatever is near the edge across from the edge in 
-# "reflect mode"
-    p_max = np.max(p_reduce_filt)
-#    print p_max
-    flat_arg = np.argmax(p_reduce_filt)
-    max_arg_reduced = np.array(np.unravel_index(flat_arg, (size, size, size)))
-    max_arg_fullframe = max_arg_reduced / reduce_ratio
-    return max_arg_fullframe.astype(np.int32)
-    
 
 # 1. Make sure this is correct.
 # 2. Add a switch here for fill_all. If fill_all is True, simply replace a nan with the value before it.
@@ -1749,6 +1785,8 @@ def csv_data(headers, datavals, file_id, directory):
             output_data.writerow(dt)
 
 
+# This function will tell you, for all hunts, the typical trajectory of eye convergence and Z traversal. 
+            
 def huntbouts_wrapped(hd, dim, exp, med_or_min, plotornot):
     zstack = []
     philstack = []
@@ -1852,16 +1890,33 @@ def hunted_para_descriptor(dim, exp, hd):
               'Postbout Para Az',
               'Postbout Para Alt',
               'Postbout Para Dist',
-              'Strike Or Abort']
+              'Strike Or Abort',
+              'Inferred']
     int_win = exp.integration_window
     cont_win = exp.para_continuity_window
     pitch_flag = int(dim.inv_fdict['Total Pitch Change'])
     yaw_flag = int(dim.inv_fdict['Total Heading Angle Change'])
     bout_descriptor = []
+    df_labels = ["Bout Az", "Bout Alt",
+                 "Bout Dist", "Bout Delta Pitch", "Bout Delta Yaw"]
+    realfish = RealFishControl(exp)
 
     for hi, hp, ac, eb in zip(hd.hunt_ind_list,
                               hd.para_id_list, hd.actions, hd.endbout):
+        para3D = np.load(
+            "para3D" + str(
+                hi).zfill(2) + ".npy")[hp*3:hp*3 + 3][:, cont_win+int_win:]
+        realfish.para_xyz_per_hunt.append(para3D)
+        hunt_df = pd.DataFrame(columns=df_labels)
+        
         poi_wrth = create_poirec(hi, 3, exp.directory, hp)
+        inferred_windows_all = np.load(
+            exp.directory + '/para_interp_windows' + str(hi).zfill(2) + '.npy')
+        inferred_windows_poi = [
+            np.array(win[1]) - cont_win - int_win
+            for win in inferred_windows_all if win[0] == [hp]][0]
+        inferred_window_ranges_poi = [
+            range(win[0], win[1]) for win in inferred_windows_poi]
         penv = ParaEnv(hi, exp.directory)
         penv.find_paravectors(False)
         dp = penv.dotprod[hp][cont_win:]
@@ -1883,16 +1938,23 @@ def hunted_para_descriptor(dim, exp, hd):
         hunt_bouts = range(dim.hunt_wins[hi][0],
                            dim.hunt_wins[hi][1]+1)
         hunt_bout_frames = [exp.bout_frames[i] for i in hunt_bouts]
+        realfish.hunt_firstframes.append(hunt_bout_frames[0])
+        realfish.hunt_interbouts.append(np.diff(hunt_bout_frames))
+        realfish.hunt_results.append(ac)
         norm_bf = [hbf - hunt_bout_frames[0] for hbf in hunt_bout_frames]
         norm_bf = map(lambda(x): x+int_win, norm_bf)
         print('hunt_bout_frames')
         exp.map_bouts_to_heading(hi, dim.hunt_wins)
         framewin = exp.minboutlength / 2
         # these are normed to the hunting bout so that first bout is 0.
-        # make a counter here. The first velocity is always over 10 frames, otherwise make it bout locked.
-
         for ind, bout in enumerate(hunt_bouts):
             norm_frame = norm_bf[ind]
+            inferred_coordinate = False
+            for infwin in inferred_window_ranges_poi:
+                if np.intersect1d(
+                        range(norm_frame-framewin, norm_frame),
+                        infwin):
+                    inferred_coordinate = True
             delta_pitch = dim.all_flags[bout][pitch_flag]
             delta_yaw = dim.all_flags[bout][yaw_flag]
             para_az = np.nanmean(filt_az[norm_frame-framewin:norm_frame])
@@ -1933,8 +1995,17 @@ def hunted_para_descriptor(dim, exp, hd):
                                     postbout_az,
                                     postbout_alt,
                                     postbout_dist,
-                                    ac])
+                                    ac,
+                                    inferred_coordinate])
+            if ind != -1:
+                hunt_df.loc[ind] = [exp.bout_az[ind],
+                                    exp.bout_alt[ind],
+                                    exp.bout_dist[ind],
+                                    delta_pitch,
+                                    delta_yaw]
+
             if ind == -1:
+                realfish.hunt_dataframes.append(copy.deepcopy(hunt_df))
                 break
     csv_data(header, bout_descriptor, 'huntingbouts', exp.directory)
                                     
@@ -2255,6 +2326,11 @@ def magvector(vector):
     return mag
 
 
+
+# This function plots all the possible bouts the fish can perform.
+# It maps all bouts to Az, Alt, Dist coordinates with an interbout, pitch, and yaw.
+# 
+
 def map_all_bouts(myexp, dim):
     # Don't forget delta yaw is negative with respect to Az changes. 
     bout_window = range(0, len(myexp.bout_frames))
@@ -2407,7 +2483,7 @@ if __name__ == '__main__':
     dimreduce = False
     
     if new_exp:
-        # HERE IF YOU WANT TO CLUSTER MANY FISH IN THE FUTURE, MAKE A DICT OF FISH_IDs AND RUN THROUGH THIS LOOP
+        # HERE IF YOU WANT TO CLUSTER MANY FISH IN THE FUTURE, MAKE A DICT OF FISH_IDs AND RUN THROUGH THIS LOOP. MAY WANT TO CLUSTER MORE FISH TO PULL OUT STRIKES VS ABORTS. 
         # if num_fish != 1:
         #     FISH ID DICTIONARY HERE, LOOP THROUGH
         #         myexp = Experiment(10, all_varbs_dict, flag_dict, drct)

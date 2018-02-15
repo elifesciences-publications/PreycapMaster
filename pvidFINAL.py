@@ -1183,13 +1183,14 @@ class ParaMaster():
                     1]].timestamp + len(self.all_xz[pair[1]].location)] = z
             return nan_base_x, nan_base_y, nan_base_z
 
-        def coord_inference(z_in):
+        def coord_inference(z_in, para_number):
             duration_thresh = 200
             nanstretch = False
             nan_start_ind = 0
             nan_end_ind = 0
             nan_windows = []
             z_out = np.copy(z_in)
+            inferred_windows = []
             for ind, z in enumerate(z_in):
                 if math.isnan(z) and not nanstretch and ind > 0:
                     if not math.isnan(z_in[ind-1]):
@@ -1219,7 +1220,8 @@ class ParaMaster():
                             z_in[win[0]-1],
                             z_in[win[1]],
                             win[1]-win[0]).astype(np.int)
-                        self.interp_indices.append(win)
+                    inferred_windows.append(win)
+            self.interp_indices.append([[para_number], inferred_windows])
             return z_out
 
         for recnumber, rec in enumerate(self.xyzrecords):
@@ -1227,9 +1229,9 @@ class ParaMaster():
             index = recnumber * 3
             yinv = [1888 - ycoord for ycoord in y]
             zinv = [1888 - zcoord for zcoord in z]
-            zinv_nonan = coord_inference(zinv)
-            xinf = coord_inference(x)
-            yinf = coord_inference(yinv)
+            zinv_nonan = coord_inference(zinv, index)
+            xinf = coord_inference(x, index)
+            yinf = coord_inference(yinv, index)
             self.para3Dcoords[index] = xinf
             self.para3Dcoords[index + 1] = yinf
 #these inversions put paracoords in same reference frame as fish
