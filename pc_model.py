@@ -179,8 +179,9 @@ class FishModel:
         self.strike_params = strike_params
         self.real_hunt_dict = real_hunt_dict
         self.interbouts = real_hunt_dict["Interbouts"]
-        self.number_bouts_generated = 0
 #        self.interbouts = generate_random_interbouts(5000)
+        self.number_bouts_generated = 0
+
 
     def generate_random_interbouts(self, num_bouts):
         all_ibs = np.floor(np.random.random(num_bouts) * 100)

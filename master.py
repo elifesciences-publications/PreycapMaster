@@ -12,6 +12,7 @@ import numpy as np
 import pickle
 import math
 from scipy.ndimage.filters import gaussian_filter
+from collections import Counter
 import scipy.ndimage as ndi
 import scipy.signal
 from toolz.itertoolz import sliding_window, partition
@@ -37,13 +38,15 @@ To begin, first create an Experiment class and use its bout_detector method to f
 
 Once the Experiment class has been set up, you have the option to cluster behaviors on one or many fish. Start with single fish clustering and see what you can pull out. Create a DimensionalityReduce instance and run dim_reduce(2) on it (3 if you want 3D clustering, which doesn't really help). Based on your choice of clusters, you now enter the hunt_windows into the class by calling find_hunts on your chosen hunt and deconverge clusters. 
 
+To interact with hunts, first call watch_hunt on the first index. Every hunt bout is contained in dim.hunt_wins. Hunts begin at candidate hunt initiation bouts and run for 10 bouts. To encapsulate hunts, you can extend the hunt window (extend_hunt_window) or cap it (cap_hunt_window). Capping gives you possible deconverge bouts from clustering, and you choose the correct index to end on. Once you've decided that the hunt is encapsulated by an initiation and a deconvergence, you can decide to characterize the paramecia environment. This is done by pushing "1" during watch hunt when it is suggested to fully characterize. Any other button cancels the analysis. Calling nexthunt now goes to the next hunt, and pressing spacebar will continually cycle through hunts until you find one that is satisfying. Pushing 2 during nexthunt will stop the string of recurring hunt displays. An important feature for judging hunts is calling repeat but with the opposite plane video to watch the hunt from both sides. Calling bouts_during_hunt lets you see the entire tail profile of the hunt and examine whether the bouts called look reasonable. They usually look fine. It can also show you why the clustering may have missed a deconverge bout, etc. 
 
-To interact with hunts, first call watch_hunt on the first index. Every hunt is      dim.extend_hunt_window extends the dimensions of the hunt, while dim.cap_window ends the hunt at a particular index. 
+Once you've chosen to analyze a para environment, you can watch the results of the calls using exp.paradata.watch_event(). You will notice that the fish occludes the paramecium at some points, which disconnects continuous records. You can call manual_join to join records, manual_fix to try to add single plane records to xyz records, and manual_remove to get rid of clearly incorrect calls (happens very rarely -- you are usually the one to introduce bad calls). You can call manual_match to join together an XY and XZ rec that were not previously paired. Once you have fully characterized the paramecia, include the hunt into a HuntDescriptor. 
+
+For adding into the HuntDescriptor, just call hd.update_hunt_data(exp.current_hunt_ind.....)
+The last entry into the hd is an endbout. If its simply the deconvergence bout, enter -1. Otherwise if the consumption of the para happens without a strike (which sometimes happens, then they swim off in a large deconvergence swim), use -2 etc. 
 
 Once you are finished with your HuntDescriptor, call para_stimuli to generate a csv file with all initial stimuli information, hunted_para_descriptor to generate a csv file with all hunting bouts characterized relative to para location. You can also call huntbouts_wrapped to obtain the 
-z and eye angle trajectories over each hunt
-
-
+z and eye angle trajectories over each hunt, which is valuable for convincing people that hunt initiations do begin with eye vergence. 
 
 '''
 
@@ -58,7 +61,7 @@ z and eye angle trajectories over each hunt
 
 
 class IdealFishData:
-    
+    pass
 
 
 class RealFishControl:
@@ -96,9 +99,8 @@ class RealFishControl:
     def exporter(self):
         self.find_initial_conditions()
         with open(
-                self.directory +
-                '/RealHuntData_' + self.fish_id + '.pkl', 'wb')
-        as file:
+                self.directory + '/RealHuntData_' + self.fish_id + '.pkl',
+                'wb') as file:
             pickle.dump(self, file)
         
 
@@ -330,12 +332,37 @@ class DimensionalityReduce():
 #                                for f_id in os.listdir(self.directory) 
 #                                if f_id[0:4] == 'bout']
         self.bouts_flags = [pickle.load(open(directory + '/bouts.pkl'))]
-        self.cluster_count = 9
+        self.cluster_count = 15
         self.hunt_cluster = []
         self.deconverge_cluster = []
         self.hunt_wins = []
 
-# This will be for the future if you want to cluster all fish in the fish_id_dict. Just add the IDs from the dict to the flag data. 
+# This will be for the future if you want to cluster all fish in the fish_id_dict. Just add the IDs from the dict to the flag data.
+    def watch_cluster(self, cluster, exp):
+        vid = imageio.get_reader(
+            self.directory + '/top_contrasted.AVI', 'ffmpeg')
+        cv2.namedWindow('vid', flags=cv2.cv.CV_WINDOW_NORMAL)
+        for bout_num, cluster_mem in enumerate(self.cluster_membership):
+            if cluster_mem == cluster:
+                firstframe = exp.bout_frames[bout_num] - 10
+                if firstframe <= 0:
+                    continue
+                lastframe = exp.bout_frames[bout_num] + 30
+                for frame in range(firstframe, lastframe):
+                    im = vid.get_data(frame)
+                    im = cv2.resize(im, (700, 700))
+                    if frame == lastframe - 1:
+                        im = np.zeros([700, 700])
+                    cv2.imshow('vid', im)
+                    keypress = cv2.waitKey(delay=15)
+                    if keypress == 50:
+                        cv2.destroyAllWindows()
+                        vid.close()
+                        return
+        cv2.destroyAllWindows()
+        vid.close()
+        return
+
     def extract_and_assignID(self, file_id):
         boutdata = pickle.load(open(file_id, 'rb'))
         num_bouts = len(boutdata.bouts)
@@ -492,6 +519,7 @@ class DimensionalityReduce():
     def cluster_summary(self, *cluster_id):
 #        pl.ion()
         pl.ioff()
+        print Counter(self.cluster_membership)
         num_dp = len(self.all_varbs_dict)
         palette = np.array(sb.color_palette("Set1", num_dp))
         cluster_ids = np.unique(self.cluster_membership)
@@ -520,6 +548,10 @@ class DimensionalityReduce():
             for i in bdict_keys:
                 ax = fig.add_subplot(num_rows, num_cols, i+1)
                 ax.set_title(self.all_varbs_dict[str(i)])
+                if self.all_varbs_dict[str(i)] == 'Interbout_Back':
+                    sb.barplot(data=data_points[str(i)])
+                    continue
+
 # Eventually make the "datapoint" keyword a dictionary of variable names
 # you can also use the dictionary to access points for cluster plots
                 sb.tsplot(data_points[str(i)], color=palette[i], ci=95)
@@ -540,9 +572,10 @@ class DimensionalityReduce():
                                for dp in data_points[str(i)]],
                               color='k',
                               ci=95)
+                
             pl.suptitle('Cluster' + str(_id))
             pl.subplots_adjust(top=0.9, hspace=.4, wspace=.4)
-            pl.savefig(self.directory + '/cluster' + str(_id) + '.pdf')
+            pl.savefig(self.directory + '/cluster' + str(_id) + '.tif')
             pl.show()
             # if len(cluster_ids) != 1:
             #     pl.waitforbuttonpress()
@@ -836,7 +869,7 @@ class Experiment():
         for z in sliding_window(2, self.fishdata.low_res_z):
             z_diffs.append(z[1]-z[0])
 
-        for bindex, bout, bout_duration in enumerate(
+        for bindex, (bout, bout_duration) in enumerate(
                 zip(bout_windows, self.bout_durations)):
             bout_vec = []
             ha_init = np.nanmean(self.fishdata.headingangle[bout[0]:bout[0]+5])
@@ -861,7 +894,7 @@ class Experiment():
                 interbout_from_previous = np.copy(
                     bout[0] - bout_windows[bindex - 1][0])
             else:
-                interbout_from_previous = np.nan
+                interbout_from_previous = 0
             bout = (bout[0], bout[0] + self.minboutlength)
             full_window = (bout[0]-self.para_win, bout[1])
 # This allows you to require continuity before and during bout so heading vector is continuous
@@ -912,6 +945,7 @@ class Experiment():
                             bout_vec.append(interbout_from_previous)
 
 # sets first ha_diff and xydiff to 0 given that there is no info about previous vals outside of window 
+                
                 dz = get_var_index('Delta Z')
                 dh = get_var_index('Delta Heading Angle')
                 if not math.isnan(dz) and math.isnan(bout_vec[dz]):
@@ -2447,10 +2481,10 @@ if __name__ == '__main__':
         # '7': 'Tail Segment 7',
         # '8': 'Vector Velocity',
         # '9': 'Delta Z',
-        # '10': 'Delta Heading Angle',
-#        '11': 'Eye1 Angle',
-#       '12': 'Eye2 Angle',
-        '13': 'Eye Sum',
+        '10': 'Delta Heading Angle',
+        '11': 'Eye1 Angle',
+        '12': 'Eye2 Angle',
+ #       '13': 'Eye Sum',
         '14': 'Interbout_Back'}
 
 # This dictionary describes a flag set of variables that should be calculated for each bout that describes characteristics of the bout    
@@ -2483,10 +2517,10 @@ if __name__ == '__main__':
 # bout array, matched with a flag array that describes summary statistics for each bout. A new BoutsandFlags object is then created
 # whose only role is to contain the bouts and corresponding flags for each fish. 
 
-    fish_id = '01'
+    fish_id = '070617_8'
     drct = os.getcwd() + '/' + fish_id
     new_exp = False
-    dimreduce = False
+    dimreduce = True
     
     if new_exp:
         # HERE IF YOU WANT TO CLUSTER MANY FISH IN THE FUTURE, MAKE A DICT OF FISH_IDs AND RUN THROUGH THIS LOOP. MAY WANT TO CLUSTER MORE FISH TO PULL OUT STRIKES VS ABORTS. 
