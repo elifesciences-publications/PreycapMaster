@@ -386,7 +386,6 @@ class ParaMaster():
 # Each XYZrecord is a set of pairs ordered in time. Between correlation matching, this function checks if any XYZ records should be matched to another XYZ record to create a new longer record (i.e. the first or last pair in a record is sufficiently close in time and distance to the first or last pair in another XYZ record). Can think of this as a double stranded break being mended.
 
         def matchxyzinternal(recordlist, xypara, xzpara):
-            print('matching xyz records')
             for i in range(len(recordlist)):
                 base = recordlist.pop()
                 if not base:
@@ -438,7 +437,6 @@ class ParaMaster():
                                     comp_xzinit_position,
                                     base_xzend_position) < self.distance_thresh:
                             temp_forward_matches.append((ind, comp))
-                            print('joined XYZ record')
                     elif 0 < base_xyinit_time - comp_xyend_time < self.time_thresh and 0 < base_xzinit_time - comp_xzend_time < self.time_thresh:
                         if magvector(
                                 comp_xyend_position,
@@ -446,7 +444,6 @@ class ParaMaster():
                                     comp_xzend_position,
                                     base_xzinit_position) < self.distance_thresh:
                             temp_backward_matches.append((ind, comp))
-                            print('joined XYZ record')
                     elif ind == len(recordlist) - 1:
                         pass
 #if only a unique match was found, add entire record to the front or back of the base. reinsert the base into the list. delete the comp record.
@@ -554,7 +551,7 @@ class ParaMaster():
                         neighborlist_unique.append(uniquepair)
                 return neighborlist_unique
 
-            print('in length algorithm')
+
 
             # Create candidate lists of possible nearby XY and XZ records to known ends of XYZ records. Items in candidate lists represent para objects that satisfy both a time and 2D distance threshold from ends of XYZ records.
 
@@ -597,8 +594,6 @@ class ParaMaster():
                         candlist_xy_backward, candlist_xz_backward, firstpair,
                         corrmat)
                     if len(neighbors_backward) == 1:
-                        print(neighbors_backward)
-                        print(neighbors_backward[0])
                         neighbor_pair = [neighbors_backward[0][0],
                                          neighbors_backward[0][1]]
                         corrmat = corrmat_reduce(corrmat, neighbor_pair)
@@ -718,11 +713,9 @@ class ParaMaster():
             min_coeff_sum = .9
             min_coeff = .9
             parapairs = []
-#            print('Corrmat Shape: ' + str(corr_mat.shape[0]) + ', ' + str(corr_mat.shape[1]))
             while True:
                 if min_coeff_sum < .4:
                     break
-              #  print corr_mat.shape[0]
                 temp_pairs = findhit(corr_mat,
                                      min_duration,
                                      min_coeff_sum,
@@ -732,14 +725,10 @@ class ParaMaster():
                                      [])
                 if len(temp_pairs) != 0:
                     for tp in temp_pairs:
-                        # print('new pair')
-                        # print tp
                         corr_mat = corrmat_reduce(corr_mat, tp)
                         parapairs.append(tp + [round(min_coeff_sum, 2), round(
                             min_coeff, 2), min_duration])
                 else:
-                    print(min_duration, round(min_coeff_sum, 2), round(
-                        min_coeff, 2))
                     min_duration -= 50
                     if min_duration < 50:  #min_coeff < 0:
                         min_duration = 500
@@ -871,11 +860,9 @@ class ParaMaster():
         highcorr_length = 60
         while True:
             pairs, self.corr_mat = process_corrmat(self.corr_mat)
-            print(len(pairs))
             if not pairs:
                 pairs, self.corr_mat = checkforhighcorr(
                      self.corr_mat, highcorr, highcorr_length)
-                print pairs
                 if not pairs and highcorr > .9:
                     highcorr -= .045
                     highcorr_length += 60
@@ -887,8 +874,6 @@ class ParaMaster():
             recursion_depth = 1
             while True:
                 length_pairlist_before_algorithm = np.copy(len(pairs))
-                print('length algorithm recursion depth')
-                print recursion_depth
                 xyzrecords, pairs, self.corr_mat = pair_by_distance(
                     self.long_xy, self.long_xz, xyzrecords, self.corr_mat)
                 xyzrecords = createxyzrecords([], xyzrecords, self.long_xy,
@@ -970,7 +955,7 @@ class ParaMaster():
             self.unpaired_xz.append((xz_id, xz_para, up_xz_coords))
             
 #        self.unpaired_xz = zip(xzrecs, all_remaining_xz)
-        print('find_misses complete')
+
     #this function plots a list of pairs in one figure, with all xy recs in magenta, all xz in cyan
 
     def x_y_z_coords(self, rec_id):
@@ -1360,7 +1345,6 @@ class ParaMaster():
         cv2.destroyAllWindows()
 
     def label_para(self):
-        print('labeling para')
         frame_num = np.load('/Users/andrewbolton/para_continuity_window.npy')
         frame_num = int(frame_num)
         temp_top = deque()
@@ -1448,7 +1432,6 @@ class ParaMaster():
             self.recs_and_misses()
             self.graph3D(True)
         if self.makemovies:
-            print('in label para')
             self.label_para()
 #            self.make_id_movies()
 #        self.exporter()

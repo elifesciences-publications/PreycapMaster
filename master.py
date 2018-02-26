@@ -2,7 +2,7 @@ import os
 import copy
 import csv
 import cv2
-import pandas
+import pandas as pd
 import imageio
 from sklearn.manifold import SpectralEmbedding
 from sklearn.cluster import SpectralClustering
@@ -13,7 +13,6 @@ import pickle
 import math
 from scipy.ndimage.filters import gaussian_filter
 from collections import Counter
-import scipy.ndimage as ndi
 import scipy.signal
 from toolz.itertoolz import sliding_window, partition
 import matplotlib.cm as cm
@@ -736,10 +735,10 @@ class Experiment():
         self.fishdata.vectV = np.array(vectv).astype(np.float64) / 16.0
 
     def filter_fishdata(self):
-        self.fishdata.x = fill_in_nans(self.fishdata.x)
+#        self.fishdata.x = fill_in_nans(self.fishdata.x)
         self.fishdata.y = fill_in_nans(self.fishdata.y)
         self.fishdata.z = fill_in_nans(self.fishdata.z)
-        self.fishdata.low_res_x = fill_in_nans(self.fishdata.low_res_x)
+ #       self.fishdata.low_res_x = fill_in_nans(self.fishdata.low_res_x)
         self.fishdata.low_res_y = fill_in_nans(self.fishdata.low_res_y)
         self.fishdata.low_res_z = fill_in_nans(self.fishdata.low_res_z)
         self.fishdata.phiright = fill_in_nans(self.fishdata.phiright)
@@ -2517,9 +2516,9 @@ if __name__ == '__main__':
 # bout array, matched with a flag array that describes summary statistics for each bout. A new BoutsandFlags object is then created
 # whose only role is to contain the bouts and corresponding flags for each fish. 
 
-    fish_id = '070617_8'
+    fish_id = '022118_2'
     drct = os.getcwd() + '/' + fish_id
-    new_exp = False
+    new_exp = True
     dimreduce = True
     
     if new_exp:
