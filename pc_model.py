@@ -42,7 +42,7 @@ class PreyCap_Simulation:
 #also, dont want just simulated para. want to use real para trajectories that you can get out of p3d in the para model. very easy. paramodel will instead just be a function that grabs random XYZ coords of hunted para. 
 
     def create_para_trajectory(self):
-        if isinstance(self.paramodel.model, pomegranate.hmm.HiddenMarkovModel):
+       if isinstance(self.paramodel.model, pomegranate.hmm.HiddenMarkovModel):
             random_start_vector = np.array([np.random.random(),
                                             np.random.random(),
                                             np.random.random()])

@@ -6,7 +6,10 @@ import pandas as pd
 import math
 from scipy.stats import pearsonr
 from matplotlib import use
-use('Qt4Agg')
+import bayeslite as bl
+from iventure.utils_bql import query
+from iventure.utils_bql import subsample_table_columns
+#use('agg')
 import seaborn as sb
 from matplotlib import pyplot as pl
 from matplotlib.ticker import MaxNLocator
@@ -18,7 +21,84 @@ from matplotlib.colors import Normalize, ListedColormap
 # Make sure you go into the files here and DE-invert the yaw and pitch. convert all
 # pitches to radians, convert all yaws to negative radians in the original csv compiler. 
 
+class BayesDB_Simulator:
+    def __init__(self):
+        self.bdb_file = bl.bayesdb_open(
+            'Bolton_HuntingBouts_Sim_Inverted.bdb')
+        self.model_varbs = {"Model Number": 0,
+                            "Row Limit": 5000,
+                            "Para Az": "BETWEEN -3.14 AND 3.14",
+                            "Para Alt": "BETWEEN -1.57 AND 1.57",
+                            "Para Dist": "BETWEEN 0 AND 5000",
+                            "Para Az Velocity": "BETWEEN -20 AND 20",
+                            "Para Alt Velocity": "BETWEEN -20 AND 20",
+                            "Para Dist Velocity": "BETWEEN -5000 AND 5000"}
+        self.orig_model_varbs = copy.deepcopy(self.model_varbs)
+        self.query_dataframe = pd.DataFrame()
+        self.query_params = {"query expression": 0, "conditioner": 0, "source": ""}
 
+    def set_conditions(self, condition, value):
+        self.model_varbs[condition] = value
+
+    def reset_conditions(self):
+        self.model_varbs = copy.deepcopy(self.orig_model_varbs)
+        
+    def simulate_from_exact_pvarbs(self):
+        self.query_dataframe = query(self.bdb_file,
+                                     ''' SIMULATE "Bout Az", "Bout Alt",
+                                     "Bout Dist", "Bout Delta Pitch", "Bout Delta Yaw"
+                                     FROM bout_population
+                                     GIVEN "Para Az" = {Para Az},
+                                     "Para Alt" = {Para Alt},
+                                     "Para Dist" = {Para Dist},
+                                     "Para Az Velocity" = {Para Az Velocity},
+                                     "Para Alt Velocity" = {Para Alt Velocity},
+                                     "Para Dist velocity" = {Para Dist Velocity}
+                                     LIMIT 5000 '''.format(**self.model_varbs))
+
+    def setup_rejection_query(self):
+        self.bdb_file.execute('''DROP TABLE IF EXISTS "bout_simulation"''')
+        self.bdb_file.execute('''CREATE TABLE "bout_simulation" AS
+        SIMULATE "Bout Az", "Bout Alt", "Bout Dist", "Bout Delta Yaw", "Bout Delta Pitch", "Para Az", "Para Az Velocity", "Para Alt", "Para Alt Velocity", "Para Dist", "Para Dist Velocity"
+        FROM bout_population
+        USING MODEL {Model Number}
+        LIMIT {Row Limit}; '''.format(**self.model_varbs))
+
+    def set_query_params(self, query_expression, conditioner):
+        self.query_params['query_expression'] = query_expression
+        self.query_params['conditioner'] = conditioner
+
+    def rejection_query(self, source):
+        if source == 0:
+            self.query_params['source'] = "bout_simulation"
+        elif source == 1:
+            self.query_params['source'] = "bout_table"
+        df = query(self.bdb_file,
+                   '''SELECT {query_expression} FROM {source} WHERE {conditioner}'''.format(
+                       **self.query_params))
+        self.query_dataframe = df
+        return df
+
+    def compare_sim_to_real(self, query_expression):
+        df_real = self.rejection_query(1)
+        df_sim = self.rejection_query(0)
+        # here want mean and std for all models...loop over 50 and make a list of means, stds
+        sb.distplot(df_real[query_expression], bins=100, color='g')
+        sb.distplot(df_sim[query_expression], bins=100, color='m')
+        pl.show()
+
+    def compare_2_queries(self, q_exp, condition1, condition2, real, new_sim):
+        if new_sim:
+            if not real:
+                self.setup_rejection_query()
+        self.set_query_params(q_exp, condition1)
+        c1_result = self.rejection_query(real)
+        self.set_query_params(q_exp, condition2)
+        c2_result = self.rejection_query(real)
+        sb.distplot(c1_result[q_exp.replace('"', '')], bins=100, color='b')
+        sb.distplot(c2_result[q_exp.replace('"', '')], bins=100, color='y')
+        
+                        
 def concatenate_all_csv(fish_list, file_name, invert):
     with open(os.getcwd() + '/all_huntingbouts.csv', 'wb') as csvfile:
         output_data = csv.writer(csvfile)
@@ -309,7 +389,6 @@ def stim_analyzer(data):
         if h == 0:
             ignored.append(val)
     dp = sb.distplot(ignored + attended, color='b')
- #   dp = sb.distplot(ignored, color=colorpal[0])
     sb.distplot(attended, color=colorpal[3])
     dp.set_axis_bgcolor('w')
     dp.tick_params(labelsize=13)
@@ -318,8 +397,6 @@ def stim_analyzer(data):
     pl.show()
 
 
-#Make this a function
-    
 def huntbouts_plotter(data):
     v1_cond1 = []
     v2_cond1 = []
@@ -360,9 +437,11 @@ def huntbouts_plotter(data):
     
 #csv_file = 'huntingbouts_all.csv'
 #csv_file = 'stimuli_all.csv'
-csv_file = 'huntbouts1_2s.csv'
+#csv_file = 'huntbouts1_2s.csv'
 #csv_file = 'huntbouts_rad.csv'
+csv_file = '~/bayesDB/huntbouts_extended_inverted.csv'
 data = pd.read_csv(csv_file)
+bd_test = BayesDB_Simulator()
 
     
 #pred_wrapper(data, [[0, .1], [.1, .2], [.3, .4], [.4, .5]], [3])
