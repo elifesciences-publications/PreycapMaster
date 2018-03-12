@@ -83,13 +83,13 @@ class RealFishControl:
 
 # exp contains all relevant fish data. frames will come from hunted_para_descriptor, which will
 # create realfishcontrol objects as it runs. 
-    def find_initial_conditions():
+    def find_initial_conditions(self):
         for firstframe in self.hunt_firstframes:
             self.initial_conditions.append([self.fish_xyz[firstframe],
                                             self.pitch_all[firstframe],
                                             self.yaw_all[firstframe]])
 
-    def model_input(hunt_num):
+    def model_input(self, hunt_num):
         return {"Hunt Dataframe": self.hunt_dataframes[hunt_num],
                 "Para XYZ": self.para_xyz_per_hunt[hunt_num],
                 "Initial Conditions": self.initial_conditions[hunt_num],
@@ -102,8 +102,6 @@ class RealFishControl:
                 'wb') as file:
             pickle.dump(self, file)
         
-
-
 
 class Hunt_Descriptor:
     def __init__(self, directory):
@@ -2516,10 +2514,10 @@ if __name__ == '__main__':
 # bout array, matched with a flag array that describes summary statistics for each bout. A new BoutsandFlags object is then created
 # whose only role is to contain the bouts and corresponding flags for each fish. 
 
-    fish_id = '022118_2'
+    fish_id = '070617_1'
     drct = os.getcwd() + '/' + fish_id
-    new_exp = True
-    dimreduce = True
+    new_exp = False
+    dimreduce = False
     
     if new_exp:
         # HERE IF YOU WANT TO CLUSTER MANY FISH IN THE FUTURE, MAKE A DICT OF FISH_IDs AND RUN THROUGH THIS LOOP. MAY WANT TO CLUSTER MORE FISH TO PULL OUT STRIKES VS ABORTS. 

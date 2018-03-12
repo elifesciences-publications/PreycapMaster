@@ -71,7 +71,19 @@ def generate_random_data(raw_data, invert):
 # here you will invert all bouts wrt para position so that you only have right side and upward para.
 # in the model, you will need to transform backwards...i.e. when you get a left down coord, have to transform it
 # back into a rightward up.
+
+def invert_all_bouts(raw_data):
+    new_df = pd.DataFrame(columns=raw_data.columns.tolist())
+    for i in range(raw_data.shape[0]):
+        row_dict = data.loc[i]
+        inverted_row = bout_inversion(row_dict)
+        row_values = inverted_row.values
+        if not np.isfinite(row_values).all():
+            continue
+        new_df.loc[i] = row_values
+    new_df.to_csv('huntbouts_inverted.csv')
     
+        
 def bout_inversion(row):
     inverted_row = copy.deepcopy(row)
     if row["Para Az"] < 0:
