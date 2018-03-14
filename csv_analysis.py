@@ -23,7 +23,7 @@ class BayesDB_Simulator:
             '/home/nightcrawler/bayesDB/Bolton_HuntingBouts_inversion_nonoptimized.bdb')
 #        self.bdb_file = bl.bayesdb_open(
 #            '/home/nightcrawler/bayesDB/Bolton_HuntingBouts_Sim_Inverted_optimized.bdb')
-        self.model_varbs = {"Model Number": 22,
+        self.model_varbs = {"Model Number": 37,
                             "Row Limit": 5000,
                             "Para Az": "BETWEEN -3.14 AND 3.14",
                             "Para Alt": "BETWEEN -1.57 AND 1.57",
@@ -304,10 +304,11 @@ def prediction_conditionals(pred):
           p_leadaz_cond_lagalt,
           p_leadalt_cond_leadaz,
           p_leadalt_cond_lagaz)
-    sb.barplot(range(4), [p_leadaz_cond_leadalt,
-                          p_leadaz_cond_lagalt,
-                          p_leadalt_cond_leadaz,
-                          p_leadalt_cond_lagaz], color='c')
+    cond_plot = sb.barplot(range(4), [p_leadaz_cond_leadalt,
+                                      p_leadaz_cond_lagalt,
+                                      p_leadalt_cond_leadaz,
+                                      p_leadalt_cond_lagaz], color='c')
+    cond_plot.set_ylim([0, 1])
     pl.show()
 
 
@@ -317,7 +318,6 @@ def pred_wrapper(data, limits, condition, az_or_alt):
     for lim in limits:
         pred = prediction_calculator(data, lim, condition, az_or_alt)
         prediction_conditionals(pred)
-        pl.show()
         if az_or_alt == 'az':
             ratio_list.append(len(pred[0]) / float(len(pred[1])))
             total_bouts.append(len(pred[0]) + len(pred[1]))
@@ -369,6 +369,8 @@ def prediction_calculator(data, limit, condition, az_or_alt):
             lagging_alt.append(i)
         else:
             leading_alt.append(i)
+    sb.barplot(range(4), [len(leading_az), len(lagging_az), len(leading_alt), len(lagging_alt)])
+    pl.show()
     return leading_az, lagging_az, leading_alt, lagging_alt
 
 
@@ -476,11 +478,11 @@ data = pd.read_csv(csv_file)
 bdsim = BayesDB_Simulator()
 
     
-#pred_wrapper(data, [[0, .1], [.1, .2], [.3, .4]], [1,2], 'alt')
+#pred_wrapper(data, [[0, .1], [.1, .2], [.3, .4], [.4, .5]], [1,2], 'alt')
 
-pred_wrapper(data, [[0, .05], [.05, .1], [.1, .15], [.15, .2], [.2, .25], [.25, .3]], [1,2], 'az')
+pred_wrapper(data, [[0, .05], [.05, .1], [.1, .15], [.15, .2], [.2, .25], [.25, .3]], [1,2], 'alt')
 
-#pred_wrapper(data, [[0, 1]], [1,2], 'alt')
+#pred_wrapper(data, [[0, 1]], [1,2], 'az')
 
 
 

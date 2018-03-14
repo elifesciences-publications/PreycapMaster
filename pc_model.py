@@ -93,7 +93,7 @@ class PreyCap_Simulation:
             px = self.para_xyz[0]
             py = self.para_xyz[1]
             pz = self.para_xyz[2]
-                    
+
         while True:
 
             # MAKE SURE YOU KNOW WHY YOU HAVE TO CUT ONE OFF THE END
@@ -316,7 +316,7 @@ class FishModel:
                          b_dict["Bout Delta Yaw"]])
         return bout
 
-    
+
 def mapped_para_generator(hb_data):
     ind = np.int(np.random.random() * len(hb_data['Para Az']))
     p_varbs = hb_data.iloc[ind][6:14]
@@ -353,14 +353,6 @@ def characterize_strikes(hb_data):
                     strike_characteristics.append(strike)
     avg_strike_position = np.mean(np.abs(strike_characteristics), axis=0)
     return avg_strike_position
-    
-
-
-    
-
-# HERE GRAB CSV HUNTBOUTS FILE. GENERATE A RANDOM NUMBER GRAB FOR EACH LIST FROM 0-1 TIMES LENGTH OF THE ARRAY toint().
-    
-
 
 
 csv_file = 'huntbouts_rad.csv'
