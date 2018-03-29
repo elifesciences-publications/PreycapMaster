@@ -12,8 +12,7 @@ import bayeslite as bl
 from iventure.utils_bql import query
 from iventure.utils_bql import subsample_table_columns
 from collections import deque
-from master import fishxyz_to_unitvecs, sphericalbout_to_xyz,
-p_map_to_fish, RealFishControl
+from master import fishxyz_to_unitvecs, sphericalbout_to_xyz, p_map_to_fish, RealFishControl
 
 # this program depends on master, para_hmm_final, csv output from fish data.
 # first magit try1
@@ -94,7 +93,7 @@ class PreyCap_Simulation:
             px = self.para_xyz[0]
             py = self.para_xyz[1]
             pz = self.para_xyz[2]
-                    
+
         while True:
 
             # MAKE SURE YOU KNOW WHY YOU HAVE TO CUT ONE OFF THE END
@@ -168,7 +167,7 @@ class PreyCap_Simulation:
 
 class FishModel:
     def __init__(self, modchoice, strike_params, real_hunt_dict):
-        self.bdb_file = bl.bayesdb_open('Bolton_HuntingBouts_extended.bdb')
+        self.bdb_file = bl.bayesdb_open('Bolton_HuntingBouts_Sim_inverted.bdb')
         if modchoice == 0:
             self.model = (lambda pv: self.regression_model(pv))
         elif modchoice == 1:
@@ -235,6 +234,8 @@ class FishModel:
     def bdb_model(self, para_varbs):
         self.number_bouts_generated += 1
         invert = True
+#        sampling = 'median'
+        sampling = 'sample'
         
         def invert_pvarbs(pvarbs):
             pvcopy = copy.deepcopy(pvarbs)
@@ -262,23 +263,45 @@ class FishModel:
 
         if invert:
             para_varbs, inv_az, inv_alt = invert_pvarbs(para_varbs)
-                
-        df_sim = query(self.bdb_file,
-                       ''' SIMULATE "Bout Az", "Bout Alt",
-                       "Bout Dist", "Bout Delta Pitch", "Bout Delta Yaw"
-                       FROM bout_population
-                       GIVEN "Para Az" = {Para Az},
-                       "Para Alt" = {Para Alt},
-                       "Para Dist" = {Para Dist},
-                       "Para Az Velocity" = {Para Az Velocity},
-                       "Para Alt Velocity" = {Para Alt Velocity},
-                       "Para Dist velocity" = {Para Dist Velocity}
-                       LIMIT 5000 '''.format(**para_varbs))
-        bout_az = df_sim['Bout Az'].median()
-        bout_alt = df_sim['Bout Alt'].median()
-        bout_dist = df_sim['Bout Dist'].median()
-        bout_pitch = df_sim['Bout Delta Pitch'].median()
-        bout_yaw = -1*df_sim['Bout Delta Yaw'].median()
+
+        if sampling == 'median':
+            df_sim = query(self.bdb_file,
+                           ''' SIMULATE "Bout Az", "Bout Alt",
+                           "Bout Dist", "Bout Delta Pitch", "Bout Delta Yaw"
+                           FROM bout_population
+                           GIVEN "Para Az" = {Para Az},
+                           "Para Alt" = {Para Alt},
+                           "Para Dist" = {Para Dist},
+                           "Para Az Velocity" = {Para Az Velocity},
+                           "Para Alt Velocity" = {Para Alt Velocity},
+                           "Para Dist velocity" = {Para Dist Velocity}
+                           USING MODEL 37
+                           LIMIT 5000 '''.format(**para_varbs))
+            bout_az = df_sim['Bout Az'].median()
+            bout_alt = df_sim['Bout Alt'].median()
+            bout_dist = df_sim['Bout Dist'].median()
+            bout_pitch = df_sim['Bout Delta Pitch'].median()
+            bout_yaw = -1*df_sim['Bout Delta Yaw'].median()
+
+        elif sampling == 'sample':
+            df_sim = query(self.bdb_file,
+                           ''' SIMULATE "Bout Az", "Bout Alt",
+                           "Bout Dist", "Bout Delta Pitch", "Bout Delta Yaw"
+                           FROM bout_population
+                           GIVEN "Para Az" = {Para Az},
+                           "Para Alt" = {Para Alt},
+                           "Para Dist" = {Para Dist},
+                           "Para Az Velocity" = {Para Az Velocity},
+                           "Para Alt Velocity" = {Para Alt Velocity},
+                           "Para Dist velocity" = {Para Dist Velocity}
+                           USING MODEL 37
+                           LIMIT 1 '''.format(**para_varbs))
+            bout_az = df_sim['Bout Az'][0]
+            bout_alt = df_sim['Bout Alt'][0]
+            bout_dist = df_sim['Bout Dist'][0]
+            bout_pitch = df_sim['Bout Delta Pitch'][0]
+            bout_yaw = -1*df_sim['Bout Delta Yaw'][0]
+
         b_dict = {"Bout Az": bout_az,
                   "Bout Alt": bout_alt,
                   "Bout Dist": bout_dist,
@@ -293,7 +316,7 @@ class FishModel:
                          b_dict["Bout Delta Yaw"]])
         return bout
 
-    
+
 def mapped_para_generator(hb_data):
     ind = np.int(np.random.random() * len(hb_data['Para Az']))
     p_varbs = hb_data.iloc[ind][6:14]
@@ -330,25 +353,15 @@ def characterize_strikes(hb_data):
                     strike_characteristics.append(strike)
     avg_strike_position = np.mean(np.abs(strike_characteristics), axis=0)
     return avg_strike_position
-    
 
-
-    
-
-# HERE GRAB CSV HUNTBOUTS FILE. GENERATE A RANDOM NUMBER GRAB FOR EACH LIST FROM 0-1 TIMES LENGTH OF THE ARRAY toint().
-    
 
 csv_file = 'huntbouts_rad.csv'
 hb = pd.read_csv(csv_file)
-real = pickle.load(open(drct + '/RealHuntData_ID.pkl', 'rb'))
+#real = pickle.load(open(drct + '/RealHuntData_ID.pkl', 'rb'))
 para_model = pickle.load(open(os.getcwd() + '/pmm.pkl', 'rb'))
-
-random_start_vector
-
 
 np.random.seed()
 sequence_length = 10000
-
 strike_params = characterize_strikes(hb)
 fish = FishModel(1, strike_params)
 print('Creating Simulator')

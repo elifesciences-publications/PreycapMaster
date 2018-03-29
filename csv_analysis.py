@@ -6,19 +6,121 @@ import pandas as pd
 import math
 from scipy.stats import pearsonr
 from matplotlib import use
-use('Qt4Agg')
+import bayeslite as bl
+from iventure.utils_bql import query
+from iventure.utils_bql import subsample_table_columns
+#use('agg')
+from scipy.stats import norm
 import seaborn as sb
 from matplotlib import pyplot as pl
 from matplotlib.ticker import MaxNLocator
 from matplotlib.colors import Normalize, ListedColormap
 
 
-# Make this a real analysis program instead of a bunch of discontinuous junk.
+class BayesDB_Simulator:
+    def __init__(self):
+        self.bdb_file = bl.bayesdb_open(
+            '/home/nightcrawler/bayesDB/Bolton_HuntingBouts_inversion_nonoptimized.bdb')
+#        self.bdb_file = bl.bayesdb_open(
+#            '/home/nightcrawler/bayesDB/Bolton_HuntingBouts_Sim_Inverted_optimized.bdb')
+        self.model_varbs = {"Model Number": 37,
+                            "Row Limit": 5000,
+                            "Para Az": "BETWEEN -3.14 AND 3.14",
+                            "Para Alt": "BETWEEN -1.57 AND 1.57",
+                            "Para Dist": "BETWEEN 0 AND 5000",
+                            "Para Az Velocity": "BETWEEN -20 AND 20",
+                            "Para Alt Velocity": "BETWEEN -20 AND 20",
+                            "Para Dist Velocity": "BETWEEN -5000 AND 5000"}
+        self.orig_model_varbs = copy.deepcopy(self.model_varbs)
+        self.query_dataframe = pd.DataFrame()
+        self.query_params = {"query expression": 0, "conditioner": 0, "source": ""}
 
-# Make sure you go into the files here and DE-invert the yaw and pitch. convert all
-# pitches to radians, convert all yaws to negative radians in the original csv compiler. 
+    def score_models(self):
+        pass
 
+    def set_conditions(self, condition, value):
+        self.model_varbs[condition] = value
 
+    def reset_conditions(self):
+        self.model_varbs = copy.deepcopy(self.orig_model_varbs)
+        
+    def simulate_from_exact_pvarbs(self):
+        self.query_dataframe = query(self.bdb_file,
+                                     ''' SIMULATE "Bout Az", "Bout Alt",
+                                     "Bout Dist", "Bout Delta Pitch", "Bout Delta Yaw"
+                                     FROM bout_population
+                                     GIVEN "Para Az" = {Para Az},
+                                     "Para Alt" = {Para Alt},
+                                     "Para Dist" = {Para Dist},
+                                     "Para Az Velocity" = {Para Az Velocity},
+                                     "Para Alt Velocity" = {Para Alt Velocity},
+                                     "Para Dist velocity" = {Para Dist Velocity}
+                                     LIMIT 5000 '''.format(**self.model_varbs))
+
+    def setup_rejection_query(self):
+        self.bdb_file.execute('''DROP TABLE IF EXISTS "bout_simulation"''')
+        self.bdb_file.execute('''CREATE TABLE "bout_simulation" AS
+        SIMULATE "Bout Az", "Bout Alt", "Bout Dist", "Bout Delta Yaw", "Bout Delta Pitch", "Para Az", "Para Az Velocity", "Para Alt", "Para Alt Velocity", "Para Dist", "Para Dist Velocity"
+        FROM bout_population
+        USING MODEL {Model Number}
+        LIMIT {Row Limit}; '''.format(**self.model_varbs))
+
+    def set_query_params(self, query_expression, conditioner):
+        self.query_params['query_expression'] = query_expression
+        self.query_params['conditioner'] = conditioner
+
+    def rejection_query(self, real):
+        if not real:
+            self.query_params['source'] = "bout_simulation"
+        elif real:
+            self.query_params['source'] = "bout_table"
+        df = query(self.bdb_file,
+                   '''SELECT {query_expression} FROM {source} WHERE {conditioner}'''.format(
+                       **self.query_params))
+        self.query_dataframe = df
+        return df
+
+    def two_variable_regression(self, query_expression, condition):
+        self.set_query_params(query_expression, condition)
+        v1 = query_expression.split(',')[0].replace('"', '')
+        v2 = query_expression.split(',')[1].replace('"', '')                
+        df_real = self.rejection_query(1)
+        reg_plot = sb.regplot(df_real[v1],
+                              df_real[v2],
+                              fit_reg=True, n_boot=100, robust=True, color='g')
+        rx, ry = reg_plot.get_lines()[0].get_data()
+        r_slope = np.around((ry[1] - ry[0])/(rx[1] - rx[0]), 2)
+        r_yint = np.around(ry[1] - r_slope*rx[1], 2)
+        reg_fit = np.around(pearsonr(df_real[v1], df_real[v2])[0], 2)
+        reg_plot.text(rx[0], np.max(df_real[v2]), '  ' +
+                      str(r_slope) + 'x + ' + str(
+                          r_yint) + ', ' + 'r = ' + str(reg_fit),
+                      color='k', fontsize=14)
+
+        
+    def compare_sim_to_real(self, query_expression):
+        df_real = self.rejection_query(1)
+        df_sim = self.rejection_query(0)
+        # here want mean and std for all models...loop over 50 and make a list of means, stds
+        sb.distplot(df_real[query_expression], bins=100, color='g')
+        sb.distplot(df_sim[query_expression], bins=100, color='m')
+        pl.show()
+
+    def compare_2_queries(self, q_exp, condition1, condition2, real, new_sim):
+        if not real:
+            if new_sim:
+                self.setup_rejection_query()
+        self.set_query_params(q_exp, condition1)
+        c1_result = self.rejection_query(real)
+        self.set_query_params(q_exp, condition2)
+        c2_result = self.rejection_query(real)
+        sb.distplot(c1_result[q_exp.replace('"', '')], fit_kws={"color":"blue"}, fit=norm, kde=False,color='b')
+        sb.distplot(c2_result[q_exp.replace('"', '')], fit_kws={"color":"yellow"}, fit=norm, kde=False,color='y')
+        pl.show()
+#        sb.distplot(c1_result[q_exp.replace('"', '')], bins=100, color='b')
+#        sb.distplot(c2_result[q_exp.replace('"', '')], bins=100, color='y')
+        
+                        
 def concatenate_all_csv(fish_list, file_name, invert):
     with open(os.getcwd() + '/all_huntingbouts.csv', 'wb') as csvfile:
         output_data = csv.writer(csvfile)
@@ -48,7 +150,7 @@ def generate_random_data(raw_data, invert):
         noise = np.random.uniform(0.9, 1.1, row.shape[0])
         noisy_row = row * noise
         return noisy_row
-
+    row_counter = 0
     new_csv = raw_data.copy()
     random_samples = 5000
     for i in range(random_samples):
@@ -62,9 +164,8 @@ def generate_random_data(raw_data, invert):
         row_w_noise = create_noise(random_row_values)
         if not np.isfinite(row_w_noise).all():
             continue
-
-#        new_csv.loc[i+data.shape[0]] = row_w_noise
-        new_csv.loc[i] = row_w_noise
+        new_csv.loc[row_counter] = row_w_noise
+        row_counter += 1
     new_csv.to_csv('huntbouts_extended_inverted.csv')
 
 
@@ -203,30 +304,43 @@ def prediction_conditionals(pred):
           p_leadaz_cond_lagalt,
           p_leadalt_cond_leadaz,
           p_leadalt_cond_lagaz)
-    sb.barplot(range(len(counts)), counts)
+    cond_plot = sb.barplot(range(4), [p_leadaz_cond_leadalt,
+                                      p_leadaz_cond_lagalt,
+                                      p_leadalt_cond_leadaz,
+                                      p_leadalt_cond_lagaz], color='c')
+    cond_plot.set_ylim([0, 1])
     pl.show()
 
-    
-def pred_wrapper(data, limits, condition):
+
+def pred_wrapper(data, limits, condition, az_or_alt):
     ratio_list = []
+    total_bouts = []
     for lim in limits:
-        pred = prediction_calculator(data, lim, condition)
-        ratio_list.append(len(pred[0]) / float(len(pred[1])))
-    sb.barplot(range(len(ratio_list)), ratio_list)
+        pred = prediction_calculator(data, lim, condition, az_or_alt)
+        prediction_conditionals(pred)
+        if az_or_alt == 'az':
+            ratio_list.append(len(pred[0]) / float(len(pred[1])))
+            total_bouts.append(len(pred[0]) + len(pred[1]))
+        if az_or_alt == 'alt':
+            ratio_list.append(len(pred[2]) / float(len(pred[3])))
+            total_bouts.append(len(pred[2]) + len(pred[3]))
+    sb.barplot(range(len(ratio_list)), ratio_list, color='g')
     pl.show()
-#    pl.bar(ratio_list)
-#    pl.show()
-    return ratio_list
- 
+    return total_bouts
 
-def prediction_calculator(data, limit, condition):
+
+def prediction_calculator(data, limit, condition, az_or_alt):
     leading_az = []
     lagging_az = []
     leading_alt = []
     lagging_alt = []
     for i in range(len(data["Para Az"])):
-        if not (limit[0] <= np.abs(data["Para Az"][i]) < limit[1]):
-            continue
+        if az_or_alt == 'az':
+            if not (limit[0] <= np.abs(data["Para Az"][i]) < limit[1]):
+                continue
+        if az_or_alt == 'alt':
+            if not (limit[0] <= np.abs(data["Para Alt"][i]) < limit[1]):
+                continue
         if data["Strike Or Abort"][i] not in condition:
             continue
         if data["Bout Number"][i] < 1:
@@ -255,8 +369,8 @@ def prediction_calculator(data, limit, condition):
             lagging_alt.append(i)
         else:
             leading_alt.append(i)
-    print len(leading_az) + len(lagging_az)
-    print len(leading_az) / float(len(lagging_az))
+    sb.barplot(range(4), [len(leading_az), len(lagging_az), len(leading_alt), len(lagging_alt)])
+    pl.show()
     return leading_az, lagging_az, leading_alt, lagging_alt
 
 
@@ -309,7 +423,6 @@ def stim_analyzer(data):
         if h == 0:
             ignored.append(val)
     dp = sb.distplot(ignored + attended, color='b')
- #   dp = sb.distplot(ignored, color=colorpal[0])
     sb.distplot(attended, color=colorpal[3])
     dp.set_axis_bgcolor('w')
     dp.tick_params(labelsize=13)
@@ -318,8 +431,6 @@ def stim_analyzer(data):
     pl.show()
 
 
-#Make this a function
-    
 def huntbouts_plotter(data):
     v1_cond1 = []
     v2_cond1 = []
@@ -360,14 +471,23 @@ def huntbouts_plotter(data):
     
 #csv_file = 'huntingbouts_all.csv'
 #csv_file = 'stimuli_all.csv'
-csv_file = 'huntbouts1_2s.csv'
-#csv_file = 'huntbouts_rad.csv'
+#csv_file = 'huntbouts1_2s.csv'
+csv_file = 'huntbouts_rad.csv'
+#csv_file = '~/bayesDB/huntbouts_inverted.csv'
 data = pd.read_csv(csv_file)
+bdsim = BayesDB_Simulator()
 
     
-#pred_wrapper(data, [[0, .1], [.1, .2], [.3, .4], [.4, .5]], [3])
-#pred_wrapper(data, [[0, .05], [.05, .1], [.1, .15], [.15, .2]], [3])
-    
+#pred_wrapper(data, [[0, .1], [.1, .2], [.3, .4], [.4, .5]], [1,2], 'alt')
+
+pred_wrapper(data, [[0, .05], [.05, .1], [.1, .15], [.15, .2], [.2, .25], [.25, .3]], [1,2], 'alt')
+
+#pred_wrapper(data, [[0, 1]], [1,2], 'az')
+
+
+
+
+
 #a = twod_scatter(data, "Az Coord", "Alt Coord")
 #a = twod_scatter(data, "Raw Velocity", "Dot Product")
 
@@ -381,5 +501,4 @@ data = pd.read_csv(csv_file)
 
 # try seaborn pairplot across the entire dataframe. 
 # randomize paramecium motion and see if it still correlates. 
-
 
