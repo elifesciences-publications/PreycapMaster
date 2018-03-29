@@ -4,10 +4,9 @@ import csv
 import cv2
 import pandas as pd
 import imageio
-from sklearn.manifold import SpectralEmbedding
+from sklearn.manifold import SpectralEmbedding, Isomap
 from sklearn.cluster import SpectralClustering
-from matplotlib import pyplot as pl
-from matplotlib.colors import Normalize, ListedColormap
+from sklearn.mixture import GaussianMixture, BayesianGaussianMixture
 import numpy as np
 import pickle
 import math
@@ -15,20 +14,24 @@ from scipy.ndimage.filters import gaussian_filter
 from collections import Counter
 import scipy.signal
 from toolz.itertoolz import sliding_window, partition
-import matplotlib.cm as cm
 from sympy import Point3D, Plane
+from matplotlib import use
+use('Qt4Agg')
+import matplotlib.cm as cm
+from matplotlib import pyplot as pl
+from matplotlib.colors import Normalize, ListedColormap
 import seaborn as sb
 import mpl_toolkits.mplot3d.axes3d as p3
 import matplotlib.animation as anim
 from scipy.spatial.distance import pdist, squareform
-from phinalIR import Variables
+from phinalIR_cluster_wik import Variables
 from phinalFL import Fluorescence_Analyzer
 from pvidFINAL import Para, ParaMaster, return_paramaster_object
 sb.set_style('darkgrid')
 
 
+# Clustering on eye1, eye2, delta yaw, and interbout yields nice sep between aborts and strikes with spectral clustering and Bayesian mixture. Gaussian mixture is no good. 
 
-# ADD INTERPOLATION FLAG TO THE CSV FILES. 
 
 
 ''' Instructions for using prey cap master code:
@@ -156,7 +159,6 @@ class Hunt_Descriptor:
 # -5, -5, -5. when you multiply the scaled unit vectors of the basis by these coords and add to ufish origin, you get a real x,y,z coord of tank position. if# all coords are less than 1888, give the coordinate of env_mat a 1 bump. if not, give a zero bump. never give a bump to negative x coordinates! (i.e. start # the loop at scale / 2 for x, 0 for y and z.
 
 
-
 class ParaEnv:
 
     def __init__(self, index, directory):
@@ -280,12 +282,6 @@ class ParaEnv:
         else:
             return nanlist, nanlist
 
-            
-# does the fish optimize its non-hunting bouts by moving towards high density para? multiply dot product to COM of density
-# HBO paper suggets that randomness is for foraging. 
-# negative case where fish does not optimize -- is it a thresholding issue or do they just not do it? 
-# does the fish cover the tank? can re-analyze with virtual para in same places with control fish. fish visual acuity 5 degrees?? 
-
 
 class BoutsAndFlags():
 
@@ -301,8 +297,6 @@ class BoutsAndFlags():
 
         
 # This class will take in BoutsAndFlags objects for each fish then run TSNE on the combined dataset
-
-
 # Want this to be able to take the boutsandflags from ALL fish. You want to add a dictionary with the fishids you want to cluster on.
 # 
 
@@ -311,7 +305,7 @@ class DimensionalityReduce():
     def __init__(self,
                  bout_dict,
                  flag_dict, all_varbs_dict, directory, fish_id_dict):
-
+        self.recluster = True
         self.directory = directory
         self.cluster_input = []
         self.num_dp = len(all_varbs_dict)
@@ -329,18 +323,56 @@ class DimensionalityReduce():
 #                                for f_id in os.listdir(self.directory) 
 #                                if f_id[0:4] == 'bout']
         self.bouts_flags = [pickle.load(open(directory + '/bouts.pkl'))]
-        self.cluster_count = 15
+        self.cluster_count = 10
         self.hunt_cluster = []
         self.deconverge_cluster = []
         self.hunt_wins = []
+        self.model_fit = pickle.load(
+            open('/Users/andrewbolton/Desktop/PreyCap/bayesmodel.pkl', 'rb'))
 
 # This will be for the future if you want to cluster all fish in the fish_id_dict. Just add the IDs from the dict to the flag data.
-    def watch_cluster(self, cluster, exp):
-        vid = imageio.get_reader(
-            self.directory + '/top_contrasted.AVI', 'ffmpeg')
+
+    def export_model(self):
+        with open(self.directory + '/bayesmodel.pkl', 'wb') as file:
+            pickle.dump(self.model_fit, file)
+
+    def strike_abort_sep(self, term_cluster):
+        cluster_indices = np.where(self.cluster_membership == term_cluster)[0]
+            # now get all bouts from cluster indices in all_bouts
+        flags_in_term_cluster = np.array(self.all_flags)[cluster_indices]
+        interbout_index = int(dim.inv_fdict['Interbout'])
+        delta_yaw_index = int(dim.inv_fdict['Total Yaw Change'])
+        interbouts_in_cluster = [
+            f[interbout_index] for f in flags_in_term_cluster]
+        dyaw_in_cluster = [
+            np.abs(f[delta_yaw_index]) for f in flags_in_term_cluster]
+        ib_plot = sb.distplot(interbouts_in_cluster, bins=100)
+        ib_plot.set_title('Interbouts in Term Cluster')
+        pl.show()
+        dy_plot = sb.distplot(dyaw_in_cluster, bins=100)
+        dy_plot.set_title('Delta Yaw in Term Cluster')
+        pl.show()
+        return interbouts_in_cluster, dyaw_in_cluster
+                                              
+    def watch_cluster(self, exp, cluster, vidtype, term):
+        if vidtype == 1:
+            vid = imageio.get_reader(
+                self.directory + '/top_contrasted.AVI', 'ffmpeg')
+        elif vidtype == 0:
+            vid = imageio.get_reader(
+                self.directory + '/conts.AVI', 'ffmpeg')
+
         cv2.namedWindow('vid', flags=cv2.cv.CV_WINDOW_NORMAL)
+        c_mem_counter = 0
+        if term:
+            ib, dy = self.strike_abort_sep(cluster)
         for bout_num, cluster_mem in enumerate(self.cluster_membership):
             if cluster_mem == cluster:
+                if term:
+                    dyaw = dy[c_mem_counter]
+                    c_mem_counter += 1
+                    if dyaw > 10:
+                        continue
                 firstframe = exp.bout_frames[bout_num] - 10
                 if firstframe <= 0:
                     continue
@@ -356,6 +388,7 @@ class DimensionalityReduce():
                         cv2.destroyAllWindows()
                         vid.close()
                         return
+
         cv2.destroyAllWindows()
         vid.close()
         return
@@ -406,10 +439,14 @@ class DimensionalityReduce():
             norm_bouts.append(norm_bout)
         self.cluster_input = norm_bouts
         print(str(len(self.all_bouts)) + " Bouts Detected")
-        cluster_model = SpectralClustering(n_clusters=self.cluster_count,
-                                           affinity='nearest_neighbors',
-                                           n_neighbors=20)
-
+        if self.recluster:
+            cluster_model = SpectralClustering(n_clusters=self.cluster_count,
+                                               affinity='nearest_neighbors',
+                                               n_neighbors=10)
+#           cluster_model = BayesianGaussianMixture(n_components=10)
+#            self.model_fit = cluster_model.fit(np.array(norm_bouts))
+ #       c_flag = self.model_fit.predict(np.array(norm_bouts))
+#        cluster_model.fit(np.array(norm_bouts))
         c_flag = cluster_model.fit_predict(np.array(norm_bouts))
         self.cluster_membership = c_flag
         num_clusters = np.unique(self.cluster_membership).shape[0]
@@ -545,15 +582,17 @@ class DimensionalityReduce():
             for i in bdict_keys:
                 ax = fig.add_subplot(num_rows, num_cols, i+1)
                 ax.set_title(self.all_varbs_dict[str(i)])
-                if self.all_varbs_dict[str(i)] == 'Interbout_Back':
-                    sb.barplot(data=data_points[str(i)])
-                    continue
+                # if self.all_varbs_dict[str(i)] == 'Interbout_Back':
+                #     sb.barplot(data=data_points[str(i)])
+                #     continue
 
 # Eventually make the "datapoint" keyword a dictionary of variable names
 # you can also use the dictionary to access points for cluster plots
                 sb.tsplot(data_points[str(i)], color=palette[i], ci=95)
                 if self.all_varbs_dict[str(i)][0:3] == 'Eye':
                     ax.set_ylim([-60, 60])
+                elif self.all_varbs_dict[str(i)] == 'Interbout_Back':
+                    ax.set_ylim([0, 100])
                 elif self.all_varbs_dict[str(i)][0:4] == 'Vect':
                     ax.set_ylim([0, 3])
                 # elif self.bout_dict[str(i+1)][0:5] == 'Pitch':
@@ -564,7 +603,7 @@ class DimensionalityReduce():
                               color='k',
                               ci=95)
 #                    ax.set_ylim([-20, 20])
-                elif self.all_varbs_dict[str(i)] == 'Delta Heading Angle':
+                elif self.all_varbs_dict[str(i)] == 'Delta Yaw':
                     sb.tsplot([np.cumsum(dp)
                                for dp in data_points[str(i)]],
                               color='k',
@@ -733,10 +772,10 @@ class Experiment():
         self.fishdata.vectV = np.array(vectv).astype(np.float64) / 16.0
 
     def filter_fishdata(self):
-#        self.fishdata.x = fill_in_nans(self.fishdata.x)
+        self.fishdata.x = fill_in_nans(self.fishdata.x)
         self.fishdata.y = fill_in_nans(self.fishdata.y)
         self.fishdata.z = fill_in_nans(self.fishdata.z)
- #       self.fishdata.low_res_x = fill_in_nans(self.fishdata.low_res_x)
+        self.fishdata.low_res_x = fill_in_nans(self.fishdata.low_res_x)
         self.fishdata.low_res_y = fill_in_nans(self.fishdata.low_res_y)
         self.fishdata.low_res_z = fill_in_nans(self.fishdata.low_res_z)
         self.fishdata.phiright = fill_in_nans(self.fishdata.phiright)
@@ -780,7 +819,7 @@ class Experiment():
             inverted_bout = []
             ey1 = get_var_index('Eye1 Angle')
             ey2 = get_var_index('Eye2 Angle')
-            ha_ind = get_var_index('Delta Heading Angle')
+            ha_ind = get_var_index('Delta Yaw')
             ts1 = get_var_index('Tail Segment 1')
             ts2 = get_var_index('Tail Segment 2')
             ts3 = get_var_index('Tail Segment 3')
@@ -868,6 +907,8 @@ class Experiment():
 
         for bindex, (bout, bout_duration) in enumerate(
                 zip(bout_windows, self.bout_durations)):
+            interbout_backwards = np.copy(
+                bout[0] - bout_windows[bindex - 1][0])
             bout_vec = []
             ha_init = np.nanmean(self.fishdata.headingangle[bout[0]:bout[0]+5])
             x_init = np.nanmean(self.fishdata.x[bout[0]:bout[0]+5])
@@ -887,11 +928,6 @@ class Experiment():
                     continue
                         
             interbout = np.copy(bout[1] - bout[0])
-            if bindex > 0:
-                interbout_from_previous = np.copy(
-                    bout[0] - bout_windows[bindex - 1][0])
-            else:
-                interbout_from_previous = 0
             bout = (bout[0], bout[0] + self.minboutlength)
             full_window = (bout[0]-self.para_win, bout[1])
 # This allows you to require continuity before and during bout so heading vector is continuous
@@ -902,7 +938,7 @@ class Experiment():
             
             if self.assure_nonans(full_window):
                 filtered_bout_frames.append(bout[0])
-                filtered_interbout.append(interbout)
+                filtered_interbout.append(interbout_backwards)
                 filtered_bout_durations.append(bout_duration)
                 phil_start = phileft_filt[bout[0]]
                 phir_start = phiright_filt[bout[0]]
@@ -928,23 +964,30 @@ class Experiment():
                             bout_vec.append(self.fishdata.vectV[ind])
                         elif self.bout_dict[str(key)] == 'Delta Z':
                             bout_vec.append(z_diffs[ind])
-                        elif self.bout_dict[str(key)] == 'Delta Heading Angle':
+                        elif self.bout_dict[str(key)] == 'Delta Yaw':
                             bout_vec.append(ha_diffs[ind])
                         elif self.bout_dict[str(key)] == 'Eye1 Angle':
                             bout_vec.append(phileft_filt[ind] - phil_start)
+#                            bout_vec.append(phileft_filt[ind])
                         elif self.bout_dict[str(key)] == 'Eye2 Angle':
                             bout_vec.append(phiright_filt[ind] - phir_start)
+#                            bout_vec.append(phiright_filt[ind])
                         elif self.bout_dict[str(key)] == 'Eye Sum':
                             bout_vec.append(
                                 phileft_filt[ind] -
                                 phil_start + phiright_filt[ind] - phir_start)
                         elif self.bout_dict[str(key)] == 'Interbout_Back':
+                            if bindex > 0:
+                                interbout_from_previous = np.copy(
+                                    ind - bout_windows[bindex - 1][0])
+                            else:
+                                interbout_from_previous = 0
                             bout_vec.append(interbout_from_previous)
 
 # sets first ha_diff and xydiff to 0 given that there is no info about previous vals outside of window 
                 
                 dz = get_var_index('Delta Z')
-                dh = get_var_index('Delta Heading Angle')
+                dh = get_var_index('Delta Yaw')
                 if not math.isnan(dz) and math.isnan(bout_vec[dz]):
                     bout_vec[dz] = 0
                 if not math.isnan(dh) and math.isnan(bout_vec[dh]):
@@ -1006,7 +1049,7 @@ class Experiment():
                     flags.append(total_z)
                 elif self.flag_dict[str(key)] == 'Total Pitch Change':
                     flags.append(delta_pitch)
-                elif self.flag_dict[str(key)] == 'Total Heading Angle Change':
+                elif self.flag_dict[str(key)] == 'Total Yaw Change':
                     flags.append(ha_sum)
                 elif self.flag_dict[str(key)] == 'Fluorescence Level':
                     flags.append(gutflag)
@@ -1197,6 +1240,7 @@ class Experiment():
         print("Starts At Frame " + str(ind1))
         print("Ends At Frame " + str(ind2))
         dirct = self.directory + '/'
+        print dirct
         if cont_side == 0:
             vid = imageio.get_reader(dirct + 'conts.AVI', 'ffmpeg')
         elif cont_side == 1:
@@ -1259,7 +1303,7 @@ class Experiment():
                 bout_partition = partition(self.num_dp, bout)
                 ax.plot(np.cumsum([val[i]
                                    for val in bout_partition]), color='k')
-            elif self.bout_dict[str(i)] == 'Delta Heading Angle':
+            elif self.bout_dict[str(i)] == 'Delta Yaw':
                 bout_partition = partition(self.num_dp, bout)
                 ax.plot(np.cumsum([val[i]
                                    for val in bout_partition]), color='k')
@@ -1908,7 +1952,6 @@ def bouts_during_hunt(hunt_ind, dimred, exp, plotornot):
 
 
 def hunted_para_descriptor(dim, exp, hd):
-    # may have to change this, b/c bouts in a hunt have short IBI.
     header = ['Hunt ID',
               'Bout Number',
               'Bout Az',
@@ -1932,7 +1975,7 @@ def hunted_para_descriptor(dim, exp, hd):
     int_win = exp.integration_window
     cont_win = exp.para_continuity_window
     pitch_flag = int(dim.inv_fdict['Total Pitch Change'])
-    yaw_flag = int(dim.inv_fdict['Total Heading Angle Change'])
+    yaw_flag = int(dim.inv_fdict['Total Yaw Change'])
     bout_descriptor = []
     df_labels = ["Bout Az", "Bout Alt",
                  "Bout Dist", "Bout Delta Pitch", "Bout Delta Yaw"]
@@ -1945,7 +1988,6 @@ def hunted_para_descriptor(dim, exp, hd):
                 hi).zfill(2) + ".npy")[hp*3:hp*3 + 3][:, cont_win+int_win:]
         realfish.para_xyz_per_hunt.append(para3D)
         hunt_df = pd.DataFrame(columns=df_labels)
-        
         poi_wrth = create_poirec(hi, 3, exp.directory, hp)
         inferred_windows_all = np.load(
             exp.directory + '/para_interp_windows' + str(hi).zfill(2) + '.npy')
@@ -2372,7 +2414,7 @@ def map_all_bouts(myexp, dim):
     # Don't forget delta yaw is negative with respect to Az changes. 
     bout_window = range(0, len(myexp.bout_frames))
     pitch_flag = int(dim.inv_fdict['Total Pitch Change'])
-    yaw_flag = int(dim.inv_fdict['Total Heading Angle Change'])
+    yaw_flag = int(dim.inv_fdict['Total Yaw Change'])
     interbouts = [b-a for a, b in sliding_window(2, myexp.bout_frames)]
     myexp.map_bouts_to_heading(0, [[bout_window[0], bout_window[-1]]])
     delta_pitch = np.radians(
@@ -2459,7 +2501,7 @@ if __name__ == '__main__':
         '7': 'Tail Segment 7',
         '8': 'Vector Velocity',
         '9': 'Delta Z',
-        '10': 'Delta Heading Angle',
+        '10': 'Delta Yaw',
         '11': 'Eye1 Angle',
         '12': 'Eye2 Angle',
         '13': 'Eye Sum',
@@ -2478,11 +2520,11 @@ if __name__ == '__main__':
         # '7': 'Tail Segment 7',
         # '8': 'Vector Velocity',
         # '9': 'Delta Z',
-        '10': 'Delta Heading Angle',
+ #       '10': 'Delta Yaw',
         '11': 'Eye1 Angle',
-        '12': 'Eye2 Angle',
- #       '13': 'Eye Sum',
-        '14': 'Interbout_Back'}
+        '12': 'Eye2 Angle'}
+#        '13': 'Eye Sum'} #,
+#        '14': 'Interbout_Back'}
 
 # This dictionary describes a flag set of variables that should be calculated for each bout that describes characteristics of the bout    
 
@@ -2493,7 +2535,7 @@ if __name__ == '__main__':
         '3': 'Average Velocity',
         '4': 'Total Z',
         '5': 'Total Pitch Change',
-        '6': 'Total Heading Angle Change',
+        '6': 'Total Yaw Change',
         '7': 'Fluorescence Level',
         '8': 'Bout Duration',
         '9': 'Cluster ID'}
@@ -2514,10 +2556,10 @@ if __name__ == '__main__':
 # bout array, matched with a flag array that describes summary statistics for each bout. A new BoutsandFlags object is then created
 # whose only role is to contain the bouts and corresponding flags for each fish. 
 
-    fish_id = '070617_1'
+    fish_id = '030118_1'
     drct = os.getcwd() + '/' + fish_id
-    new_exp = False
-    dimreduce = False
+    new_exp = True
+    dimreduce = True
     
     if new_exp:
         # HERE IF YOU WANT TO CLUSTER MANY FISH IN THE FUTURE, MAKE A DICT OF FISH_IDs AND RUN THROUGH THIS LOOP. MAY WANT TO CLUSTER MORE FISH TO PULL OUT STRIKES VS ABORTS. 
