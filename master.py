@@ -6,7 +6,6 @@ import pandas as pd
 import imageio
 from sklearn.manifold import SpectralEmbedding, Isomap
 from sklearn.cluster import SpectralClustering
-from sklearn.mixture import GaussianMixture, BayesianGaussianMixture
 import numpy as np
 import pickle
 import math

@@ -357,13 +357,13 @@ def characterize_strikes(hb_data):
 
 csv_file = 'huntbouts_rad.csv'
 hb = pd.read_csv(csv_file)
-#real = pickle.load(open(drct + '/RealHuntData_ID.pkl', 'rb'))
+fish_id = '030118_2'
+real = pickle.load(open('RealHuntData_' + fish_id + '.pkl', 'rb'))
 para_model = pickle.load(open(os.getcwd() + '/pmm.pkl', 'rb'))
-
 np.random.seed()
 sequence_length = 10000
 strike_params = characterize_strikes(hb)
-fish = FishModel(1, strike_params)
+fish = FishModel(2, strike_params)
 print('Creating Simulator')
 sim = PreyCap_Simulation(
     fish,
