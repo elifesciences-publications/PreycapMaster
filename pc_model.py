@@ -27,10 +27,10 @@ class PreyCap_Simulation:
         self.para_states = []
         self.para_xyz = []
         self.para_spherical = []
-        self.fish_xyz = [fishmodel.real_hunt_dict["Initial Conditions"][0]]
+        self.fish_xyz = [fishmodel.real_hunt_df["Initial Conditions"][0]]
         self.fish_bases = []
-        self.fish_pitch = [fishmodel.real_hunt_dict["Initial Conditions"][1]]
-        self.fish_yaw = [fishmodel.real_hunt_dict["Initial Conditions"][2]]
+        self.fish_pitch = [fishmodel.real_hunt_df["Initial Conditions"][1]]
+        self.fish_yaw = [fishmodel.real_hunt_df["Initial Conditions"][2]]
         self.simulated_para = False
         self.interbouts = self.fishmodel.interbouts
 
@@ -166,7 +166,7 @@ class PreyCap_Simulation:
     
 
 class FishModel:
-    def __init__(self, modchoice, strike_params, real_hunt_dict):
+    def __init__(self, modchoice, strike_params, real_hunt_df):
         self.bdb_file = bl.bayesdb_open('Bolton_HuntingBouts_Sim_inverted.bdb')
         if modchoice == 0:
             self.model = (lambda pv: self.regression_model(pv))
@@ -176,8 +176,8 @@ class FishModel:
             self.model = (lambda pv: self.real_hunt(pv))
             
         self.strike_params = strike_params
-        self.real_hunt_dict = real_hunt_dict
-        self.interbouts = real_hunt_dict["Interbouts"]
+        self.real_hunt_df = real_hunt_df
+        self.interbouts = real_hunt_df["Interbouts"]
 #        self.interbouts = generate_random_interbouts(5000)
         self.number_bouts_generated = 0
 
@@ -197,7 +197,7 @@ class FishModel:
             return False
 
     def real_fish(self, para_varbs):
-        hunt_df = self.real_hunt_dict[
+        hunt_df = self.real_hunt_df[
             "Hunt Dataframe"][self.number_bouts_generated]
         bout = np.array([hunt_df["Bout Az"],
                          hunt_df["Bout Alt"],
@@ -358,12 +358,14 @@ def characterize_strikes(hb_data):
 csv_file = 'huntbouts_rad.csv'
 hb = pd.read_csv(csv_file)
 fish_id = '030118_2'
-real = pickle.load(open('RealHuntData_' + fish_id + '.pkl', 'rb'))
+# real = pickle.load(
+#     open(os.getcwd() + '/RealHuntData_' + fish_id + '.pkl', 'rb'))
+real = pd.read_pickle(os.getcwd() + '/RealHuntData_' + fish_id + '.pkl')
 para_model = pickle.load(open(os.getcwd() + '/pmm.pkl', 'rb'))
 np.random.seed()
 sequence_length = 10000
 strike_params = characterize_strikes(hb)
-fish = FishModel(2, strike_params)
+fish = FishModel(2, strike_params, real)
 print('Creating Simulator')
 sim = PreyCap_Simulation(
     fish,
