@@ -6,6 +6,7 @@ import seaborn as sb
 import pandas as pd
 import os
 import math
+from toolz.itertoolz import partition
 from para_hmm_final import ParaMarkovModel
 import pomegranate
 import bayeslite as bl
@@ -14,52 +15,59 @@ from iventure.utils_bql import subsample_table_columns
 from collections import deque
 from master import fishxyz_to_unitvecs, sphericalbout_to_xyz, p_map_to_fish, RealFishControl
 
-# this program depends on master, para_hmm_final, csv output from fish data.
-# first magit try1
+# want to upload para model each time. para model will tell you the state of the para you are using.
 
 
 class PreyCap_Simulation:
-    def __init__(self, fishmodel, paramodel, para_init, simlen):
+    def __init__(self, fishmodel, paramodel, simlen, simulate_para):
         self.fishmodel = fishmodel
         self.paramodel = paramodel
         self.sim_length = simlen
-        self.para_initial_conditions = para_init
         self.para_states = []
-        self.para_xyz = []
+        self.para_xyz = [fishmodel.real_hunt_df["Para XYZ"][0],
+                         fishmodel.real_hunt_df["Para XYZ"][1],
+                         fishmodel.real_hunt_df["Para XYZ"][2]]
         self.para_spherical = []
         self.fish_xyz = [fishmodel.real_hunt_df["Initial Conditions"][0]]
         self.fish_bases = []
         self.fish_pitch = [fishmodel.real_hunt_df["Initial Conditions"][1]]
         self.fish_yaw = [fishmodel.real_hunt_df["Initial Conditions"][2]]
-        self.simulated_para = False
+        self.simulate_para = simulate_para
         self.interbouts = self.fishmodel.interbouts
+        self.create_para_trajectory()
 
-
-# have to start with an XYZ velocity that reflects the velocity profile of
-# d_az, d_alt, d_dist that the fish likes. can randomly draw a para
-
+#
 #also, dont want just simulated para. want to use real para trajectories that you can get out of p3d in the para model. very easy. paramodel will instead just be a function that grabs random XYZ coords of hunted para. 
 
     def create_para_trajectory(self):
-        if isinstance(self.paramodel.model, pomegranate.hmm.HiddenMarkovModel):
-            random_start_vector = np.array([np.random.random(),
-                                            np.random.random(),
-                                            np.random.random()])
-            para_initial_conditions = [
-                np.array([1000, 1000, 1000]), random_start_vector]
+        def make_accel_vectors():
+            spacing = int(np.load('spacing.npy'))
+            vx = [p[-1] - p[0] for p in partition(spacing, self.para_xyz[0])]
+            vy = [p[-1] - p[0] for p in partition(spacing, self.para_xyz[1])]
+            vz = [p[-1] - p[0] for p in partition(spacing, self.para_xyz[2])]
+            acc = np.diff([vx, vy, vz])
+            accel_vectors = zip(acc[0], acc[1], acc[2])
+            return accel_vectors
+                        
+        if self.simulate_para:
+            p_start_position = np.array([
+                self.para_xyz[0][0], self.para_xyz[1][0], self.para_xyz[2][0]])
+            p_position_5 = np.array([
+                self.para_xyz[0][5], self.para_xyz[1][5], self.para_xyz[2][5]])
+            start_vector = p_position_5 - p_start_position
+            para_initial_conditions = [p_start_position, start_vector]
             px, py, pz, states, vmax = self.paramodel.generate_para(
                 para_initial_conditions[1],
                 para_initial_conditions[0], self.sim_length)
+            # resets para_xyz for generative model
             self.para_xyz = [np.array(px), np.array(py), np.array(pz)]
             self.para_states = states
-            self.simulated_para = True
-        elif isinstance(self.paramodel.model, dict):
-            self.para_xyz = [np.array(self.paramodel.model["Para XYZ"][0]),
-                             np.array(self.paramodel.model["Para XYZ"][1]),
-                             np.array(self.paramodel.model["Para XYZ"][2])]
+
+        else:
+            accelerations = make_accel_vectors()
+            self.para_states = self.paramodel.model.predict(accelerations)
             
     def run_simulation(self):
-
         framecounter = 0
         # spacing is an integer describing the sampling of vectors by the para. i.e.       # draws a new accel vector every 'spacing' frames
         spacing = np.load('spacing.npy')
@@ -70,7 +78,7 @@ class PreyCap_Simulation:
         p_az_hist = deque(maxlen=vel_history)
         p_alt_hist = deque(maxlen=vel_history)
         p_dist_hist = deque(maxlen=vel_history)
-        if self.simulated_para:
+        if self.simulate_para:
             px = np.interp(
                 np.linspace(0,
                             self.para_xyz[0].shape[0],
@@ -90,9 +98,7 @@ class PreyCap_Simulation:
                 range(self.para_xyz[2].shape[0]),
                 self.para_xyz[2])
         else:
-            px = self.para_xyz[0]
-            py = self.para_xyz[1]
-            pz = self.para_xyz[2]
+            px, py, pz = self.para_xyz
 
         while True:
 
@@ -360,19 +366,20 @@ hb = pd.read_csv(csv_file)
 fish_id = '030118_2'
 # real = pickle.load(
 #     open(os.getcwd() + '/RealHuntData_' + fish_id + '.pkl', 'rb'))
-real = pd.read_pickle(os.getcwd() + '/RealHuntData_' + fish_id + '.pkl')
+real_fish_object = pd.read_pickle(
+    os.getcwd() + '/RealHuntData_' + fish_id + '.pkl')
 para_model = pickle.load(open(os.getcwd() + '/pmm.pkl', 'rb'))
 np.random.seed()
 sequence_length = 10000
 strike_params = characterize_strikes(hb)
-fish = FishModel(2, strike_params, real)
+fish = FishModel(2, strike_params, real_fish_object.model_input(0))
 print('Creating Simulator')
 sim = PreyCap_Simulation(
     fish,
     para_model,
-    sequence_length)
+    sequence_length,
+    False)
 
-sim.create_para_trajectory()
 sim.run_simulation()
 np.save('/home/nightcrawler/PandaModels/para_simulation.npy', sim.para_xyz)
 np.save('/home/nightcrawler/PandaModels/origin_model.npy', sim.fish_xyz)
