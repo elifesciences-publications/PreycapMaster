@@ -75,7 +75,7 @@ class RealFishControl:
                             filter_sd))
         self.yaw_all = np.radians(unit_to_angle(
             filter_uvec(
-                ang_to_unit(self.fishdata.headingangle), 1)))
+                ang_to_unit(exp.fishdata.headingangle), 1)))
         self.fish_id = exp.directory[-8:]
         self.hunt_results = []
         self.hunt_firstframes = []
@@ -83,6 +83,7 @@ class RealFishControl:
         self.initial_conditions = []
         self.hunt_dataframes = []
         self.para_xyz_per_hunt = []
+        self.directory = exp.directory
 
 # exp contains all relevant fish data. frames will come from hunted_para_descriptor, which will
 # create realfishcontrol objects as it runs. 
@@ -1983,9 +1984,9 @@ def hunted_para_descriptor(dim, exp, hd):
 
     for hi, hp, ac, eb in zip(hd.hunt_ind_list,
                               hd.para_id_list, hd.actions, hd.endbout):
-        para3D = np.load(
-            "para3D" + str(
-                hi).zfill(2) + ".npy")[hp*3:hp*3 + 3][:, cont_win+int_win:]
+        para3D = np.load(exp.directory +
+                         "/para3D" + str(hi).zfill(
+                             2) + ".npy")[hp*3:hp*3 + 3][:, cont_win+int_win:]
         realfish.para_xyz_per_hunt.append(para3D)
         hunt_df = pd.DataFrame(columns=df_labels)
         poi_wrth = create_poirec(hi, 3, exp.directory, hp)
@@ -2086,6 +2087,7 @@ def hunted_para_descriptor(dim, exp, hd):
             if ind == -1:
                 realfish.hunt_dataframes.append(copy.deepcopy(hunt_df))
                 break
+    realfish.exporter()
     csv_data(header, bout_descriptor, 'huntingbouts', exp.directory)
                                     
                                                                
@@ -2556,10 +2558,10 @@ if __name__ == '__main__':
 # bout array, matched with a flag array that describes summary statistics for each bout. A new BoutsandFlags object is then created
 # whose only role is to contain the bouts and corresponding flags for each fish. 
 
-    fish_id = '030118_1'
+    fish_id = '030118_2'
     drct = os.getcwd() + '/' + fish_id
-    new_exp = True
-    dimreduce = True
+    new_exp = False
+    dimreduce = False
     
     if new_exp:
         # HERE IF YOU WANT TO CLUSTER MANY FISH IN THE FUTURE, MAKE A DICT OF FISH_IDs AND RUN THROUGH THIS LOOP. MAY WANT TO CLUSTER MORE FISH TO PULL OUT STRIKES VS ABORTS. 
