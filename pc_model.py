@@ -108,6 +108,9 @@ class PreyCap_Simulation:
                                              self.fish_yaw[-1],
                                              self.fish_pitch[-1])
             self.fish_bases.append(fish_basis[1])
+            if framecounter == len(px):
+                print("hunt epoch complete")
+                break
             para_spherical = p_map_to_fish(fish_basis[1],
                                            fish_basis[0],
                                            fish_basis[3],
@@ -152,6 +155,7 @@ class PreyCap_Simulation:
 
             if framecounter in self.interbouts:
                 fish_bout = self.fishmodel.model(para_varbs)
+                print para_varbs
                 dx, dy, dz = sphericalbout_to_xyz(fish_bout[0],
                                                   fish_bout[1],
                                                   fish_bout[2],
@@ -168,7 +172,7 @@ class PreyCap_Simulation:
                 self.fish_yaw.append(self.fish_yaw[-1])
 
             framecounter += 1
-        return fishmodel.number_bouts_generated
+        return self.fishmodel.num_bouts_generated
     
 
 class FishModel:
@@ -179,13 +183,13 @@ class FishModel:
         elif modchoice == 1:
             self.model = (lambda pv: self.bdb_model(pv))
         elif modchoice == 2:
-            self.model = (lambda pv: self.real_hunt(pv))
+            self.model = (lambda pv: self.real_fish(pv))
             
         self.strike_params = strike_params
         self.real_hunt_df = real_hunt_df
         self.interbouts = real_hunt_df["Interbouts"]
 #        self.interbouts = generate_random_interbouts(5000)
-        self.number_bouts_generated = 0
+        self.num_bouts_generated = 0
 
 
     def generate_random_interbouts(self, num_bouts):
@@ -204,13 +208,14 @@ class FishModel:
 
     def real_fish(self, para_varbs):
         hunt_df = self.real_hunt_df[
-            "Hunt Dataframe"][self.number_bouts_generated]
-        bout = np.array([hunt_df["Bout Az"],
-                         hunt_df["Bout Alt"],
-                         hunt_df["Bout Dist"],
-                         hunt_df["Bout Delta Pitch"],
-                         hunt_df["Bout Delta Yaw"]])
-        self.number_bouts_generated += 1
+            "Hunt Dataframe"].loc[self.num_bouts_generated]
+        bout = np.array(
+            [hunt_df["Bout Az"],
+             hunt_df["Bout Alt"],
+             hunt_df["Bout Dist"],
+             hunt_df["Bout Delta Pitch"],
+             hunt_df["Bout Delta Yaw"]])
+        self.num_bouts_generated += 1
         return bout
 
     def ideal_model(self):
@@ -221,7 +226,7 @@ class FishModel:
         pass
 
     def regression_model(self, para_varbs):
-        self.number_bouts_generated += 1
+        self.num_bouts_generated += 1
         bout_az = (para_varbs['Para Az'] * 1.36) + .02
         bout_yaw = -1 * ((.46 * para_varbs['Para Az']) - .02)
         bout_alt = (1.5 * para_varbs['Para Alt']) + -.37
@@ -238,7 +243,7 @@ class FishModel:
         return bout
 
     def bdb_model(self, para_varbs):
-        self.number_bouts_generated += 1
+        self.num_bouts_generated += 1
         invert = True
 #        sampling = 'median'
         sampling = 'sample'
