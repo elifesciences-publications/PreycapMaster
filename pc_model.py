@@ -36,6 +36,8 @@ class PreyCap_Simulation:
         self.interbouts = self.fishmodel.interbouts
         self.create_para_trajectory()
 
+# BUG IS PROBABLY THAT INTERBOUT 1 IS 0. 
+        
 #
 #also, dont want just simulated para. want to use real para trajectories that you can get out of p3d in the para model. very easy. paramodel will instead just be a function that grabs random XYZ coords of hunted para. 
 
@@ -188,6 +190,7 @@ class FishModel:
         self.strike_params = strike_params
         self.real_hunt_df = real_hunt_df
         self.interbouts = real_hunt_df["Interbouts"]
+        self.interbouts[0] = 0
 #        self.interbouts = generate_random_interbouts(5000)
         self.num_bouts_generated = 0
 
@@ -228,6 +231,7 @@ class FishModel:
     def regression_model(self, para_varbs):
         self.num_bouts_generated += 1
         bout_az = (para_varbs['Para Az'] * 1.36) + .02
+        # NOTE THAT YOUR BOUT DESCRIPTOR IN MASTER.PY NOW OUTPUTS THE RIGHT SIGN OF DELTA YAW. CAN GET RID OF THISINVERSION WHEN ANALYZING NEW DATASET 
         bout_yaw = -1 * ((.46 * para_varbs['Para Az']) - .02)
         bout_alt = (1.5 * para_varbs['Para Alt']) + -.37
         bout_pitch = (.27 * para_varbs['Para Alt']) - .04

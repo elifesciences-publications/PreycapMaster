@@ -2061,8 +2061,8 @@ def hunted_para_descriptor(dim, exp, hd):
                                     exp.bout_az[ind],
                                     exp.bout_alt[ind],
                                     exp.bout_dist[ind],
-                                    delta_pitch,
-                                    delta_yaw,
+                                    np.radians(delta_pitch),
+                                    -1*np.radians(delta_yaw),
                                     para_az,
                                     para_alt,
                                     para_dist,
@@ -2080,8 +2080,8 @@ def hunted_para_descriptor(dim, exp, hd):
                 hunt_df.loc[ind] = [exp.bout_az[ind],
                                     exp.bout_alt[ind],
                                     exp.bout_dist[ind],
-                                    delta_pitch,
-                                    delta_yaw]
+                                    np.radians(delta_pitch),
+                                    -1*np.radians(delta_yaw)]
 
             if ind == -1:
                 realfish.hunt_dataframes.append(copy.deepcopy(hunt_df))
