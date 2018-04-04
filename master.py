@@ -67,6 +67,7 @@ class IdealFishData:
 
 class RealFishControl:
     def __init__(self, exp):
+        self.firstbout_para_intwin = 5
         self.fish_xyz = exp.ufish_origin
         filter_sd = 1
         self.pitch_all = np.radians(
@@ -74,7 +75,7 @@ class RealFishControl:
                             filter_sd))
         self.yaw_all = np.radians(unit_to_angle(
             filter_uvec(
-                ang_to_unit(exp.fishdata.headingangle), 1)))
+                ang_to_unit(exp.fishdata.headingangle), filter_sd)))
         self.fish_id = exp.directory[-8:]
         self.hunt_results = []
         self.hunt_firstframes = []
@@ -96,7 +97,8 @@ class RealFishControl:
         return {"Hunt Dataframe": self.hunt_dataframes[hunt_num],
                 "Para XYZ": self.para_xyz_per_hunt[hunt_num],
                 "Initial Conditions": self.initial_conditions[hunt_num],
-                "Interbouts": self.hunt_interbouts[hunt_num]}
+                "Interbouts": self.hunt_interbouts[hunt_num],
+                "First Bout Delay": self.first_para_intwin}
 
     def exporter(self):
         self.find_initial_conditions()
@@ -1983,9 +1985,11 @@ def hunted_para_descriptor(dim, exp, hd):
 
     for hi, hp, ac, eb in zip(hd.hunt_ind_list,
                               hd.para_id_list, hd.actions, hd.endbout):
-        para3D = np.load(exp.directory +
-                         "/para3D" + str(hi).zfill(
-                             2) + ".npy")[hp*3:hp*3 + 3][:, cont_win+int_win:]
+        para3D = np.load(
+            exp.directory + "/para3D" + str(hi).zfill(
+                2) + ".npy")[
+                    hp*3:hp*3 + 3][
+                        :, cont_win+int_win-realfish.first_para_intwin:]
         realfish.para_xyz_per_hunt.append(para3D)
         hunt_df = pd.DataFrame(columns=df_labels)
         poi_wrth = create_poirec(hi, 3, exp.directory, hp)
@@ -2018,7 +2022,10 @@ def hunted_para_descriptor(dim, exp, hd):
                            dim.hunt_wins[hi][1]+1)
         hunt_bout_frames = [exp.bout_frames[i] for i in hunt_bouts]
         realfish.hunt_firstframes.append(hunt_bout_frames[0])
-        realfish.hunt_interbouts.append(np.diff(hunt_bout_frames))
+        # HERE YOU ALREADY HAVE THE INTERBOUT BACK FOR EACH BOUT. JUST SWITCH THEM TO
+        # A CUMSUM STARTING WITH 3 OR SO. 
+        realfish.hunt_interbouts.append(
+            [0] + np.diff(hunt_bout_frames).tolist())
         realfish.hunt_results.append(ac)
         norm_bf = [hbf - hunt_bout_frames[0] for hbf in hunt_bout_frames]
         norm_bf = map(lambda(x): x+int_win, norm_bf)
