@@ -98,7 +98,7 @@ class RealFishControl:
                 "Para XYZ": self.para_xyz_per_hunt[hunt_num],
                 "Initial Conditions": self.initial_conditions[hunt_num],
                 "Interbouts": self.hunt_interbouts[hunt_num],
-                "First Bout Delay": self.first_para_intwin}
+                "First Bout Delay": self.firstbout_para_intwin}
 
     def exporter(self):
         self.find_initial_conditions()
@@ -1989,7 +1989,7 @@ def hunted_para_descriptor(dim, exp, hd):
             exp.directory + "/para3D" + str(hi).zfill(
                 2) + ".npy")[
                     hp*3:hp*3 + 3][
-                        :, cont_win+int_win-realfish.first_para_intwin:]
+                        :, cont_win+int_win-realfish.firstbout_para_intwin:]
         realfish.para_xyz_per_hunt.append(para3D)
         hunt_df = pd.DataFrame(columns=df_labels)
         poi_wrth = create_poirec(hi, 3, exp.directory, hp)
