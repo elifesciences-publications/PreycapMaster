@@ -190,8 +190,8 @@ class FishModel:
         self.strike_params = strike_params
         self.real_hunt_df = real_hunt_df
         self.interbouts = real_hunt_df["Interbouts"]
-        self.interbouts[0] = 0
-#        self.interbouts = generate_random_interbouts(5000)
+        self.interbouts[0] = 3
+        self.interbouts = np.cumsum(self.interbouts)
         self.num_bouts_generated = 0
 
 
@@ -212,12 +212,15 @@ class FishModel:
     def real_fish(self, para_varbs):
         hunt_df = self.real_hunt_df[
             "Hunt Dataframe"].loc[self.num_bouts_generated]
+        print self.num_bouts_generated
         bout = np.array(
             [hunt_df["Bout Az"],
              hunt_df["Bout Alt"],
              hunt_df["Bout Dist"],
              hunt_df["Bout Delta Pitch"],
-             hunt_df["Bout Delta Yaw"]])
+             -1*hunt_df["Bout Delta Yaw"]])
+        print('bout')
+        print bout
         self.num_bouts_generated += 1
         return bout
 
