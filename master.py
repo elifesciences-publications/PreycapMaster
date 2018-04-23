@@ -13,9 +13,7 @@ from scipy.ndimage.filters import gaussian_filter
 from collections import Counter
 import scipy.signal
 from toolz.itertoolz import sliding_window, partition
-from sympy import Point3D, Plane
-from matplotlib import use
-use('Qt4Agg')
+# from sympy import Point3D, Plane
 import matplotlib.cm as cm
 from matplotlib import pyplot as pl
 from matplotlib.colors import Normalize, ListedColormap
@@ -87,6 +85,7 @@ class RealFishControl:
 
 # exp contains all relevant fish data. frames will come from hunted_para_descriptor, which will
 # create realfishcontrol objects as it runs. 
+
     def find_initial_conditions(self):
         for firstframe in self.hunt_firstframes:
             self.initial_conditions.append([self.fish_xyz[firstframe],
@@ -166,9 +165,9 @@ class ParaEnv:
     def __init__(self, index, directory):
         self.wrth = np.load(
             directory + '/wrth' + str(index).zfill(2) + '.npy')
-        self.ufish = np.load('/Users/andrewbolton/ufish.npy')
-        self.ufish_origin = np.load('/Users/andrewbolton/ufish_origin.npy')
-        self.uperp = np.load('/Users/andrewbolton/uperp.npy')
+        self.ufish = np.load('/Users/nightcrawler2/ufish.npy')
+        self.ufish_origin = np.load('/Users/nightcrawler2/ufish_origin.npy')
+        self.uperp = np.load('/Users/nightcrawler2/uperp.npy')
         self.para3D = np.load(
             directory + '/para3D' + str(index).zfill(2) + '.npy')
 #        self.high_density_coord = np.load('high_density_xyz.npy')
@@ -321,22 +320,13 @@ class DimensionalityReduce():
         self.flag_dict = flag_dict
         self.inv_fdict = {v: k for k, v in flag_dict.iteritems()}
         self.transition_matrix = np.array([])
-#        self.bouts_flags = [self.extract_and_assignID(self.directory + '/' +  f_id)
-#                                for f_id in os.listdir(self.directory) 
-#                                if f_id[0:4] == 'bout']
         self.bouts_flags = [pickle.load(open(directory + '/bouts.pkl'))]
         self.cluster_count = 10
         self.hunt_cluster = []
         self.deconverge_cluster = []
         self.hunt_wins = []
-        self.model_fit = pickle.load(
-            open('/Users/andrewbolton/Desktop/PreyCap/bayesmodel.pkl', 'rb'))
 
 # This will be for the future if you want to cluster all fish in the fish_id_dict. Just add the IDs from the dict to the flag data.
-
-    def export_model(self):
-        with open(self.directory + '/bayesmodel.pkl', 'wb') as file:
-            pickle.dump(self.model_fit, file)
 
     def strike_abort_sep(self, term_cluster):
         cluster_indices = np.where(self.cluster_membership == term_cluster)[0]
@@ -355,7 +345,7 @@ class DimensionalityReduce():
         dy_plot.set_title('Delta Yaw in Term Cluster')
         pl.show()
         return interbouts_in_cluster, dyaw_in_cluster
-                                              
+
     def watch_cluster(self, exp, cluster, vidtype, term):
         if vidtype == 1:
             vid = imageio.get_reader(
@@ -364,7 +354,8 @@ class DimensionalityReduce():
             vid = imageio.get_reader(
                 self.directory + '/conts.AVI', 'ffmpeg')
 
-        cv2.namedWindow('vid', flags=cv2.cv.CV_WINDOW_NORMAL)
+        cv2.namedWindow('vid', flags=cv2.WINDOW_AUTOSIZE)
+        cv2.moveWindow('vid', 20, 20)
         c_mem_counter = 0
         if term:
             ib, dy = self.strike_abort_sep(cluster)
@@ -405,7 +396,7 @@ class DimensionalityReduce():
             new_flags.append(flag)
         boutdata.flags = new_flags
         return boutdata
-        
+
     def exporter(self):
         with open(self.directory + '/dim_reduce.pkl', 'wb') as file:
             pickle.dump(self, file)
@@ -430,7 +421,7 @@ class DimensionalityReduce():
         print std_array
         norm_bouts = []
         bdict_keys = sorted([int(key) for key in self.bout_dict.keys()])
-    #this loop normalizes each value by the std_array and filters for the variables you want to cluster on
+# this loop normalizes each value by the std_array and filters for the variables you want to cluster on
         for b in self.all_bouts:
             norm_bout = []
             b_partitioned = partition(self.num_dp, b)
@@ -445,10 +436,6 @@ class DimensionalityReduce():
             cluster_model = SpectralClustering(n_clusters=self.cluster_count,
                                                affinity='nearest_neighbors',
                                                n_neighbors=10)
-#           cluster_model = BayesianGaussianMixture(n_components=10)
-#            self.model_fit = cluster_model.fit(np.array(norm_bouts))
- #       c_flag = self.model_fit.predict(np.array(norm_bouts))
-#        cluster_model.fit(np.array(norm_bouts))
         c_flag = cluster_model.fit_predict(np.array(norm_bouts))
         self.cluster_membership = c_flag
         num_clusters = np.unique(self.cluster_membership).shape[0]
@@ -1207,6 +1194,7 @@ class Experiment():
 # Above are all bout related functions. Here are para related functions. 
 
     def para_during_hunt(self, index, movies, hunt_wins):
+        cv2.destroyAllWindows()
         showstats = False
         pl.ioff()
         directory = self.directory + '/'
@@ -1221,7 +1209,8 @@ class Experiment():
         self.paradata = return_paramaster_object(window[0],
                                                  window[1],
                                                  movies,
-                                                 directory, showstats)
+                                                 directory, showstats,
+                                                 self.para_continuity_window)
 # This establishes a setup where para_continuity_window is used for correlation, and integ_window frames before the first bout are kept for wrth. so the framewindow adds para_continuity_window to the 3D para coords so that you don't map 10 seconds backwards, but only 500 ms backwards.         
         self.framewindow = [window[0] + self.para_continuity_window, window[1]]
         self.map_bouts_to_heading(index, hunt_wins)
@@ -1238,7 +1227,7 @@ class Experiment():
                 self.fishdata.z[ind1:ind1+10]) > 1600 and np.mean(
                     self.fishdata.pitch[ind1:ind1+10]) > 0:
             print("Hunting on Ceiling")
-            return False
+#            return False
         print("Starts At Frame " + str(ind1))
         print("Ends At Frame " + str(ind2))
         dirct = self.directory + '/'
@@ -1252,7 +1241,9 @@ class Experiment():
         else:
             print('unspecified stream')
             return False
-        cv2.namedWindow('vid', flags=cv2.cv.CV_WINDOW_NORMAL)
+#        cv2.namedWindow('vid', flags=cv2.WINDOW_NORMAL)
+        cv2.namedWindow('vid', flags=cv2.WINDOW_AUTOSIZE)
+        cv2.moveWindow('vid', 20, 20)
         for i in range(ind1-30, ind2):
             im = vid.get_data(i)
             im = cv2.resize(im, (700, 700))
@@ -1271,13 +1262,14 @@ class Experiment():
 
         cv2.namedWindow(
             'Enter 1 for Full Characterization',
-            flags=cv2.cv.CV_WINDOW_NORMAL)
+            flags=cv2.WINDOW_NORMAL)
+        cv2.moveWindow('Enter 1 for Full Characterization', 20, 20)
         key = cv2.waitKey(0)
         print key
         # This is equivalent to pressing 1.
         if key == 49:
-            cv2.destroyAllWindows()
             ret = self.para_during_hunt(h_ind, True, hunt_wins)
+            cv2.destroyAllWindows()
             if ret:
                 self.paradata.watch_event(0)
         cv2.destroyAllWindows()
@@ -1325,6 +1317,26 @@ class Experiment():
             self.paradata.make_3D_para()
             self.paradata.label_para()
             self.map_para_to_heading(self.current_hunt_ind)
+
+
+# up to you to assign proper xy record only. could be that xy rec is free or
+# already part of an xyz record.
+# if the latter, you will merge xyz records using
+# manual join
+# scenarios:  1) xy rec is alone. share timestamps, share lengths
+#             2) xy rec is part of an xyzrec and para
+#                and goes to top before or after it
+#             3) xy rec is part of an xyzrec and goes to roof internally
+
+# syntax is always myexp.paradata.all_xy[xyrec].timestamp or location
+# up to you to figure out proper fill in timestamps according to 1,2,3 above
+
+    def assign_max_z(self, xyrec):
+        timestamp = raw_input("Enter Timestamp for New XZ: ")
+        rec_len = raw_input("Enter length of New XZ: ")
+        t_window = (int(timestamp), int(timestamp + rec_len))
+        self.paradata.assign_max_z(xyrec, t_window)
+        self.map_para_to_heading(self.current_hunt_ind)
 
     def manual_remove(self):
         rec = raw_input('Enter Record to Remove: ')
@@ -1475,13 +1487,13 @@ class Experiment():
                 para_wrt_heading)
         np.save(self.directory + '/wrth_xy' + str(h_index).zfill(2) + '.npy',
                 wrth_xy)
-        np.save('/Users/andrewbolton/ufish.npy',
+        np.save('/Users/nightcrawler2/ufish.npy',
                 self.ufish[self.framewindow[0]:self.framewindow[1]])
-        np.save('/Users/andrewbolton/uperp.npy',
+        np.save('/Users/nightcrawler2/uperp.npy',
                 self.uperp[self.framewindow[0]:self.framewindow[1]])
-        np.save('/Users/andrewbolton/ufish_origin.npy',
+        np.save('/Users/nightcrawler2/ufish_origin.npy',
                 self.ufish_origin[self.framewindow[0]:self.framewindow[1]])
-        np.save('/Users/andrewbolton/para_continuity_window.npy',
+        np.save('/Users/nightcrawler2/para_continuity_window.npy',
                 np.array(self.para_continuity_window))
 
 

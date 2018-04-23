@@ -11,7 +11,6 @@ from scipy.stats.stats import pearsonr
 import copy
 import matplotlib.animation as anim
 from collections import deque
-from sklearn.manifold import TSNE
 import seaborn
 import matplotlib.gridspec as gridspec
 import mpl_toolkits.mplot3d.axes3d as p3
@@ -84,9 +83,8 @@ class Para:
 
 
 class ParaMaster():
-    def __init__(self, start_ind, end_ind, directory):
-        self.pcw = np.load(
-            '/Users/andrewbolton/para_continuity_window.npy').astype(np.int)
+    def __init__(self, start_ind, end_ind, directory, pcw):
+        self.pcw = pcw
         self.directory = directory
         self.all_xy = []
         self.all_xz = []
@@ -146,15 +144,15 @@ class ParaMaster():
                 print go_to_frame
             topframe = paravid_top.get_data(go_to_frame)
             sideframe = paravid_side.get_data(go_to_frame)
-            para_top = cv2.cvtColor(np.copy(topframe), cv2.cv.CV_BGR2GRAY)
-            para_side = cv2.cvtColor(np.copy(sideframe), cv2.cv.CV_BGR2GRAY)
+            para_top = cv2.cvtColor(np.copy(topframe), cv2.COLOR_BGR2GRAY)
+            para_side = cv2.cvtColor(np.copy(sideframe), cv2.COLOR_BGR2GRAY)
             r, para_top = cv2.threshold(para_top, 120, 255,
-                                        cv2.cv.CV_THRESH_BINARY)
+                                        cv2.THRESH_BINARY)
             r, para_side = cv2.threshold(para_side, 120, 255,
-                                         cv2.cv.CV_THRESH_BINARY)
-            contours_t, hierarchy = cv2.findContours(
+                                         cv2.THRESH_BINARY)
+            rim, contours_t, hierarchy = cv2.findContours(
                 para_top, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            contours_s, hierarchy = cv2.findContours(
+            rim, contours_s, hierarchy = cv2.findContours(
                 para_side, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 #make a vectorized version here            
             parafilter_top = [cv2.minEnclosingCircle(t)[0] for t in contours_t
@@ -1011,12 +1009,26 @@ class ParaMaster():
 
 #This function plots all the recs including misses. You can see here how the algorithm is doing and where records might be missed.
 
+    def assign_max_z(self, xyrec, timewindow):
+        max_z = 1881
+# 0 is placeholder for x2
+        xz_locations = [(0, max_z)
+                        for i in range(timewindow[1] - timewindow[0])]
+        new_xz_para = Para(timewindow[0], xz_locations)
+        new_xz_para.completed = True
+        self.all_xz.append(new_xz_para)
+        self.xyzrecords.append([[xyrec, len(self.all_xz), (1, 1, 500)]])
+        self.make_3D_para()
+        self.clear_frames()
+        self.label_para()
+        
     def manual_match(self):
         xy = 0
         xz = 0
         cv2.namedWindow(
             'Enter 1 to Manually Match a Record',
-            flags=cv2.cv.CV_WINDOW_NORMAL)
+            flags=cv2.WINDOW_AUTOSIZE)
+        cv2.moveWindow('Enter 1 to Manually Match a Record', 20, 20)
         key = cv2.waitKey(0)
         if key == 49:
             cv2.destroyAllWindows()
@@ -1224,8 +1236,7 @@ class ParaMaster():
             # pl.plot(zinv_nonan)
             # pl.plot(zinv)
             # pl.show()
-            
-        np.save('/Users/andrewbolton/3D_paracoords.npy', self.para3Dcoords)
+        np.save('/Users/nightcrawler2/3D_paracoords.npy', self.para3Dcoords)
 
 
 
@@ -1302,7 +1313,7 @@ class ParaMaster():
 #Tihs function labels the paramecia videos generated in the findpara method and adds the index of the xyz record to the video in each plane.
 
     def make_id_movies(self):
-        fourcc = cv2.cv.CV_FOURCC('8', 'B', 'P', 'S')
+        fourcc = cv2.VideoWriter_fourcc('8', 'B', 'P', 'S')
         pvid_id_top = cv2.VideoWriter('pvid_id_top.AVI', fourcc, 30,
                                       (1888, 1888), True)
         pvid_id_side = cv2.VideoWriter('pvid_id_side.AVI', fourcc, 30,
@@ -1323,7 +1334,8 @@ class ParaMaster():
         
     def watch_event(self, top_side_or_cont):
         pcw = self.pcw
-        cv2.namedWindow('vid', flags=cv2.cv.CV_WINDOW_NORMAL)
+        cv2.namedWindow('vid', flags=cv2.WINDOW_AUTOSIZE)
+        cv2.moveWindow('vid', 20, 20)
         if top_side_or_cont == 0:
             for im in self.topframes:
                 im = cv2.resize(im, (700, 700))
@@ -1345,7 +1357,7 @@ class ParaMaster():
         cv2.destroyAllWindows()
 
     def label_para(self):
-        frame_num = np.load('/Users/andrewbolton/para_continuity_window.npy')
+        frame_num = self.pcw
         frame_num = int(frame_num)
         temp_top = deque()
         temp_side = deque()
@@ -1448,7 +1460,7 @@ class ParaMaster():
         self.plotxyzrec(rec_id)
         fix = raw_input("Fix? ")
         if fix != 'y':
-            return 0        
+            return 0
         xy = raw_input("Enter XY rec ")
         xz = raw_input("Enter XZ rec ")
         xy = int(xy)
@@ -1470,8 +1482,8 @@ class ParaMaster():
 
 def return_paramaster_object(start_ind,
                              end_ind,
-                             makemovies, directory, showstats):
-    paramaster = ParaMaster(start_ind, end_ind, directory)
+                             makemovies, directory, showstats, pcw):
+    paramaster = ParaMaster(start_ind, end_ind, directory, pcw)
     if makemovies:
         paramaster.makemovies = True
     paramaster.parawrapper(showstats)
@@ -1479,12 +1491,12 @@ def return_paramaster_object(start_ind,
 
 
 if __name__ == '__main__':
-    
     pmaster = return_paramaster_object(1000,
                                        1599,
                                        False,
-                                       os.getcwd() + '/Fish00/', 
-                                       False)
+                                       os.getcwd() + '/Fish00/',
+                                       False,
+                                       600)
 #     paramaster = ParaMaster(1499, 1550, os.getcwd() + '/Fish00/')
 #     paramaster.makemovies = False
 #     paramaster.parawrapper(False)
