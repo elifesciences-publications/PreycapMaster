@@ -1009,15 +1009,21 @@ class ParaMaster():
 
 #This function plots all the recs including misses. You can see here how the algorithm is doing and where records might be missed.
 
-    def assign_max_z(self, xyrec, timewindow):
-        max_z = 1881
-# 0 is placeholder for x2
+    def assign_z(self, xyrec, timewindow, zmax):
+        # invert (i.e. small is higher) b/c not yet inverted
+        max_z = zmax
+        # 0 is placeholder for x2
         xz_locations = [(0, max_z)
                         for i in range(timewindow[1] - timewindow[0])]
-        new_xz_para = Para(timewindow[0], xz_locations)
+        new_xz_para = Para(timewindow[0], (0, 0))
+        new_xz_para.location = xz_locations
         new_xz_para.completed = True
         self.all_xz.append(new_xz_para)
-        self.xyzrecords.append([[xyrec, len(self.all_xz), (1, 1, 500)]])
+        self.xyzrecords.append([[xyrec, len(self.all_xz) - 1, (1, 1, 500)]])
+        for ind_xy, up_xy in enumerate(self.unpaired_xy):
+            if up_xy[0] == xyrec:
+                del self.unpaired_xy[ind_xy]
+                break
         self.make_3D_para()
         self.clear_frames()
         self.label_para()

@@ -1331,12 +1331,52 @@ class Experiment():
 # syntax is always myexp.paradata.all_xy[xyrec].timestamp or location
 # up to you to figure out proper fill in timestamps according to 1,2,3 above
 
-    def assign_max_z(self, xyrec):
-        timestamp = raw_input("Enter Timestamp for New XZ: ")
-        rec_len = raw_input("Enter length of New XZ: ")
-        t_window = (int(timestamp), int(timestamp + rec_len))
-        self.paradata.assign_max_z(xyrec, t_window)
-        self.map_para_to_heading(self.current_hunt_ind)
+    def assign_max_z(self, xyrec, auto, zmax, *xzrec):
+        if not auto:
+            timestamp = raw_input("Enter Timestamp for New XZ: ")
+            timestamp = int(eval(timestamp))
+            rec_len = raw_input("Enter length of New XZ: ")
+            rec_len = int(eval(rec_len))
+        else:
+            if xzrec == ():
+                timestamp = self.paradata.all_xy[xyrec].timestamp
+                rec_len = len(self.paradata.all_xy[xyrec].location)
+            else:
+                xzrec = xzrec[0]
+                f_or_b = raw_input(
+                    "Enter f for max_z ahead of known xzrec, b for behind: ")
+                if f_or_b == 'f':
+                    timestamp = self.paradata.all_xz[
+                        xzrec].timestamp + len(
+                            self.paradata.all_xz[xzrec].location)
+                    rec_len = self.paradata.all_xy[
+                        xyrec].timestamp + len(
+                            self.paradata.all_xy[xyrec].location) - timestamp
+                elif f_or_b == 'b':
+                    timestamp = self.paradata.all_xy[xyrec].timestamp
+                    rec_len = len(
+                        self.paradata.all_xy[xyrec].location) - len(
+                            self.paradata.all_xz[xzrec].location)
+                else:
+                    print("invalid entry")
+                    return
+
+        t_window = (int(timestamp), int(timestamp) + int(rec_len))
+        self.paradata.assign_z(xyrec, t_window, zmax)
+        self.paradata.watch_event(1)
+        accept = raw_input("Accept Fix?: ")
+        if accept == 'n':
+            new_maxz = raw_input("Enter New Max Z: ")
+            new_maxz = int(new_maxz)
+            del self.paradata.all_xz[-1]
+            del self.paradata.xyzrecords[-1]
+            if xzrec != ():
+                return self.assign_max_z(xyrec, auto, new_maxz, xzrec)
+            else:
+                return self.assign_max_z(xyrec, auto, new_maxz)
+        elif accept == 'y':
+            self.map_para_to_heading(self.current_hunt_ind)
+            return
 
     def manual_remove(self):
         rec = raw_input('Enter Record to Remove: ')
@@ -2620,7 +2660,7 @@ if __name__ == '__main__':
     clear_hunts = raw_input('New hunt windows?: ')
     if clear_hunts == 'y':
         dim.clear_huntwins()
-        dim.find_hunts([7],[4,6])
+        dim.find_hunts([5],[0])
         dim.exporter()
         hd = Hunt_Descriptor(drct)
     else:
