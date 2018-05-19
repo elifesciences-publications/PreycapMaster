@@ -1154,12 +1154,16 @@ class ParaMaster():
     #This function takes the xyz records and makes 3 rows of x,y,z coordinates for each record. The timestamp of each record is encoded in its column location within the para3Dcoords matrix.t
 
     def make_3D_para(self):
-
+        self.interp_indices = []
         self.para3Dcoords = np.zeros((
             len(self.xyzrecords) * 3, self.framewindow[1] - self.framewindow[0]
-        ))  # *3 because each record will have x,y, and z. initialize the matrix with zeros.
-
-        #this function creates a list of nans the length of para3Dcoords. in regions where the xyz record is defined, the nans are replaced with the xy coordinate from the xy para object and the z coordinate from the xz object.
+        ))
+        # *3 because each record will have x,y, and z.
+        # initialize the matrix with zeros.
+        # this function creates a list of nans the length of para3Dcoords.
+        # in regions where the xyz record is defined,
+        # nans are replaced with an interped  xy coordinate from the xy para
+        # object and the z coordinate from the xz object.
 
         def create3dpath(xyzrec):
             nan_base_x = [float('nan')
@@ -1224,7 +1228,9 @@ class ParaMaster():
                             z_in[win[1]],
                             win[1]-win[0]).astype(np.int)
                     inferred_windows.append(win)
-            self.interp_indices.append([[para_number], inferred_windows])
+            if inferred_windows:
+                self.interp_indices.append([[para_number], inferred_windows])
+            # so here can have up to 3 entries per para
             return z_out
 
         for recnumber, rec in enumerate(self.xyzrecords):

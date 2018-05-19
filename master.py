@@ -2049,7 +2049,9 @@ def hunted_para_descriptor(dim, exp, hd):
             exp.directory + '/para_interp_windows' + str(hi).zfill(2) + '.npy')
         inferred_windows_poi = [
             np.array(win[1]) - cont_win - int_win
-            for win in inferred_windows_all if win[0] == [hp]][0]
+            for win in inferred_windows_all if win[0] == [hp]]
+        if inferred_windows_poi:
+            inferred_windows_poi = inferred_windows_poi[0]
         inferred_window_ranges_poi = [
             range(win[0], win[1]) for win in inferred_windows_poi]
         penv = ParaEnv(hi, exp.directory)

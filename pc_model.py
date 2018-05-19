@@ -15,9 +15,6 @@ from iventure.utils_bql import subsample_table_columns
 from collections import deque
 from master import fishxyz_to_unitvecs, sphericalbout_to_xyz, p_map_to_fish, RealFishControl
 
-# want to upload para model each time. para model will tell you the state of the para you are using.
-
-
 class PreyCap_Simulation:
     def __init__(self, fishmodel, paramodel, simlen, simulate_para):
         self.fishmodel = fishmodel
@@ -35,11 +32,6 @@ class PreyCap_Simulation:
         self.simulate_para = simulate_para
         self.interbouts = self.fishmodel.interbouts
         self.create_para_trajectory()
-
-# BUG IS PROBABLY THAT INTERBOUT 1 IS 0. 
-        
-#
-#also, dont want just simulated para. want to use real para trajectories that you can get out of p3d in the para model. very easy. paramodel will instead just be a function that grabs random XYZ coords of hunted para. 
 
     def create_para_trajectory(self):
         def make_accel_vectors():
@@ -104,8 +96,6 @@ class PreyCap_Simulation:
 
         while True:
 
-            # MAKE SURE YOU KNOW WHY YOU HAVE TO CUT ONE OFF THE END
-
             fish_basis = fishxyz_to_unitvecs(self.fish_xyz[-1],
                                              self.fish_yaw[-1],
                                              self.fish_pitch[-1])
@@ -144,12 +134,22 @@ class PreyCap_Simulation:
                 print("STRIKE!!!!!!!!")
                 nanstretch = np.full(
                     len(px)-framecounter, np.nan).tolist()
+                print('para lengths')
+                print len(nanstretch)
                 self.para_xyz[0] = np.concatenate(
                     (px[0:framecounter], nanstretch), axis=0)
                 self.para_xyz[1] = np.concatenate(
                     (py[0:framecounter], nanstretch), axis=0)
                 self.para_xyz[2] = np.concatenate(
                     (pz[0:framecounter], nanstretch), axis=0)
+                np.save('strikelist.npy', np.zeros(framecounter).tolist() + [1]
+                        + np.zeros(len(px) - framecounter -1).tolist() )
+                print self.para_xyz[0].shape
+                print('len fishxyz')
+                print len(self.fish_xyz)
+                # note that para may be "eaten" by model faster than in real life (i.e. it enters the strike zone)
+                # 
+                
                 break
 
             ''' you will store these vals in a
@@ -192,6 +192,10 @@ class FishModel:
         self.interbouts = real_hunt_df["Interbouts"]
         self.interbouts = np.cumsum(
             self.interbouts) + real_hunt_df["First Bout Delay"]
+        # note that the fish is given 5 frames before initializing a bout.
+        # this is so the model has a proper velocity to work with. occurs
+        # at the exact same time as the fish bouts in reality. para
+        # trajectory is contwin + intwin - 5 to start. 
         self.num_bouts_generated = 0
 
 
@@ -380,10 +384,8 @@ def characterize_strikes(hb_data):
 csv_file = 'huntbouts_rad.csv'
 hb = pd.read_csv(csv_file)
 fish_id = '030118_2'
-# real = pickle.load(
-#     open(os.getcwd() + '/RealHuntData_' + fish_id + '.pkl', 'rb'))
 real_fish_object = pd.read_pickle(
-    os.getcwd() + '/RealHuntData_' + fish_id + '.pkl')
+    os.getcwd() + '/' + fish_id + '/RealHuntData_' + fish_id + '.pkl')
 para_model = pickle.load(open(os.getcwd() + '/pmm.pkl', 'rb'))
 np.random.seed()
 sequence_length = 10000
@@ -397,14 +399,12 @@ sim = PreyCap_Simulation(
     False)
 
 sim.run_simulation()
-np.save('/home/nightcrawler/PandaModels/para_simulation.npy', sim.para_xyz)
-np.save('/home/nightcrawler/PandaModels/origin_model.npy', sim.fish_xyz)
-np.save('/home/nightcrawler/PandaModels/uf_model.npy', sim.fish_bases)
+# np.save('/home/nightcrawler/PandaModels/para_simulation.npy', sim.para_xyz)
+# np.save('/home/nightcrawler/PandaModels/origin_model.npy', sim.fish_xyz)
+# np.save('/home/nightcrawler/PandaModels/uf_model.npy', sim.fish_bases)
+np.save('para_simulation.npy', sim.para_xyz)
+np.save('origin_model.npy', sim.fish_xyz)
+np.save('uf_model.npy', sim.fish_bases)
 
 
-
-# There are two functions in master: fishxyz_to_unitvecs and p_map_to_fish that will be useful for the model. You will get an initial XYZ coordinate of the para
-# Make a paramecium model that is based on your data. This should be straightforward given how many paramecium records you have.
-# Next, start the para at a location defined by your hunt initiation statistics. You will probably have to
-# import para_master so you can run map para to heading on the fish.
 
