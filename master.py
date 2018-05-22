@@ -4,6 +4,7 @@ import csv
 import cv2
 import pandas as pd
 import imageio
+import itertools
 from sklearn.manifold import SpectralEmbedding, Isomap
 from sklearn.cluster import SpectralClustering
 import numpy as np
@@ -28,6 +29,12 @@ sb.set_style('darkgrid')
 
 
 # Clustering on eye1, eye2, delta yaw, and interbout yields nice sep between aborts and strikes with spectral clustering and Bayesian mixture. Gaussian mixture is no good. 
+
+# idea will be to have HD hold the para interp windows for hunts you actually care about
+# when you add a hunt to hd, it will carry with it only the interp windows for the hunted para
+# have to transform them using intwin and contwin just like in hunted_para_descriptor.
+# can get this by simply adding myexp.paradata to the hd.update function.
+# update function will do exactly what hunt_descriptor does now. no need to save anything. 
 
 
 
@@ -115,10 +122,26 @@ class Hunt_Descriptor:
         self.ignored_para = []
         self.endbout = []
         self.directory = directory
-
+        self.infer_z = []
+        self.interp_windows = []
+        
     def exporter(self):
         with open(self.directory + '/hunt_descriptor.pkl', 'wb') as file:
             pickle.dump(self, file)
+
+    def parse_interp_windows(self, exp, poi):
+        cont_win = exp.paradata.pcw
+        int_win = exp.integration_window
+        iw = copy.deepcopy(exp.paradata.interp_indices)
+        unique_wins = [k for k, a in itertools.groupby(iw)]
+        inferred_windows_poi = [
+            np.array(win[1]) - cont_win - int_win
+            for win in unique_wins if win[0] == [poi]]
+        if inferred_windows_poi:
+            inferred_windows_poi = inferred_windows_poi[0]
+        inferred_window_ranges_poi = [
+            range(win[0], win[1]) for win in inferred_windows_poi]
+        self.interp_windows.append(inferred_window_ranges_poi)
         
     def current(self):
         print self.hunt_ind_list
@@ -144,14 +167,15 @@ class Hunt_Descriptor:
         self.ignored_para = self.ignored_para[:-1]
         self.endbout = self.endbout[:-1]
 
-    def update_hunt_data(self, h, p, a, ip, eb):
+    def update_hunt_data(self, h, p, a, ip, eb, exp, maxz):
         self.hunt_ind_list.append(h)
         self.para_id_list.append(p)
         self.actions.append(a)
         self.ignored_para.append(ip)
         self.endbout.append(eb)
+        self.parse_interp_windows(exp, p)
+        self.infer_z.append(maxz)
         self.exporter()
-        
 
 # for each para env, you will get a coordinate matrix that is scalexscalexscale, representing
 # 3270 x 2 pixels in all directions. the scale must be ODD!! this guarantees that it will have a center
@@ -732,6 +756,9 @@ class Experiment():
         self.fishdata.pitch = np.float64(self.fishdata.pitch)
         self.fishdata.phileft = np.float64(self.fishdata.phileft)
         self.fishdata.phiright = np.float64(self.fishdata.phiright)
+
+    def watch(self, vid):
+        self.paradata.watch_event(vid)
 
     def vectVcalc(self):
 
@@ -1520,9 +1547,6 @@ class Experiment():
 
         np.save(self.directory + '/para3D' + str(h_index).zfill(2) + '.npy',
                 self.paradata.para3Dcoords)
-        np.save(self.directory +
-                '/para_interp_windows' + str(h_index).zfill(2) + '.npy',
-                self.paradata.interp_indices)
         np.save(self.directory + '/wrth' + str(h_index).zfill(2) + '.npy',
                 para_wrt_heading)
         np.save(self.directory + '/wrth_xy' + str(h_index).zfill(2) + '.npy',
@@ -1880,11 +1904,6 @@ def para_state_plot(hd, exp):
     if len(dps) == 1:
         return dps[0][0][continuity_window:], vels[0][0][continuity_window:]
 
-    
-
-
-
-
     #     int_win = 35
     #     prt = 5
     #     az = [w[-2] for w in poi_wrth]
@@ -1902,16 +1921,6 @@ def para_state_plot(hd, exp):
     # pl.show()
 
 
-    
-    # print(len(avg_az_list))
-    
-# convention of angle adjustment should be negative if undershoot, positive if overshoot.
-# if angle starts pos then goes neg, its overshoot. if starts neg then goes pos, its overshoot.
-# if angle starts pos and stays pos, its undershoot. if starts neg then stays neg, undershoot.
-# value is always just the az and alt average for 3 frames 20 frames after start of bout (nanmedian)
-# all adjustments should bring azimuth and altitude to 0. this is compared to 3 frames at bout initiation.
-
-
 def csv_data(headers, datavals, file_id, directory):
     with open(directory + '/' + file_id + '.csv', 'wb') as csvfile:
         output_data = csv.writer(csvfile)
@@ -1919,6 +1928,25 @@ def csv_data(headers, datavals, file_id, directory):
         for dt in datavals:
             output_data.writerow(dt)
 
+
+def all_data_to_csv(directories):
+    with open(
+            '/Users/nightcrawler2/PreycapMaster/all_huntbouts.csv',
+            'wb') as csvfile:
+        output_data = csv.writer(csvfile)
+        for d in directories:
+            with open(
+                    '/Users/nightcrawler2/PreycapMaster/'
+                    + d + '/huntingbouts.csv',
+                    'rb') as huntbouts:
+                reader = csv.reader(huntbouts)
+                for ind, row in enumerate(reader):
+                    if ind != 0:
+                        output_data.writerow(row)
+
+    
+            
+# VERY EASY TO UPDATE THIS TO TAKE ALL 
 
 # This function will tell you, for all hunts, the typical trajectory of eye convergence and Z traversal. 
             
@@ -2034,9 +2062,10 @@ def hunted_para_descriptor(dim, exp, hd):
     df_labels = ["Bout Az", "Bout Alt",
                  "Bout Dist", "Bout Delta Pitch", "Bout Delta Yaw"]
     realfish = RealFishControl(exp)
-
-    for hi, hp, ac, eb in zip(hd.hunt_ind_list,
-                              hd.para_id_list, hd.actions, hd.endbout):
+    for hi, hp, ac, eb, iws, mz in zip(
+            hd.hunt_ind_list,
+            hd.para_id_list, hd.actions, hd.endbout, hd.interp_windows,
+            hd.infer_z):
         para3D = np.load(
             exp.directory + "/para3D" + str(hi).zfill(
                 2) + ".npy")[
@@ -2045,15 +2074,6 @@ def hunted_para_descriptor(dim, exp, hd):
         realfish.para_xyz_per_hunt.append(para3D)
         hunt_df = pd.DataFrame(columns=df_labels)
         poi_wrth = create_poirec(hi, 3, exp.directory, hp)
-        inferred_windows_all = np.load(
-            exp.directory + '/para_interp_windows' + str(hi).zfill(2) + '.npy')
-        inferred_windows_poi = [
-            np.array(win[1]) - cont_win - int_win
-            for win in inferred_windows_all if win[0] == [hp]]
-        if inferred_windows_poi:
-            inferred_windows_poi = inferred_windows_poi[0]
-        inferred_window_ranges_poi = [
-            range(win[0], win[1]) for win in inferred_windows_poi]
         penv = ParaEnv(hi, exp.directory)
         penv.find_paravectors(False)
         dp = penv.dotprod[hp][cont_win:]
@@ -2070,7 +2090,6 @@ def hunted_para_descriptor(dim, exp, hd):
         delta_az = [b-a for a, b in sliding_window(2, filt_az)]
         delta_alt = [b-a for a, b in sliding_window(2, filt_alt)]
         delta_dist = [b-a for a, b in sliding_window(2, filt_dist)]
-
 #instead of asking about sensory input, just asking what para is doing right before and right after bout
         hunt_bouts = range(dim.hunt_wins[hi][0],
                            dim.hunt_wins[hi][1]+1)
@@ -2089,12 +2108,14 @@ def hunted_para_descriptor(dim, exp, hd):
         # these are normed to the hunting bout so that first bout is 0.
         for ind, bout in enumerate(hunt_bouts):
             norm_frame = norm_bf[ind]
-            inferred_coordinate = False
-            for infwin in inferred_window_ranges_poi:
+            inferred_coordinate = 0
+            if mz:
+                inferred_coordinate = 2
+            for infwin in iws:
                 if np.intersect1d(
                         range(norm_frame-framewin, norm_frame),
                         infwin):
-                    inferred_coordinate = True
+                    inferred_coordinate = 1
             delta_pitch = dim.all_flags[bout][pitch_flag]
             delta_yaw = dim.all_flags[bout][yaw_flag]
             para_az = np.nanmean(filt_az[norm_frame-framewin:norm_frame])
