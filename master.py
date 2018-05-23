@@ -120,7 +120,7 @@ class Hunt_Descriptor:
         self.para_id_list = []
         self.actions = []
         self.ignored_para = []
-        self.endbout = []
+        self.boutrange = []
         self.directory = directory
         self.infer_z = []
         self.interp_windows = []
@@ -148,7 +148,7 @@ class Hunt_Descriptor:
         print self.para_id_list
         print self.actions
         print self.ignored_para
-        print self.endbout
+        print self.boutrange
 
     def slice_hd(self, hunt_id):
         hd_slice = Hunt_Descriptor(self.directory)
@@ -157,7 +157,7 @@ class Hunt_Descriptor:
                                   self.para_id_list[hunt_id_index],
                                   self.actions[hunt_id_index],
                                   self.ignored_para[hunt_id_index],
-                                  self.endbout[hunt_id_index])
+                                  self.boutrange[hunt_id_index])
         return hd_slice
                                                   
     def remove_last_entry(self):
@@ -165,18 +165,34 @@ class Hunt_Descriptor:
         self.para_id_list = self.para_id_list[:-1]
         self.actions = self.actions[:-1]
         self.ignored_para = self.ignored_para[:-1]
-        self.endbout = self.endbout[:-1]
+        self.boutrange = self.boutrange[:-1]
 
-    def update_hunt_data(self, h, p, a, ip, eb, exp, maxz):
+    def update_hunt_data(self, h, p, a, ip, br, exp, maxz):
         self.hunt_ind_list.append(h)
         self.para_id_list.append(p)
         self.actions.append(a)
         self.ignored_para.append(ip)
-        self.endbout.append(eb)
+        self.boutrange.append(br)
         self.parse_interp_windows(exp, p)
         self.infer_z.append(maxz)
         self.exporter()
 
+
+# 	1) Hunt ID
+# 	2) Hunted Para (always the para the fish initiates to, attention shift or not)
+#       3)   Strike Success = 1, 
+# 	     Strike Fail = 2,
+# 	     Abort = 3, 
+# 	     Abort for Reorientation = 4, 
+# 	     Reorientation and successful strike = 5,
+# 	     Reorientation and fail = 6,
+# 	     Reorientation and abort = 7,
+# 	4) Ignored para: this is only for 5+. np.nan otherwise. 
+#       5) Endbout. Sometimes the strike occurs before the abort or without an abort. Note which bout this occurs on. If it's the last bout of the hunt, input -1. Otherwise, - before this. If you're not sure, leave it at -1.
+#       6) enter myexp
+#       7) enter True if you assigned max Z, false otherwise
+
+        
 # for each para env, you will get a coordinate matrix that is scalexscalexscale, representing
 # 3270 x 2 pixels in all directions. the scale must be ODD!! this guarantees that it will have a center
 # cube. make a coordinate matrix by adding each unit vector representing the fish basis to the scale / 2, scale /2 , scale / 2 coordinate.
@@ -2062,9 +2078,13 @@ def hunted_para_descriptor(dim, exp, hd):
     df_labels = ["Bout Az", "Bout Alt",
                  "Bout Dist", "Bout Delta Pitch", "Bout Delta Yaw"]
     realfish = RealFishControl(exp)
-    for hi, hp, ac, eb, iws, mz in zip(
+
+# going to make eb a bout range. eb will be a tuple. first entry is hunt start. second is hunt end.
+# hunt end is a negative value. 
+    
+    for hi, hp, ac, br, iws, mz in zip(
             hd.hunt_ind_list,
-            hd.para_id_list, hd.actions, hd.endbout, hd.interp_windows,
+            hd.para_id_list, hd.actions, hd.boutrange, hd.interp_windows,
             hd.infer_z):
         para3D = np.load(
             exp.directory + "/para3D" + str(hi).zfill(
@@ -2091,7 +2111,7 @@ def hunted_para_descriptor(dim, exp, hd):
         delta_alt = [b-a for a, b in sliding_window(2, filt_alt)]
         delta_dist = [b-a for a, b in sliding_window(2, filt_dist)]
 #instead of asking about sensory input, just asking what para is doing right before and right after bout
-        hunt_bouts = range(dim.hunt_wins[hi][0],
+        hunt_bouts = range(dim.hunt_wins[hi][0] + br[0],
                            dim.hunt_wins[hi][1]+1)
         hunt_bout_frames = [exp.bout_frames[i] for i in hunt_bouts]
         realfish.hunt_firstframes.append(hunt_bout_frames[0])
@@ -2136,8 +2156,12 @@ def hunted_para_descriptor(dim, exp, hd):
             postbout_dist = np.nanmean(
                 filt_dist[norm_frame+exp.minboutlength:
                           norm_frame+exp.minboutlength+framewin])
-            if ind == len(hunt_bouts) + eb:
-                ind = -1
+            if br[1] < 0:
+                if ind == len(hunt_bouts) + br:
+                    ind = -1
+            else:
+                if ind == br[1]:
+                    ind = -1
             bout_descriptor.append([hi,
                                     ind,
                                     exp.bout_az[ind],
@@ -2219,8 +2243,8 @@ def para_stimuli(dim, exp, hd):
     for h, hp, ac, ip in zip(hunt_ind_list,
                              p_list, actions, ignored_para):
         print h
-        #here you will create a bout frames list for the entire hunt. once you
-        #get to the hunted para, 
+        # here you will create a bout frames list for the entire hunt. once you
+        # get to the hunted para, 
         p3D = np.load(exp.directory + '/para3D' + str(h).zfill(2) + '.npy')
         distmat = make_distance_matrix(p3D)
         penv = ParaEnv(h, exp.directory)
