@@ -906,7 +906,7 @@ class ParaMaster():
         all_remaining_xy = [self.all_xy[i] for i in xyrecs]
         all_remaining_xz = [self.all_xz[j] for j in xzrecs]
         fig, (ax, ax2) = pl.subplots(
-            1, 2, sharex=True, sharey=True, figsize=(8, 8))
+            1, 2, sharex=True, sharey=True, figsize=(7, 7))
         ax.set_xlim([pcw, self.framewindow[1] - self.framewindow[0]])
         ax.set_title("XY Misses")
         ax2.set_xlim([pcw, self.framewindow[1] - self.framewindow[0]])
@@ -957,14 +957,14 @@ class ParaMaster():
     #this function plots a list of pairs in one figure, with all xy recs in magenta, all xz in cyan
 
     def x_y_z_coords(self, rec_id):
-        pl.figure(figsize=(10, 10))
+        pl.figure(figsize=(7, 7))
         pl.plot(self.para3Dcoords[rec_id*3])
         pl.plot(self.para3Dcoords[(rec_id*3) + 1])
         pl.plot(self.para3Dcoords[(rec_id*3) + 2])
         self.plotxyzrec(rec_id)
     
     def plotxyzrec(self, rec_id):
-        fg = pl.figure(figsize=(8, 8))
+        fg = pl.figure(figsize=(7, 7))
         ax = fg.add_subplot(111)
         ax.set_title('XY XZ Matcher')
         ax.set_xlim([0, self.framewindow[-1] - self.framewindow[0]])
@@ -1059,7 +1059,7 @@ class ParaMaster():
 
     def onerec_and_misses(self, rec_id):
         fig, (ax, ax2) = pl.subplots(
-            1, 2, sharex=True, sharey=True, figsize=(8, 8))
+            1, 2, sharex=True, sharey=True, figsize=(7, 7))
         ax.set_xlim([self.pcw, self.framewindow[1] - self.framewindow[0]])
         ax.set_ylim([0, 1888])
         ax.set_title('XY Misses')
@@ -1102,12 +1102,12 @@ class ParaMaster():
                      str(pair[0]), fontsize=8)
         
     def recs_and_misses(self):
-        fig = pl.figure(figsize=(10, 10))
+        fig = pl.figure(figsize=(7, 7))
         ax = fig.add_subplot(111)
         ax.set_xlim([0, self.framewindow[1] - self.framewindow[0]])
         ax.set_ylim([0, 1888])
         ax.set_title('XY Misses')
-        fig2 = pl.figure(figsize=(10, 10))
+        fig2 = pl.figure(figsize=(7, 7))
         ax2 = fig2.add_subplot(111)
         ax2.set_xlim([0, self.framewindow[1] - self.framewindow[0]])
         ax2.set_ylim([0, 1888])
@@ -1214,6 +1214,8 @@ class ParaMaster():
             for win in nan_windows:
                 if win[1]-win[0] < duration_thresh:
                     if win[1] == len(z_in) - 1:
+   #                     print(para_number)
+   #                     print('extension to end')
                         slope = (z_in[win[0]-1] - z_in[win[0]-11]) / 10.0
                         width = win[1] - win[0]
                         endpoint = int(slope * width) + z_in[win[0]-1]
@@ -1223,6 +1225,8 @@ class ParaMaster():
                                 endpoint,
                                 width).astype(np.int)
                     else:
+#                        print(para_number)
+ #                       print('inter nanfill')
                         z_out[win[0]:win[1]] = np.linspace(
                             z_in[win[0]-1],
                             z_in[win[1]],
@@ -1238,9 +1242,9 @@ class ParaMaster():
             index = recnumber * 3
             yinv = [1888 - ycoord for ycoord in y]
             zinv = [1888 - zcoord for zcoord in z]
-            zinv_nonan = coord_inference(zinv, index)
-            xinf = coord_inference(x, index)
-            yinf = coord_inference(yinv, index)
+            zinv_nonan = coord_inference(zinv, recnumber)
+            xinf = coord_inference(x, recnumber)
+            yinf = coord_inference(yinv, recnumber)
             self.para3Dcoords[index] = xinf
             self.para3Dcoords[index + 1] = yinf
 #these inversions put paracoords in same reference frame as fish
@@ -1260,7 +1264,7 @@ class ParaMaster():
 
     def graph3D(self, animatebool):
         framecount = self.framewindow[1] - self.framewindow[0]
-        graph_3D = pl.figure(figsize=(10, 10))
+        graph_3D = pl.figure(figsize=(7, 7))
         ax = graph_3D.add_subplot(111, projection='3d')
         ax.set_title('3D Para Record')
         ax.set_xlim([0, 1888])

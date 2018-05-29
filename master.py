@@ -114,12 +114,19 @@ class RealFishControl:
             pickle.dump(self, file)
         
 
+# This class kind of got out of hand as I continued to add information
+# At this point probably works better as a container for dictionaries.
+# Each hunt should have a dictionary that states its properties.
+# Remove method should simply search dictionaries for input hunt ID.
+# When constructed, should take an exp so you don't have to add every time.
+# This will yield a proper pcw and integration window
+# Simply update any functions that take hds to take new class
+            
 class Hunt_Descriptor:
     def __init__(self, directory):
         self.hunt_ind_list = []
         self.para_id_list = []
         self.actions = []
-        self.ignored_para = []
         self.boutrange = []
         self.directory = directory
         self.infer_z = []
@@ -147,8 +154,8 @@ class Hunt_Descriptor:
         print self.hunt_ind_list
         print self.para_id_list
         print self.actions
-        print self.ignored_para
         print self.boutrange
+        print self.infer_z
 
     def slice_hd(self, hunt_id):
         hd_slice = Hunt_Descriptor(self.directory)
@@ -156,7 +163,6 @@ class Hunt_Descriptor:
         hd_slice.update_hunt_data(hunt_id,
                                   self.para_id_list[hunt_id_index],
                                   self.actions[hunt_id_index],
-                                  self.ignored_para[hunt_id_index],
                                   self.boutrange[hunt_id_index])
         return hd_slice
                                                   
@@ -164,33 +170,31 @@ class Hunt_Descriptor:
         self.hunt_ind_list = self.hunt_ind_list[:-1]
         self.para_id_list = self.para_id_list[:-1]
         self.actions = self.actions[:-1]
-        self.ignored_para = self.ignored_para[:-1]
         self.boutrange = self.boutrange[:-1]
+        self.interp_windows = self.interp_windows[:-1]
+        self.infer_z = self.infer_z[:-1]
 
-    def update_hunt_data(self, h, p, a, ip, br, exp, maxz):
-        self.hunt_ind_list.append(h)
+    def update_hunt_data(self, p, a, br, exp, maxz):
+        self.hunt_ind_list.append(copy.deepcopy(exp.current_hunt_ind))
         self.para_id_list.append(p)
         self.actions.append(a)
-        self.ignored_para.append(ip)
         self.boutrange.append(br)
         self.parse_interp_windows(exp, p)
         self.infer_z.append(maxz)
         self.exporter()
 
 
-# 	1) Hunt ID
-# 	2) Hunted Para (always the para the fish initiates to, attention shift or not)
-#       3)   Strike Success = 1, 
-# 	     Strike Fail = 2,
-# 	     Abort = 3, 
-# 	     Abort for Reorientation = 4, 
-# 	     Reorientation and successful strike = 5,
-# 	     Reorientation and fail = 6,
-# 	     Reorientation and abort = 7,
-# 	4) Ignored para: this is only for 5+. np.nan otherwise. 
-#       5) Endbout. Sometimes the strike occurs before the abort or without an abort. Note which bout this occurs on. If it's the last bout of the hunt, input -1. Otherwise, - before this. If you're not sure, leave it at -1.
-#       6) enter myexp
-#       7) enter True if you assigned max Z, false otherwise
+# 	1) Hunted Para
+#       2) Strike Success = 1,
+# 	   Strike Fail = 2,
+# 	   Abort = 3,
+# 	   Abort for Reorientation = 4,
+# 	   Reorientation and successful strike = 5,
+# 	   Reorientation and fail = 6,
+# 	   Reorientation and abort = 7,
+#       3) Range of bouts within hunt. Enter as tuple
+#       4) enter myexp
+#       5) enter True if you assigned max Z, false otherwise
 
         
 # for each para env, you will get a coordinate matrix that is scalexscalexscale, representing
@@ -361,7 +365,7 @@ class DimensionalityReduce():
         self.inv_fdict = {v: k for k, v in flag_dict.iteritems()}
         self.transition_matrix = np.array([])
         self.bouts_flags = [pickle.load(open(directory + '/bouts.pkl'))]
-        self.cluster_count = 10
+        self.cluster_count = 3
         self.hunt_cluster = []
         self.deconverge_cluster = []
         self.hunt_wins = []
@@ -541,12 +545,17 @@ class DimensionalityReduce():
             return
         candidate_window = [start_ind, start_ind + di]
         self.hunt_wins[ind] = candidate_window
-        exp.watch_hunt(self.hunt_wins, 1, 15, ind)
+        exp.watch_hunt(self, 1, 15, ind)
         response = raw_input('Cap Window?  ')
         if response == 'y':
             self.exporter()
         else:
             self.hunt_wins[ind] = [start_ind, original_end_ind]
+        view_bouts = raw_input("View Bouts During Hunt?: ")
+        if view_bouts == 'y':
+            exp.watch_hunt(self, 0, 50, ind)
+            bouts_during_hunt(exp.current_hunt_ind, dim, exp, True)
+    
                                                                                     
     def dim_reduction(self, dimension):
         print('running dimensionality reduction')
@@ -830,13 +839,13 @@ class Experiment():
 
     def nexthunt(self, dim, vid):
         ret = self.watch_hunt(
-            dim.hunt_wins, vid, 15, self.current_hunt_ind + 1)
+            dim, vid, 15, self.current_hunt_ind + 1)
         if not ret:
             return self.nexthunt(dim, vid)
 
     def repeat(self, dim, vid):
         self.watch_hunt(
-            dim.hunt_wins, vid, 15, self.current_hunt_ind)
+            dim, vid, 15, self.current_hunt_ind)
                    
     def bout_nanfilt_and_arrange(self, filter_walls):
         
@@ -1138,7 +1147,7 @@ class Experiment():
             np.array(orientation_track))[0]
         bouts_orientation = [om
                              for om in o_max_inds
-                             if orientation_track[om] > 50]
+                             if orientation_track[om] > 100]
         pl.plot(bouts_orientation, np.zeros(len(bouts_orientation)),
                 marker='.', ms=15, color='g')
         pl.plot(yaw_all, 'b')
@@ -1151,7 +1160,6 @@ class Experiment():
         for varind, tailwin in enumerate(
                 sliding_window(var_win_len, tailanglesum)):
             tailangle_std.append(np.abs(np.nanstd(tailwin)))
-            
         tailangle_std = np.array(tailangle_std)
         noise = np.nanmedian([tailangle_std[ind]
                               for ind in scipy.signal.argrelmin(
@@ -1260,8 +1268,11 @@ class Experiment():
         self.map_para_to_heading(index)
         return True
 
-    def watch_hunt(self, hunt_wins, cont_side, delay, h_ind):
-        print('Hunt #' + str(h_ind))
+    def watch_hunt(self, dim, cont_side, delay, h_ind):
+        hunt_wins = dim.hunt_wins
+        print('Hunt # ' + str(h_ind))
+        print('Init Cluster: ' + str(
+            dim.cluster_membership[hunt_wins[h_ind][0]]))
         self.current_hunt_ind = h_ind
         firstbout, lastbout = hunt_wins[h_ind]
         ind1 = self.bout_frames[firstbout]
@@ -1274,7 +1285,6 @@ class Experiment():
         print("Starts At Frame " + str(ind1))
         print("Ends At Frame " + str(ind2))
         dirct = self.directory + '/'
-        print dirct
         if cont_side == 0:
             vid = imageio.get_reader(dirct + 'conts.AVI', 'ffmpeg')
         elif cont_side == 1:
@@ -1319,19 +1329,22 @@ class Experiment():
         return True
 
 # Eye1 is the eye on the side of the direction of the turn.
-    def summary_stats(self, bout_index):
+    def bout_stats(self, bout_ind, dim):
+        bout_index = bout_ind + dim.hunt_wins[self.current_hunt_ind][0]
         bout = self.bout_data[bout_index]
         num_cols = int(np.ceil(self.num_dp/3.0))
         num_rows = 3
         fig = pl.figure(figsize=(8, 8))
         palette = np.array(sb.color_palette("Set1", self.num_dp))
+        cmem = dim.cluster_membership[bout_index]
+        print('Cluster Membership: ' + str(cmem))
         for i in range(self.num_dp):
             bout_partition = partition(self.num_dp, bout)
             ax = fig.add_subplot(num_rows, num_cols, i+1)
             ax.set_title(self.bout_dict[str(i)])
             ax.plot([val[i] for val in bout_partition], color=palette[i])
             if self.bout_dict[str(i)][0:3] == 'Eye':
-                ax.set_ylim([0, 50])
+                ax.set_ylim([-30, 30])
             elif self.bout_dict[str(i)][0:4] == 'Vect':
                 ax.set_ylim([0, 3])
             # elif self.bout_dict[str(i+1)][0:5] == 'Pitch':
@@ -1424,7 +1437,24 @@ class Experiment():
     def manual_remove(self):
         rec = raw_input('Enter Record to Remove: ')
         rec = int(rec)
-        del self.paradata.xyzrecords[rec]
+        for xyz_pair in self.paradata.xyzrecords[rec]:
+            xy_id = xyz_pair[0]
+            xz_id = xyz_pair[1]
+            xypara_obj = self.paradata.all_xy[xy_id]
+            xzpara_obj = self.paradata.all_xz[xz_id]
+            xy_coords = [(np.nan, np.nan) for i in range(
+                self.paradata.framewindow[0], self.paradata.framewindow[1])]
+            inv_y = [(x, 1888-y) for (x, y) in xypara_obj.location]
+            xy_coords[xypara_obj.timestamp:xypara_obj.timestamp+len(
+                xypara_obj.location)] = inv_y
+            self.paradata.unpaired_xy.append((xy_id, xypara_obj, xy_coords))
+            xz_coords = [(np.nan, np.nan) for i in range(
+                self.paradata.framewindow[0], self.paradata.framewindow[1])]
+            inv_z = [(x2, 1888-z) for (x2, z) in xzpara_obj.location]
+            xz_coords[xzpara_obj.timestamp:xzpara_obj.timestamp+len(
+                xzpara_obj.location)] = inv_z
+            self.paradata.unpaired_xz.append((xz_id, xzpara_obj, xz_coords))
+            del self.paradata.xyzrecords[rec]
         self.paradata.make_3D_para()
         self.paradata.clear_frames()
         self.paradata.label_para()
@@ -1763,6 +1793,7 @@ def plot_hairball(hd, *actionlist):
     
 
 def pvec_wrapper(exp, hd):
+    
     def concat_vecs(veclist):
         all_lengths = map(lambda a: len(a), veclist)
         all_vecs = reduce(lambda a, b: np.concatenate([a, b]), veclist)
@@ -2063,8 +2094,6 @@ def hunted_para_descriptor(dim, exp, hd):
               'Para Az Velocity',
               'Para Alt Velocity',
               'Para Dist velocity',
-              'Prebout Para DP',
-              'Prebout Para Vel',
               'Postbout Para Az',
               'Postbout Para Alt',
               'Postbout Para Dist',
@@ -2094,10 +2123,6 @@ def hunted_para_descriptor(dim, exp, hd):
         realfish.para_xyz_per_hunt.append(para3D)
         hunt_df = pd.DataFrame(columns=df_labels)
         poi_wrth = create_poirec(hi, 3, exp.directory, hp)
-        penv = ParaEnv(hi, exp.directory)
-        penv.find_paravectors(False)
-        dp = penv.dotprod[hp][cont_win:]
-        vel = penv.velocity_mags[hp][cont_win:]
         dist = [pr[4] for pr in poi_wrth]
         az = [pr[6] for pr in poi_wrth]
         alt = [pr[7] for pr in poi_wrth]
@@ -2134,7 +2159,7 @@ def hunted_para_descriptor(dim, exp, hd):
             for infwin in iws:
                 if np.intersect1d(
                         range(norm_frame-framewin, norm_frame),
-                        infwin):
+                        infwin).any():
                     inferred_coordinate = 1
             delta_pitch = dim.all_flags[bout][pitch_flag]
             delta_yaw = dim.all_flags[bout][yaw_flag]
@@ -2145,8 +2170,6 @@ def hunted_para_descriptor(dim, exp, hd):
             para_dalt = np.nanmean(delta_alt[norm_frame-framewin:norm_frame])
             para_ddist = np.nanmean(
                 delta_dist[norm_frame-framewin:norm_frame])
-            avg_dp = np.nanmean(dp[norm_frame-exp.minboutlength:norm_frame])
-            avg_vel = np.nanmean(vel[norm_frame-exp.minboutlength:norm_frame])
             postbout_az = np.nanmean(
                 filt_az[norm_frame+exp.minboutlength:
                         norm_frame+exp.minboutlength+framewin])
@@ -2156,9 +2179,12 @@ def hunted_para_descriptor(dim, exp, hd):
             postbout_dist = np.nanmean(
                 filt_dist[norm_frame+exp.minboutlength:
                           norm_frame+exp.minboutlength+framewin])
+
+    # -1s will be strike as deconvergence. -2 to -huntlenght will be strike before deconvergence
+    # will be strike that continues into hunting mode
             if br[1] < 0:
-                if ind == len(hunt_bouts) + br:
-                    ind = -1
+                if ind == len(hunt_bouts) + br[1]:
+                    ind = br[1]
             else:
                 if ind == br[1]:
                     ind = -1
@@ -2175,8 +2201,6 @@ def hunted_para_descriptor(dim, exp, hd):
                                     para_daz,
                                     para_dalt,
                                     para_ddist,
-                                    avg_dp,
-                                    avg_vel,
                                     postbout_az,
                                     postbout_alt,
                                     postbout_dist,
@@ -2189,7 +2213,7 @@ def hunted_para_descriptor(dim, exp, hd):
                                 np.radians(delta_pitch),
                                 -1*np.radians(delta_yaw)]
 
-            if ind == -1:
+            if ind < 0:
                 realfish.hunt_dataframes.append(copy.deepcopy(hunt_df))
                 break
     realfish.exporter()
@@ -2236,12 +2260,10 @@ def para_stimuli(dim, exp, hd):
     hunt_ind_list = hd.hunt_ind_list
     p_list = hd.para_id_list
     actions = hd.actions
-    ignored_para = hd.ignored_para
-#    endbout = hd.endbout
     stim_list = []
 
-    for h, hp, ac, ip in zip(hunt_ind_list,
-                             p_list, actions, ignored_para):
+    for h, hp, ac in zip(hunt_ind_list,
+                         p_list, actions):
         print h
         # here you will create a bout frames list for the entire hunt. once you
         # get to the hunted para, 
@@ -2288,12 +2310,8 @@ def para_stimuli(dim, exp, hd):
             distance = np.nanmedian(filt_dist[0:fr_to_avg])
             hunted = 0
             # Here would like to make a hairball probably.
-            if ac >= 5:
-                if vis_para == ip:
-                    hunted = 8
-            else:
-                if vis_para == hp:
-                    hunted = ac
+            if vis_para == hp:
+                hunted = ac
             dp = penv.dotprod[vis_para][cont_win:cont_win+int_win]
             vel = penv.velocity_mags[vis_para][cont_win:cont_win+int_win]
             avg_dp = np.nanmedian(dp)
@@ -2467,8 +2485,8 @@ def find_density(kde_plot, local_maxes, itr, cd):
             return find_density(kde_plot, local_maxes, itr-1, contour_diam)
         else:
             return local_maxes
-            
-    
+
+
 def filter_uvec(vecs, sd):
     filt_sd = sd
     npvecs = np.array(vecs)
@@ -2496,7 +2514,7 @@ def unit_to_angle(units):
             angle = (2 * np.pi) + angle
         angles.append(angle)
     return np.degrees(angles)
-    
+
 
 def bout_header(v_dict, num_frames_in_bout):
     header = []
@@ -2515,7 +2533,7 @@ def magvector(vector):
 
 # This function plots all the possible bouts the fish can perform.
 # It maps all bouts to Az, Alt, Dist coordinates with an interbout, pitch, and yaw.
-# 
+
 
 def map_all_bouts(myexp, dim):
     # Don't forget delta yaw is negative with respect to Az changes. 
@@ -2619,18 +2637,18 @@ if __name__ == '__main__':
     bout_dict = {
 #        '0': 'Pitch',
         # '1': 'Tail Segment 1',
-        # '2': 'Tail Segment 2',
+#         '2': 'Tail Segment 2',
         # '3': 'Tail Segment 3',
         # '4': 'Tail Segment 4',
         # '5': 'Tail Segment 5',
-        # '6': 'Tail Segment 6',
-        # '7': 'Tail Segment 7',
+       # '6': 'Tail Segment 6',
+#        '7': 'Tail Segment 7',
         # '8': 'Vector Velocity',
         # '9': 'Delta Z',
  #       '10': 'Delta Yaw',
-        '11': 'Eye1 Angle',
-        '12': 'Eye2 Angle'}
-#        '13': 'Eye Sum'} #,
+#        '11': 'Eye1 Angle',
+#        '12': 'Eye2 Angle'}
+        '13': 'Eye Sum'} #,
 #        '14': 'Interbout_Back'}
 
 # This dictionary describes a flag set of variables that should be calculated for each bout that describes characteristics of the bout    
@@ -2707,13 +2725,15 @@ if __name__ == '__main__':
     clear_hunts = raw_input('New hunt windows?: ')
     if clear_hunts == 'y':
         dim.clear_huntwins()
-        dim.find_hunts([5],[0])
+        dim.find_hunts([0],[2])
         dim.exporter()
         hd = Hunt_Descriptor(drct)
     else:
         import_hd = raw_input('Import Hunt Descriptor?: ')
         if import_hd == 'y':
             hd = hd_import(myexp.directory)
+        elif import_hd == 'n':
+            hd = Hunt_Descriptor(drct)
             
 #    yaw, pitch, z = bouts_during_hunt(hd.hunt_ind_list[0], dim, myexp)
 
