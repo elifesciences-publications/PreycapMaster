@@ -358,6 +358,7 @@ class DimensionalityReduce():
         self.all_bouts = []
         self.all_flags = []
         self.dim_reduce_output = []
+        self.cmem_pre_sub = []
         self.cluster_membership = []
         self.bout_dict = bout_dict
         self.num_bouts_per_fish = []
@@ -372,6 +373,49 @@ class DimensionalityReduce():
 
 # This will be for the future if you want to cluster all fish in the fish_id_dict. Just add the IDs from the dict to the flag data.
 
+    def revert_cmem(self):
+        self.cluster_membership = copy.deepcopy(self.cmem_pre_sub)
+
+    def subcluster_hunts(self, sub_dict, orig_cluster, num_clusters):
+        self.cmem_pre_sub = copy.deepcopy(self.cluster_membership)
+        orig_cluster_indices = np.where(
+            self.cluster_membership == orig_cluster)[0].tolist()
+        cluster_model = SpectralClustering(n_clusters=num_clusters,
+                                           affinity='nearest_neighbors',
+                                           n_neighbors=10)
+        keys = np.sort(np.array(sub_dict.keys()).astype(np.int))
+        sub_cluster_input = []
+        bt_array = np.array(self.all_bouts)
+        std_array = [np.nanstd(
+            bt_array[:, i:len(self.all_bouts[0])+1:self.num_dp])
+                     for i in range(self.num_dp)]
+        for b_ind, bout in enumerate(self.all_bouts):
+            if b_ind in orig_cluster_indices:
+                sub_bout = []
+                b_partitioned = partition(self.num_dp, bout)
+                for bout_frame in b_partitioned:
+                    norm_frame = (np.array(bout_frame) / std_array)
+                    sub_bout_frame = norm_frame[keys].tolist()
+                    sub_bout += sub_bout_frame
+                sub_cluster_input.append(sub_bout)
+        cmem = cluster_model.fit_predict(np.array(sub_cluster_input))
+        max_cluster_id = np.max(self.cluster_membership)
+# What this does is leave the original cluster id alone for one subcluster,
+# then add extra subclusters via adding more id's to cluster_membership
+        for b_id, c_ind in enumerate(orig_cluster_indices):
+            if cmem[b_id] != 0:
+                self.cluster_membership[c_ind] = max_cluster_id + cmem[b_id]
+
+
+            
+
+
+        # what you will do is go through cluster_membership and assign a
+        # 3 to clusters that come out 1, and keep at hunt_cluster the ones that come out 0.
+        # then you can call cluster_summary and change the hunt_wins based on your observation. 
+        
+
+        
     def strike_abort_sep(self, term_cluster):
         cluster_indices = np.where(self.cluster_membership == term_cluster)[0]
             # now get all bouts from cluster indices in all_bouts
@@ -749,7 +793,7 @@ class Experiment():
         self.set_types()
         self.filter_fishdata()
         self.delta_ha = []
-        self.vectVcalc()
+        self.vectVcalc(2)
         self.fluor_data = []
         self.paradata = []
         self.framewindow = []
@@ -785,7 +829,7 @@ class Experiment():
     def watch(self, vid):
         self.paradata.watch_event(vid)
 
-    def vectVcalc(self):
+    def vectVcalc(self, num_dimensions):
 
         vectv = [0.0]
         # xwin = sliding_window(3, self.fishdata.x)
@@ -794,9 +838,11 @@ class Experiment():
         xwin = sliding_window(3, self.fishdata.low_res_x)
         ywin = sliding_window(3, self.fishdata.low_res_y)
         zwin = sliding_window(3, self.fishdata.low_res_z)
-
-        xyzwin = zip(xwin, ywin, zwin)
-        for w in xyzwin:
+        if num_dimensions == 3:
+            vecwin = zip(xwin, ywin, zwin)
+        elif num_dimensions == 2:
+            vecwin = zip(xwin, ywin)
+        for w in vecwin:
             w = np.array(w)
             vec1 = w[:, 0]
             vec2 = w[:, 1]
@@ -829,7 +875,6 @@ class Experiment():
             temp_tail[:, i] = fill_in_nans(temp_tail[:, i])
         self.fishdata.tailangle = temp_tail.tolist()
 
-
 # This function will take in the ha_diff flag (total ha_diff) and invert ha, switch the eyes, and invert the tail angles.
 # Use the itertoolz partition function with size num_dp over the entire bout data. 
 # Inds 1-7 are tail, ha is 10, eyes are 11 and 12. 
@@ -846,9 +891,12 @@ class Experiment():
     def repeat(self, dim, vid):
         self.watch_hunt(
             dim, vid, 15, self.current_hunt_ind)
-                   
+
+    def backone(self, dim):
+        self.watch_hunt(
+            dim, 1, 15, self.current_hunt_ind - 1)
+
     def bout_nanfilt_and_arrange(self, filter_walls):
-        
         def get_var_index(var_name):
             try:
                 v = int(self.inv_bdict[var_name])
@@ -2633,6 +2681,16 @@ if __name__ == '__main__':
         '14': 'Interbout_Back'}
 
 # This dictionary describes the variables to use for clustering.
+    sub_dict = {
+        '1': 'Tail Segment 1',
+        '2': 'Tail Segment 2',
+        '3': 'Tail Segment 3',
+        '4': 'Tail Segment 4',
+        '5': 'Tail Segment 5',
+        '6': 'Tail Segment 6',
+        '7': 'Tail Segment 7'}
+        
+
 
     bout_dict = {
 #        '0': 'Pitch',
@@ -2681,10 +2739,10 @@ if __name__ == '__main__':
 # bout array, matched with a flag array that describes summary statistics for each bout. A new BoutsandFlags object is then created
 # whose only role is to contain the bouts and corresponding flags for each fish. 
 
-    fish_id = '030118_2'
+    fish_id = '022318_9'
     drct = os.getcwd() + '/' + fish_id
-    new_exp = False
-    dimreduce = False
+    new_exp = True
+    dimreduce = True
     
     if new_exp:
         # HERE IF YOU WANT TO CLUSTER MANY FISH IN THE FUTURE, MAKE A DICT OF FISH_IDs AND RUN THROUGH THIS LOOP. MAY WANT TO CLUSTER MORE FISH TO PULL OUT STRIKES VS ABORTS. 
@@ -2725,7 +2783,7 @@ if __name__ == '__main__':
     clear_hunts = raw_input('New hunt windows?: ')
     if clear_hunts == 'y':
         dim.clear_huntwins()
-        dim.find_hunts([0],[2])
+        dim.find_hunts([1],[0])
         dim.exporter()
         hd = Hunt_Descriptor(drct)
     else:
