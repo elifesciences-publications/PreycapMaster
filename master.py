@@ -2129,6 +2129,7 @@ def bouts_during_hunt(hunt_ind, dimred, exp, plotornot):
 
 
 def hunted_para_descriptor(dim, exp, hd):
+
     header = ['Hunt ID',
               'Bout Number',
               'Bout Az',
@@ -2146,7 +2147,8 @@ def hunted_para_descriptor(dim, exp, hd):
               'Postbout Para Alt',
               'Postbout Para Dist',
               'Strike Or Abort',
-              'Inferred']
+              'Inferred'
+              'Avg Para Velocity']
     int_win = exp.integration_window
     cont_win = exp.para_continuity_window
     pitch_flag = int(dim.inv_fdict['Total Pitch Change'])
@@ -2169,6 +2171,10 @@ def hunted_para_descriptor(dim, exp, hd):
                     hp*3:hp*3 + 3][
                         :, cont_win+int_win-realfish.firstbout_para_intwin:]
         realfish.para_xyz_per_hunt.append(para3D)
+        penv = ParaEnv(hi, exp.directory)
+        penv.find_paravectors(False, hp)
+        avg_vel = np.nanmean(penv.velocity_mags[0][
+            exp.para_continuity_window / penv.vector_spacing:])
         hunt_df = pd.DataFrame(columns=df_labels)
         poi_wrth = create_poirec(hi, 3, exp.directory, hp)
         dist = [pr[4] for pr in poi_wrth]
@@ -2184,7 +2190,7 @@ def hunted_para_descriptor(dim, exp, hd):
         delta_alt = [b-a for a, b in sliding_window(2, filt_alt)]
         delta_dist = [b-a for a, b in sliding_window(2, filt_dist)]
 #instead of asking about sensory input, just asking what para is doing right before and right after bout
-        hunt_bouts = range(dim.hunt_wins[hi][0] + br[0],
+        hunt_bouts = range(dim.hunt_wins[hi][0],
                            dim.hunt_wins[hi][1]+1)
         hunt_bout_frames = [exp.bout_frames[i] for i in hunt_bouts]
         realfish.hunt_firstframes.append(hunt_bout_frames[0])
@@ -2199,7 +2205,17 @@ def hunted_para_descriptor(dim, exp, hd):
         exp.map_bouts_to_heading(hi, dim.hunt_wins)
         framewin = exp.minboutlength / 2
         # these are normed to the hunting bout so that first bout is 0.
+        endhunt = False
         for ind, bout in enumerate(hunt_bouts):
+            print('true index')
+            print ind
+            print hunt_bouts
+            if br[0] != 0:
+                ind += br[0]
+                bout += br[0]
+                print('altered index')
+                print ind
+
             norm_frame = norm_bf[ind]
             inferred_coordinate = 0
             if mz:
@@ -2231,11 +2247,18 @@ def hunted_para_descriptor(dim, exp, hd):
     # -1s will be strike as deconvergence. -2 to -huntlenght will be strike before deconvergence
     # will be strike that continues into hunting mode
             if br[1] < 0:
-                if ind == len(hunt_bouts) + br[1]:
-                    ind = br[1]
+                if br[1] == -100:
+                    if ind == len(hunt_bouts) - 1:
+                        endhunt = True
+                        last_bout = br[1]
+                elif ind == len(hunt_bouts) + br[1]:
+                    endhunt = True
+                    last_bout = br[1]
+
             else:
                 if ind == br[1]:
-                    ind = -1
+                    endhunt = True
+                    last_bout = ind - len(hunt_bouts)
             bout_descriptor.append([hi,
                                     ind,
                                     exp.bout_az[ind],
@@ -2253,15 +2276,16 @@ def hunted_para_descriptor(dim, exp, hd):
                                     postbout_alt,
                                     postbout_dist,
                                     ac,
-                                    inferred_coordinate])
+                                    inferred_coordinate,
+                                    avg_vel])
 #            if ind != -1:
             hunt_df.loc[ind] = [exp.bout_az[ind],
                                 exp.bout_alt[ind],
                                 exp.bout_dist[ind],
                                 np.radians(delta_pitch),
                                 -1*np.radians(delta_yaw)]
-
-            if ind < 0:
+            if endhunt:
+                bout_descriptor[-1][1] = last_bout
                 realfish.hunt_dataframes.append(copy.deepcopy(hunt_df))
                 break
     realfish.exporter()
@@ -2681,14 +2705,7 @@ if __name__ == '__main__':
         '14': 'Interbout_Back'}
 
 # This dictionary describes the variables to use for clustering.
-    sub_dict = {
-        '1': 'Tail Segment 1',
-        '2': 'Tail Segment 2',
-        '3': 'Tail Segment 3',
-        '4': 'Tail Segment 4',
-        '5': 'Tail Segment 5',
-        '6': 'Tail Segment 6',
-        '7': 'Tail Segment 7'}
+    sub_dict = { '8':'Vector Velocity'}
         
 
 
@@ -2739,10 +2756,10 @@ if __name__ == '__main__':
 # bout array, matched with a flag array that describes summary statistics for each bout. A new BoutsandFlags object is then created
 # whose only role is to contain the bouts and corresponding flags for each fish. 
 
-    fish_id = '022318_9'
+    fish_id = '022318_1'
     drct = os.getcwd() + '/' + fish_id
-    new_exp = True
-    dimreduce = True
+    new_exp = False
+    dimreduce = False
     
     if new_exp:
         # HERE IF YOU WANT TO CLUSTER MANY FISH IN THE FUTURE, MAKE A DICT OF FISH_IDs AND RUN THROUGH THIS LOOP. MAY WANT TO CLUSTER MORE FISH TO PULL OUT STRIKES VS ABORTS. 
