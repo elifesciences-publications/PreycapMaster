@@ -449,6 +449,7 @@ class DimensionalityReduce():
             ib, dy = self.strike_abort_sep(cluster)
         for bout_num, cluster_mem in enumerate(self.cluster_membership):
             if cluster_mem == cluster:
+                print('Bout #: ' + str(bout_num))
                 if term:
                     dyaw = dy[c_mem_counter]
                     c_mem_counter += 1
@@ -1161,7 +1162,64 @@ class Experiment():
         prop3 = np.isfinite(vv[bout[0]:bout[1]+1]).all()
         return prop1 and prop2 and prop3
 
-    def bout_detector(self, plotornot, bout_type):
+    def bout_detector(self):
+        def boutfilter_recur(boutstarts, boutends, winlen):
+            for ind, boutwin in enumerate(sliding_window(2, boutstarts)):
+                if boutwin[1] - boutwin[0] < winlen:
+                    del boutstarts[ind+1]
+                    del boutends[ind+1]
+                    break
+            if ind+1 < len(boutstarts)-1:
+                boutstarts, boutends = boutfilter_recur(
+                    boutstarts, boutends, winlen)
+            return boutstarts, boutends
+
+        threshstd = 5
+        tailang = [tail[-1] for tail in self.fishdata.tailangle]
+        ta_std = [np.abs(np.nanstd(tw)) for tw in sliding_window(5, tailang)]
+        bts = scipy.signal.argrelmax(np.array(ta_std), order=3)[0]
+        bts = [b for b in bts if ta_std[b] > threshstd]
+        boutstarts = []
+        boutends = []
+
+# DO want to do boutfilter_recur here, but over a very small window (i.e. you don't want extreme overlaps)    
+        for b in bts:
+            winlen = 20
+            backwin = ta_std[b-winlen:b]
+            backwin.reverse()
+            backwin = np.array(backwin)
+            forwardwin = np.array(ta_std[b:b+winlen])
+        #thresh here will be noise + min calculation
+            std_thresh = 3
+            try:
+                crossback = -np.where(backwin < std_thresh)[0][0] + b
+            except IndexError:
+                crossback = b - 5
+            try:
+                crossforward = np.where(forwardwin < std_thresh)[0][0] + b
+            except IndexError:
+                crossforward = b + 5
+            boutstarts.append(crossback)
+            boutends.append(crossforward)
+        boutstarts, boutends = boutfilter_recur(boutstarts, boutends, 3)
+        self.bout_frames = boutstarts
+        self.bout_durations = [
+            be - bs for bs, be in zip(boutstarts, boutends)]
+        fig, (ax1, ax2) = pl.subplots(1, 2, sharex=True, figsize=(7, 7))
+        ax1.plot(bts, np.zeros(len(bts)), marker='.', color='b')
+        ax2.plot(bts, np.zeros(len(bts)), marker='.', color='b')
+        ax1.plot(
+            boutstarts, np.zeros(len(boutstarts)), marker='.', color='m')
+        ax2.plot(
+            boutstarts, np.zeros(len(boutstarts)), marker='.', color='m')
+        ax1.plot(boutends, np.zeros(len(boutends)), marker='.', color='k')
+        ax2.plot(boutends, np.zeros(len(boutends)), marker='.', color='k')
+        ax1.plot(ta_std)
+        ax2.plot(tailang)
+        pl.show()
+
+
+    def bout_detector_old(self, plotornot, bout_type):
 
         def boutfilter_recur(boutlist, winlen):
             for ind, boutwin in enumerate(sliding_window(2, boutlist)):
@@ -1175,8 +1233,11 @@ class Experiment():
         # Start orientation_based bout calls.
         std_threshold = 5
 
+# consecutive splits lists into chunks depending on whether they are contiuously monotonic.
+# e.g. [1,2,3,5,6] => [1,2,3],[5,6]
         def consecutive(data, stepsize=1):
             return np.split(data, np.where(np.diff(data) != stepsize)[0]+1)
+        
         ha_winlength = 20
         yaw_all = unit_to_angle(
             filter_uvec(
@@ -1223,42 +1284,51 @@ class Experiment():
 # the first. 
 # have to be at least 3 consecutive frames of high var windows for a bout (i.e. ~50 ms long)
         consecutive_thresh = 3
+
+# this function will be used if you want to use 10 frame discrete windows        
+        def assign_fixedwin_bouts(consecutive_slices, consecutive_thresh):
+            consecutive_thresh = 3
+            bouts_tail = []
+            for cs in consecutive_slices:
+                if cs.shape[0] > consecutive_thresh:
+                    bouts_in_slice = range(
+                        1 + (cs.shape[0] / self.minboutlength))
+                    for b in bouts_in_slice:
+                        bouts_tail.append(cs[b * self.minboutlength])
+            return bouts_tail
+
         bouts_tail = [a[0]
                       for a in consecutive_slices
                       if a.shape[0] >= consecutive_thresh]
-        np.save('boutsorientation.npy', bouts_orientation)
-        np.save('boutstail.npy', bouts_tail)
-        
+
         self.bout_durations = [b.shape[0]
                                for b in consecutive_slices
                                if b.shape[0] >= consecutive_thresh]
-
-
         
-# now there's one at the beginning and end of a bout. 
         if bout_type == 'tail':
-            self.bout_frames = boutfilter_recur(
-               copy.deepcopy(bouts_tail), self.minboutlength)
-        elif bout_type == 'orientation':
-            self.bout_frames = boutfilter_recur(
-                copy.deepcopy(bouts_orientation))
-            self.bout_durations = np.full(len(self.bout_frames), np.nan)
-        elif bout_type == 'combined':
-            self.bout_frames = boutfilter_recur(
-                sorted(
-                    copy.deepcopy(
-                        bouts_tail) + copy.deepcopy(bouts_orientation)),
-                self.minboutlength)
-            temp_bd = []
-            tailcounter = 0
-            for bf in self.bout_frames:
-                if bf in bouts_tail:
-                    temp_bd.append(self.bout_durations[tailcounter])
-                    tailcounter += 1
-                else:
-                    temp_bd.append(np.nan)
-            self.bout_durations = temp_bd
-                                      
+            self.bout_frames = bouts_tail
+# #            self.bout_frames = boutfilter_recur(
+# #               copy.deepcopy(bouts_tail), self.minboutlength)
+#         elif bout_type == 'orientation':
+#  #           self.bout_frames = boutfilter_recur(
+# #                copy.deepcopy(bouts_orientation))
+#             self.bout_durations = np.full(len(self.bout_frames), np.nan)
+#         elif bout_type == 'combined':
+#             self.bout_frames = boutfilter_recur(
+#                 sorted(
+#                     copy.deepcopy(
+#                         bouts_tail) + copy.deepcopy(bouts_orientation)),
+#                 self.minboutlength)
+#             temp_bd = []
+#             tailcounter = 0
+#             for bf in self.bout_frames:
+#                 if bf in bouts_tail:
+#                     temp_bd.append(self.bout_durations[tailcounter])
+#                     tailcounter += 1
+#                 else:
+#                     temp_bd.append(np.nan)
+#             self.bout_durations = temp_bd
+
         print("Bouts from Bout Detector")
         print(len(self.bout_durations))
 
@@ -2084,6 +2154,11 @@ def huntbouts_wrapped(hd, dim, exp, med_or_min, plotornot):
     pl.title('Hunt Ends')
     pl.show()
 
+
+def every_huntbout(dim, exp, hd):
+    for h_id in hd.hunt_ind_list:
+        bouts_during_hunt(h_id, dim, exp, True)
+    
     
 def bouts_during_hunt(hunt_ind, dimred, exp, plotornot):
     integ_win = exp.integration_window
@@ -2095,13 +2170,11 @@ def bouts_during_hunt(hunt_ind, dimred, exp, plotornot):
     start = exp.bout_frames[firstind]-integ_win
     end = exp.bout_frames[secondind]+integ_win
     # gives last bout 500ms to occur
-    fig = pl.figure()
-    ax1 = fig.add_subplot(221)
+    fig, ((ax1, ax2), (ax3, ax4)) = pl.subplots(2, 2, sharex=True, figsize = (7, 7))
     filt_phir = gaussian_filter(exp.fishdata.phiright, 2)[start:end]
     filt_phil = gaussian_filter(exp.fishdata.phileft, 2)[start:end]
     ax1.plot(filt_phir, color='g')
     ax1.plot(filt_phil, color='r')
-    ax2 = fig.add_subplot(222)
     ax2.plot([np.sum(t) for t in exp.fishdata.tailangle[start:end]])
     bouts_tail = [exp.bout_frames[i]-start for i in indrange]
     print len(bouts_tail)
@@ -2115,10 +2188,8 @@ def bouts_during_hunt(hunt_ind, dimred, exp, plotornot):
     pitch_during_hunt = exp.fishdata.pitch[start:end]
     yaw_during_hunt = exp.fishdata.headingangle[start:end]
     z_during_hunt = exp.fishdata.z[start:end]
-    ax3 = fig.add_subplot(223)
     ax3.plot(yaw_during_hunt, color='m')
     ax3.plot(pitch_during_hunt, color='k')
-    ax4 = fig.add_subplot(224)
     ax4.plot(z_during_hunt, color='b')
     if plotornot == 0:
         pl.clf()
@@ -2661,6 +2732,20 @@ def map_all_bouts(myexp, dim):
     return bout_descriptor
 
 
+def monotonic_max(winsize, array_in, maxthresh):
+    mmax = []
+    for ind, win in enumerate(sliding_window(winsize, array_in)):
+        if not (np.array(win) > maxthresh).all():
+            continue
+        windiff = np.diff(win)
+        if (windiff[0:(
+                winsize / 2) + 1] >= 0).all() and (
+                    windiff[winsize/2:] <= 0).all():
+            mmax.append(ind)
+            print win
+            print windiff
+    return np.array(mmax)
+
 def fixmappings(exp, dim, hd):
     for hunt_id in hd.hunt_ind_list:
         init_frame = exp.bout_frames[dim.hunt_wins[hunt_id][0]]
@@ -2756,10 +2841,10 @@ if __name__ == '__main__':
 # bout array, matched with a flag array that describes summary statistics for each bout. A new BoutsandFlags object is then created
 # whose only role is to contain the bouts and corresponding flags for each fish. 
 
-    fish_id = '022318_1'
+    fish_id = '041618_1'
     drct = os.getcwd() + '/' + fish_id
-    new_exp = False
-    dimreduce = False
+    new_exp = True
+    dimreduce = True
     
     if new_exp:
         # HERE IF YOU WANT TO CLUSTER MANY FISH IN THE FUTURE, MAKE A DICT OF FISH_IDs AND RUN THROUGH THIS LOOP. MAY WANT TO CLUSTER MORE FISH TO PULL OUT STRIKES VS ABORTS. 
@@ -2774,7 +2859,9 @@ if __name__ == '__main__':
 #        else:
         
         myexp = Experiment(10, all_varbs_dict, flag_dict, drct)
-        myexp.bout_detector(True, 'combined')
+#        myexp.bout_detector(True, 'combined')
+#        myexp.bout_detector(True, 'tail')
+        myexp.bout_detector()
         myexp.bout_nanfilt_and_arrange(False)
         bouts_flags = BoutsAndFlags(drct,
                                     myexp.bout_data, myexp.bout_flags)
@@ -2809,8 +2896,7 @@ if __name__ == '__main__':
             hd = hd_import(myexp.directory)
         elif import_hd == 'n':
             hd = Hunt_Descriptor(drct)
-            
-#    yaw, pitch, z = bouts_during_hunt(hd.hunt_ind_list[0], dim, myexp)
+
 
 
 
