@@ -131,7 +131,7 @@ class Hunt_Descriptor:
         self.directory = directory
         self.infer_z = []
         self.interp_windows = []
-        
+
     def exporter(self):
         with open(self.directory + '/hunt_descriptor.pkl', 'wb') as file:
             pickle.dump(self, file)
@@ -157,22 +157,13 @@ class Hunt_Descriptor:
         print self.boutrange
         print self.infer_z
 
-    def slice_hd(self, hunt_id):
-        hd_slice = Hunt_Descriptor(self.directory)
-        hunt_id_index = self.hunt_ind_list.index(hunt_id)
-        hd_slice.update_hunt_data(hunt_id,
-                                  self.para_id_list[hunt_id_index],
-                                  self.actions[hunt_id_index],
-                                  self.boutrange[hunt_id_index])
-        return hd_slice
-                                                  
-    def remove_last_entry(self):
-        self.hunt_ind_list = self.hunt_ind_list[:-1]
-        self.para_id_list = self.para_id_list[:-1]
-        self.actions = self.actions[:-1]
-        self.boutrange = self.boutrange[:-1]
-        self.interp_windows = self.interp_windows[:-1]
-        self.infer_z = self.infer_z[:-1]
+    def remove_entry(self, ind):
+        del self.hunt_ind_list[ind]
+        del self.para_id_list[ind]
+        del self.actions[ind]
+        del self.boutrange[ind]
+        del self.interp_windows[ind]
+        del self.infer_z[ind]
 
     def update_hunt_data(self, p, a, br, exp, maxz):
         self.hunt_ind_list.append(copy.deepcopy(exp.current_hunt_ind))
@@ -413,9 +404,7 @@ class DimensionalityReduce():
         # what you will do is go through cluster_membership and assign a
         # 3 to clusters that come out 1, and keep at hunt_cluster the ones that come out 0.
         # then you can call cluster_summary and change the hunt_wins based on your observation. 
-        
-
-        
+            
     def strike_abort_sep(self, term_cluster):
         cluster_indices = np.where(self.cluster_membership == term_cluster)[0]
             # now get all bouts from cluster indices in all_bouts
@@ -494,7 +483,7 @@ class DimensionalityReduce():
         self.hunt_wins = []
         self.hunt_cluster = []
         self.deconverge_cluster = []
-            
+
     def concatenate_records(self):
         for record in self.bouts_flags:
             self.all_bouts = self.all_bouts + record.bouts
@@ -600,25 +589,11 @@ class DimensionalityReduce():
         if view_bouts == 'y':
             exp.watch_hunt(self, 0, 50, ind)
             bouts_during_hunt(exp.current_hunt_ind, dim, exp, True)
-    
-                                                                                    
+
     def dim_reduction(self, dimension):
         print('running dimensionality reduction')
         np.set_printoptions(suppress=True)
         np.random.seed(1)
-#        model = PCA(n_components=dimension, whiten=True)
-        # model = TSNE(n_components=dimension,
-        #              perplexity=30.0,
-        #              learning_rate=100.0,
-        #              n_iter=1000)
-        # model = Isomap(n_neighbors=10,
-        #                n_components=dimension,
-        #                eigen_solver='auto',
-        #                tol=0,
-        #                max_iter=None,
-        #                path_method='auto',
-        #                neighbors_algorithm='auto',
-        #                n_jobs=1)
         model = SpectralEmbedding(n_components=dimension,
                                   affinity='nearest_neighbors',
                                   gamma=None,
@@ -626,7 +601,6 @@ class DimensionalityReduce():
                                   eigen_solver=None,
                                   n_neighbors=None,
                                   n_jobs=1)
-
         for b in self.all_bouts:
             if not np.isfinite(b).all():
                 print('found nan or inf')
@@ -634,7 +608,6 @@ class DimensionalityReduce():
         self.dim_reduce_output = dim_reduce_data
 
     def cluster_summary(self, *cluster_id):
-#        pl.ion()
         pl.ioff()
         print Counter(self.cluster_membership)
         num_dp = len(self.all_varbs_dict)
@@ -678,14 +651,11 @@ class DimensionalityReduce():
                     ax.set_ylim([0, 100])
                 elif self.all_varbs_dict[str(i)][0:4] == 'Vect':
                     ax.set_ylim([0, 3])
-                # elif self.bout_dict[str(i+1)][0:5] == 'Pitch':
-                #     ax.set_ylim([-50, 50])
                 elif self.all_varbs_dict[str(i)] == 'Delta Z':
                     sb.tsplot([np.cumsum(dp)
                                for dp in data_points[str(i)]],
                               color='k',
                               ci=95)
-#                    ax.set_ylim([-20, 20])
                 elif self.all_varbs_dict[str(i)] == 'Delta Yaw':
                     sb.tsplot([np.cumsum(dp)
                                for dp in data_points[str(i)]],
@@ -696,9 +666,6 @@ class DimensionalityReduce():
             pl.subplots_adjust(top=0.9, hspace=.4, wspace=.4)
             pl.savefig(self.directory + '/cluster' + str(_id) + '.tif')
             pl.show()
-            # if len(cluster_ids) != 1:
-            #     pl.waitforbuttonpress()
-
 
     def flags_in_cluster(self, cluster_id, flag_id):
         all_flags = np.array(self.all_flags)
@@ -713,7 +680,7 @@ class DimensionalityReduce():
         pl.hist(fl_plot, bins=10, color='r')
         pl.title(flag_title)
         pl.show()
-                        
+
     def cluster_plot(self, dimensions, flagnum):
         pl.ion()
         fish_id_flag = int(self.inv_fdict['Fish ID'])
@@ -722,9 +689,9 @@ class DimensionalityReduce():
         palette = np.array(sb.color_palette("cubehelix", 10))
         flags = np.array([fl[flagnum] for fl in self.all_flags])
         if not flagnum == fish_id_flag and not flagnum == cluster_flag_id:
-            flag_ranks, flagbins = pandas.qcut(flags, 10,
-                                               labels=False,
-                                               retbins=True)
+            flag_ranks, flagbins = pd.qcut(flags, 10,
+                                           labels=False,
+                                           retbins=True)
         else:
             flag_ranks = flags
         print(np.unique(flag_ranks))
@@ -778,12 +745,14 @@ class DimensionalityReduce():
 
 
 class Experiment():
-    def __init__(self, minboutlength, bout_dict, flag_dict, dirct):
+    def __init__(self, cluster_length,
+                 refractory_period, bout_dict, flag_dict, dirct):
         self.ufish = []
         self.ufish_origin = []
         self.uperp = []
         self.upar = []
         self.invert = True
+        self.refract = refractory_period
         self.bout_dict = bout_dict
         self.flag_dict = flag_dict
         self.inv_bdict = {v: k for k, v in bout_dict.iteritems()}
@@ -804,7 +773,7 @@ class Experiment():
         self.rejected_bouts = []
         self.bout_data = []
         self.bout_flags = []
-        self.minboutlength = minboutlength
+        self.minboutlength = cluster_length
         self.num_dp = len(bout_dict)
         self.para_win = 20
 #just assures that 20 frames before bout is also continuous in order for para reconstructions to be accurate per bout. 
@@ -833,9 +802,6 @@ class Experiment():
     def vectVcalc(self, num_dimensions):
 
         vectv = [0.0]
-        # xwin = sliding_window(3, self.fishdata.x)
-        # ywin = sliding_window(3, self.fishdata.y)
-        # zwin = sliding_window(3, self.fishdata.z)
         xwin = sliding_window(3, self.fishdata.low_res_x)
         ywin = sliding_window(3, self.fishdata.low_res_y)
         zwin = sliding_window(3, self.fishdata.low_res_z)
@@ -967,7 +933,6 @@ class Experiment():
 # directly after a FL frame because the internal timing of the bout will be off. Frametypes_IR is a new array for only IR frames. A 0 says it is an IR fram# that does not arrive after an FL frame while a 1 says it is an IR frame that occurs directly after an FL frame. Post_luor_inds are thus frames that should be excluded from bouts because they fall directly after an FL frame. 
         frametypes_ir = []
         post_fluor_inds = []
-
         prevframe = 0
         for frame in frametypes:
             if prevframe == 0:
@@ -1016,12 +981,9 @@ class Experiment():
 # if filter_walls input to this function is false, bouts will still be candidates for clustering, but will be flagged in rejection. 
                 if filter_walls:
                     continue
-                        
-            interbout = np.copy(bout[1] - bout[0])
+# THIS IS FOR CLUSTERING. FLAGS ARE COUNTED WITH BOUT DURATION AS THE ENDPOINT.             
             bout = (bout[0], bout[0] + self.minboutlength)
             full_window = (bout[0]-self.para_win, bout[1])
-# This allows you to require continuity before and during bout so heading vector is continuous
-
             if np.array(frametypes_ir[full_window[0]:full_window[1]]).any():
                 rejected_bouts.append([bout[0], 'fluorframe'])
                 continue
@@ -1058,10 +1020,8 @@ class Experiment():
                             bout_vec.append(ha_diffs[ind])
                         elif self.bout_dict[str(key)] == 'Eye1 Angle':
                             bout_vec.append(phileft_filt[ind] - phil_start)
-#                            bout_vec.append(phileft_filt[ind])
                         elif self.bout_dict[str(key)] == 'Eye2 Angle':
                             bout_vec.append(phiright_filt[ind] - phir_start)
-#                            bout_vec.append(phiright_filt[ind])
                         elif self.bout_dict[str(key)] == 'Eye Sum':
                             bout_vec.append(
                                 phileft_filt[ind] -
@@ -1090,7 +1050,7 @@ class Experiment():
                 all_bout_data.append(bout_vec)
             else:
                 rejected_bouts.append([bout[0], 'nan in bout'])
-                    
+
         self.bout_data = all_bout_data
         self.bout_durations = filtered_bout_durations
         self.bout_frames = filtered_bout_frames
@@ -1100,18 +1060,21 @@ class Experiment():
 #bout_number is the id of the bout, bout_frame is which frame it occurs in in the ir only movies. 
 
         for bout_number, bout_frame in enumerate(filtered_bout_frames):
-
-            bout = [bout_frame, bout_frame + self.minboutlength]
+            bout = [bout_frame, bout_frame + self.bout_durations[bout_number]]
             flags = []
             eye_sum = [a1 + a2
                        for a1, a2
                        in zip(self.fishdata.phileft[bout[0]:bout[1]],
                               self.fishdata.phiright[bout[0]:bout[1]])]
-            end_z = self.fishdata.low_res_z[bout[1]]
-            start_z = self.fishdata.low_res_z[bout[0]]
+            end_z = np.median(
+                self.fishdata.low_res_z[bout[1]:bout[1] + self.refract])
+            start_z = np.median(
+                self.fishdata.low_res_z[bout[0]-self.refract:bout[0]])
             total_z = end_z - start_z
-            end_pitch = self.fishdata.pitch[bout[1]]
-            start_pitch = self.fishdata.pitch[bout[0]]
+            end_pitch = np.nanmedian(
+                self.fishdata.pitch[bout[1]:bout[1] + self.refract])
+            start_pitch = np.nanmedian(
+                self.fishdata.pitch[bout[0]-self.refract:bout[0]])
             delta_pitch = end_pitch - start_pitch
             av_vel = np.mean(np.array(self.fishdata.vectV)[bout])
             ha_sum = np.sum(ha_diffs[bout[0]:bout[1]])
@@ -1163,15 +1126,19 @@ class Experiment():
         return prop1 and prop2 and prop3
 
     def bout_detector(self):
-        def boutfilter_recur(boutstarts, boutends, winlen):
-            for ind, boutwin in enumerate(sliding_window(2, boutstarts)):
-                if boutwin[1] - boutwin[0] < winlen:
+        def boutfilter_recur(boutstarts, boutends):
+            for ind, interbout in enumerate(np.diff(boutstarts)):
+                if interbout < self.refract:
+                    del boutstarts[ind+1]
+                    del boutends[ind+1]
+                    break
+                if interbout < boutends[ind] - boutstarts[ind]:
                     del boutstarts[ind+1]
                     del boutends[ind+1]
                     break
             if ind+1 < len(boutstarts)-1:
                 boutstarts, boutends = boutfilter_recur(
-                    boutstarts, boutends, winlen)
+                    boutstarts, boutends)
             return boutstarts, boutends
 
         threshstd = 5
@@ -1182,7 +1149,7 @@ class Experiment():
         boutstarts = []
         boutends = []
 
-# DO want to do boutfilter_recur here, but over a very small window (i.e. you don't want extreme overlaps)    
+# DO want to do boutfilter_recur here, but over a very small window (i.e. you don't want extreme overlaps)
         for b in bts:
             winlen = 20
             backwin = ta_std[b-winlen:b]
@@ -1202,9 +1169,11 @@ class Experiment():
             boutstarts.append(crossback)
             boutends.append(crossforward)
         boutstarts, boutends = boutfilter_recur(boutstarts, boutends, 3)
-        self.bout_frames = boutstarts
-        self.bout_durations = [
+        bout_durations = [
             be - bs for bs, be in zip(boutstarts, boutends)]
+        
+        self.bout_frames = boutstarts
+        self.bout_durations = bout_durations
         fig, (ax1, ax2) = pl.subplots(1, 2, sharex=True, figsize=(7, 7))
         ax1.plot(bts, np.zeros(len(bts)), marker='.', color='b')
         ax2.plot(bts, np.zeros(len(bts)), marker='.', color='b')
@@ -1287,7 +1256,7 @@ class Experiment():
 
 # this function will be used if you want to use 10 frame discrete windows        
         def assign_fixedwin_bouts(consecutive_slices, consecutive_thresh):
-            consecutive_thresh = 3
+            consecutive_thresh = self.refract
             bouts_tail = []
             for cs in consecutive_slices:
                 if cs.shape[0] > consecutive_thresh:
@@ -1447,8 +1416,11 @@ class Experiment():
         return True
 
 # Eye1 is the eye on the side of the direction of the turn.
-    def bout_stats(self, bout_ind, dim):
-        bout_index = bout_ind + dim.hunt_wins[self.current_hunt_ind][0]
+    def bout_stats(self, bout_ind, dim, global_bout):
+        if not global_bout:
+            bout_index = bout_ind + dim.hunt_wins[self.current_hunt_ind][0]
+        else:
+            bout_index = bout_ind
         bout = self.bout_data[bout_index]
         num_cols = int(np.ceil(self.num_dp/3.0))
         num_rows = 3
@@ -1623,16 +1595,19 @@ class Experiment():
         firstbout, lastbout = hunt_wins[h_index]
         bout_frames = [self.bout_frames[i] for i in range(
             firstbout, lastbout+1)]
+        bout_durations = [self.bout_durations[i] for i in range(
+            firstbout, lastbout+1)]
         bout_az = []
         bout_alt = []
         bout_dist = []
         # make this a member variable b/c you also use it for para velocity and flags. did this. it's called parawin. make sure it is also used in flags. if its not, make sure you use the same number. 
-        for bf in bout_frames:
+        for b_dur, bf in zip(bout_durations, bout_frames):
             ufish = self.ufish[bf]
             upar = self.upar[bf]
             uperp = self.uperp[bf]
             origin_start = self.ufish_origin[bf]
-            origin_end = self.ufish_origin[bf+self.minboutlength]
+#            origin_end = self.ufish_origin[bf+self.minboutlength]
+            origin_end = self.ufish_origin[bf + b_dur]
             # here put new pmap to fish function
             azimuth, altitude, nb_mag, nb_wrt_heading, ang3d = p_map_to_fish(
                 ufish, origin_start, uperp, upar, origin_end, 0)
@@ -2163,26 +2138,40 @@ def every_huntbout(dim, exp, hd):
 def bouts_during_hunt(hunt_ind, dimred, exp, plotornot):
     integ_win = exp.integration_window
     firstind = dimred.hunt_wins[hunt_ind][0]
-    secondind = dimred.hunt_wins[hunt_ind][1]
+    secondind = dimred.hunt_wins[hunt_ind][1]    
     indrange = range(firstind, secondind+1, 1)
     #+1 so it includes the secondind
+    print('Cluster Membership')
     print dim.cluster_membership[firstind:secondind+1]
+    print('Bout Durations')
+    print exp.bout_durations[firstind:secondind]
     start = exp.bout_frames[firstind]-integ_win
     end = exp.bout_frames[secondind]+integ_win
     # gives last bout 500ms to occur
-    fig, ((ax1, ax2), (ax3, ax4)) = pl.subplots(2, 2, sharex=True, figsize = (7, 7))
+    fig, ((ax1, ax2),
+          (ax3, ax4)) = pl.subplots(
+              2, 2,
+              sharex=True,
+              figsize=(7, 7))
     filt_phir = gaussian_filter(exp.fishdata.phiright, 2)[start:end]
     filt_phil = gaussian_filter(exp.fishdata.phileft, 2)[start:end]
     ax1.plot(filt_phir, color='g')
     ax1.plot(filt_phil, color='r')
-    ax2.plot([np.sum(t) for t in exp.fishdata.tailangle[start:end]])
+    ax2.plot([t[-1] for t in exp.fishdata.tailangle[start:end]])
     bouts_tail = [exp.bout_frames[i]-start for i in indrange]
+    bouts_tail_end = [
+        exp.bout_frames[i]-start + exp.bout_durations[i] for i in indrange]
     print len(bouts_tail)
     ax2.plot(bouts_tail,
              np.zeros(len(bouts_tail)),
              marker='.',
-             ms=15,
-             color='g')
+             ms=10,
+             color='m')
+    ax2.plot(bouts_tail_end,
+             np.zeros(len(bouts_tail_end)),
+             marker='.',
+             ms=10,
+             color='c')
     for ind, typ in enumerate(dim.cluster_membership[firstind:secondind+1]):
         ax2.text(bouts_tail[ind], -.5, str(typ))
     pitch_during_hunt = exp.fishdata.pitch[start:end]
@@ -2274,7 +2263,11 @@ def hunted_para_descriptor(dim, exp, hd):
         norm_bf = map(lambda(x): x+int_win, norm_bf)
         print('hunt_bout_frames')
         exp.map_bouts_to_heading(hi, dim.hunt_wins)
-        framewin = exp.minboutlength / 2
+#        framewin = exp.minboutlength / 2
+        framewin = exp.refract
+# WANT TO ASSIGN FRAMEWIN TO BE THE REFRACTORY PERIOD.
+# PUT THE REFRACTORY PERIOD INTO THE EXPERIMENT CLASS. USE IT IN BOUT_DETECTOR. 
+        
         # these are normed to the hunting bout so that first bout is 0.
         endhunt = False
         for ind, bout in enumerate(hunt_bouts):
@@ -2288,6 +2281,7 @@ def hunted_para_descriptor(dim, exp, hd):
                 print ind
 
             norm_frame = norm_bf[ind]
+            bout_dur = exp.bout_durations[bout]
             inferred_coordinate = 0
             if mz:
                 inferred_coordinate = 2
@@ -2296,6 +2290,8 @@ def hunted_para_descriptor(dim, exp, hd):
                         range(norm_frame-framewin, norm_frame),
                         infwin).any():
                     inferred_coordinate = 1
+            #note that delta pitch and yaw are SINGULAR VALUES. not the same as the others. make norm_frame 3.
+            # should be 3 because that is your REFRACTORY PERIOD. 
             delta_pitch = dim.all_flags[bout][pitch_flag]
             delta_yaw = dim.all_flags[bout][yaw_flag]
             para_az = np.nanmean(filt_az[norm_frame-framewin:norm_frame])
@@ -2306,14 +2302,14 @@ def hunted_para_descriptor(dim, exp, hd):
             para_ddist = np.nanmean(
                 delta_dist[norm_frame-framewin:norm_frame])
             postbout_az = np.nanmean(
-                filt_az[norm_frame+exp.minboutlength:
-                        norm_frame+exp.minboutlength+framewin])
+                filt_az[norm_frame+bout_dur:
+                        norm_frame+bout_dur+framewin])
             postbout_alt = np.nanmean(
-                filt_alt[norm_frame+exp.minboutlength:
-                         norm_frame+exp.minboutlength+framewin])
+                filt_alt[norm_frame+bout_dur:
+                         norm_frame+bout_dur+framewin])
             postbout_dist = np.nanmean(
-                filt_dist[norm_frame+exp.minboutlength:
-                          norm_frame+exp.minboutlength+framewin])
+                filt_dist[norm_frame+bout_dur:
+                          norm_frame+bout_dur+framewin])
 
     # -1s will be strike as deconvergence. -2 to -huntlenght will be strike before deconvergence
     # will be strike that continues into hunting mode
@@ -2844,7 +2840,7 @@ if __name__ == '__main__':
     fish_id = '041618_1'
     drct = os.getcwd() + '/' + fish_id
     new_exp = True
-    dimreduce = True
+    dimreduce = False
     
     if new_exp:
         # HERE IF YOU WANT TO CLUSTER MANY FISH IN THE FUTURE, MAKE A DICT OF FISH_IDs AND RUN THROUGH THIS LOOP. MAY WANT TO CLUSTER MORE FISH TO PULL OUT STRIKES VS ABORTS. 
@@ -2858,7 +2854,7 @@ if __name__ == '__main__':
         #         bouts_flags.exporter()
 #        else:
         
-        myexp = Experiment(10, all_varbs_dict, flag_dict, drct)
+        myexp = Experiment(10, 3, all_varbs_dict, flag_dict, drct)
 #        myexp.bout_detector(True, 'combined')
 #        myexp.bout_detector(True, 'tail')
         myexp.bout_detector()
@@ -2897,9 +2893,3 @@ if __name__ == '__main__':
         elif import_hd == 'n':
             hd = Hunt_Descriptor(drct)
 
-
-
-
-
-        
-    
