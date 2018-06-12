@@ -1352,18 +1352,18 @@ class ParaMaster():
         pcw = self.pcw
         cv2.namedWindow('vid', flags=cv2.WINDOW_AUTOSIZE)
         cv2.moveWindow('vid', 20, 20)
-        if top_side_or_cont == 0:
+        if top_side_or_cont == 1:
             for im in self.topframes:
                 im = cv2.resize(im, (700, 700))
                 cv2.imshow('vid', im)
 #                cv2.resizeWindow('win', 500, 500)
                 cv2.waitKey(15)
-        elif top_side_or_cont == 1:
+        elif top_side_or_cont == 2:
             for im in self.sideframes:
                 im = cv2.resize(im, (700, 700))
                 cv2.imshow('vid', im)
                 cv2.waitKey(15)
-        elif top_side_or_cont == 2:
+        elif top_side_or_cont == 0:
             contvid = imageio.get_reader(
                 self.directory + 'conts.AVI', 'ffmpeg')
             for fr in range(self.framewindow[0]+pcw, self.framewindow[1], 1):

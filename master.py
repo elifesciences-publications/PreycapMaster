@@ -74,17 +74,13 @@ class RealFishControl:
     def __init__(self, exp):
         self.firstbout_para_intwin = 5
         self.fish_xyz = exp.ufish_origin
-        filter_sd = 1
-        self.pitch_all = np.radians(
-            gaussian_filter(exp.fishdata.pitch,
-                            filter_sd))
-        self.yaw_all = np.radians(unit_to_angle(
-            filter_uvec(
-                ang_to_unit(exp.fishdata.headingangle), filter_sd)))
+        self.pitch_all = exp.spherical_pitch
+        self.yaw_all = exp.spherical_yaw
         self.fish_id = exp.directory[-8:]
         self.hunt_results = []
         self.hunt_firstframes = []
         self.hunt_interbouts = []
+        self.huntbout_durations = []
         self.initial_conditions = []
         self.hunt_dataframes = []
         self.para_xyz_per_hunt = []
@@ -104,6 +100,7 @@ class RealFishControl:
                 "Para XYZ": self.para_xyz_per_hunt[hunt_num],
                 "Initial Conditions": self.initial_conditions[hunt_num],
                 "Interbouts": self.hunt_interbouts[hunt_num],
+                "Bout Durations": self.huntbout_durations[hunt_num],
                 "First Bout Delay": self.firstbout_para_intwin}
 
     def exporter(self):
@@ -751,6 +748,9 @@ class Experiment():
         self.ufish_origin = []
         self.uperp = []
         self.upar = []
+        self.spherical_pitch = []
+        self.spherical_yaw = []
+        self.spherical_dyaw = []
         self.invert = True
         self.refract = refractory_period
         self.bout_dict = bout_dict
@@ -761,6 +761,7 @@ class Experiment():
            self.directory + '/fishdata.pkl', 'rb'))
 #        self.fluor_data = pickle.load(open('fluordata.pkl', 'rb'))
         self.set_types()
+        self.nans_in_original = count_nans(self.fishdata)
         self.filter_fishdata()
         self.delta_ha = []
         self.vectVcalc(2)
@@ -775,17 +776,18 @@ class Experiment():
         self.bout_flags = []
         self.minboutlength = cluster_length
         self.num_dp = len(bout_dict)
-        self.para_win = 20
 #just assures that 20 frames before bout is also continuous in order for para reconstructions to be accurate per bout. 
 # This allows trajectory matching over x frames to improve correlation
         self.para_continuity_window = 600
         self.bout_of_interest = 0
         self.hunt_windows = []
         self.current_hunt_ind = 0
-        self.integration_window = 30
+        self.integration_window = 30        
         self.bout_az = []
         self.bout_alt = []
         self.bout_dist = []
+        self.bout_dpitch = []
+        self.bout_dyaw = []
 
 # to do in bout detector: 
 # HA must have no nans in 20 width window. 
@@ -941,22 +943,12 @@ class Experiment():
         post_fluor_inds = [i for i, v in enumerate(frametypes_ir) if v == 1]
 # enumerate fluor_inds to get the correct frame in fluor_data.gut_values
         bout_windows = [win for win in sliding_window(2, self.bout_frames)]
-        ha_diffs = [0]
-        z_diffs = [0]
-        phileft_filt = gaussian_filter(self.fishdata.phileft, 1)
-        phiright_filt = gaussian_filter(self.fishdata.phiright, 1)
-        for h in sliding_window(2, self.fishdata.headingangle):
-            if abs(h[1]-h[0]) < 180:
-                ha_diffs.append(h[1]-h[0])
-            elif h[1]-h[0] <= -180:
-                diff = h[1] + (360-h[0])
-                ha_diffs.append(diff)
-            elif h[1]-h[0] >= 180:
-                diff = -(360-h[1])+h[0]
-                ha_diffs.append(diff)
-            elif math.isnan(h[1]) or math.isnan(h[0]):
-                ha_diffs.append(float('nan'))
 
+        z_diffs = [0]
+        eye_sd = 3
+        phileft_filt = gaussian_filter(self.fishdata.phileft, eye_sd)
+        phiright_filt = gaussian_filter(self.fishdata.phiright, eye_sd)
+        ha_diffs = calculate_delta_yaw(self.fishdata.headingangle)
         for z in sliding_window(2, self.fishdata.low_res_z):
             z_diffs.append(z[1]-z[0])
 
@@ -983,11 +975,10 @@ class Experiment():
                     continue
 # THIS IS FOR CLUSTERING. FLAGS ARE COUNTED WITH BOUT DURATION AS THE ENDPOINT.             
             bout = (bout[0], bout[0] + self.minboutlength)
-            full_window = (bout[0]-self.para_win, bout[1])
+            full_window = (bout[0]-self.integration_window, bout[1])
             if np.array(frametypes_ir[full_window[0]:full_window[1]]).any():
                 rejected_bouts.append([bout[0], 'fluorframe'])
                 continue
-            
             if self.assure_nonans(full_window):
                 filtered_bout_frames.append(bout[0])
                 filtered_interbout.append(interbout_backwards)
@@ -1062,6 +1053,7 @@ class Experiment():
         for bout_number, bout_frame in enumerate(filtered_bout_frames):
             bout = [bout_frame, bout_frame + self.bout_durations[bout_number]]
             flags = []
+            num_nans = np.sum(self.nans_in_original[bout[0]:bout[1]])
             eye_sum = [a1 + a2
                        for a1, a2
                        in zip(self.fishdata.phileft[bout[0]:bout[1]],
@@ -1108,6 +1100,8 @@ class Experiment():
                     flags.append(gutflag)
                 elif self.flag_dict[str(key)] == 'Bout Duration':
                     flags.append(self.bout_durations[bout_number])
+                elif self.flag_dict[str(key)] == 'Number of Nans':
+                    flags.append(num_nans)
             bout_flags.append(flags)
         self.bout_flags = bout_flags
         # a bout should be continuous over inter-bout
@@ -1141,11 +1135,11 @@ class Experiment():
                     boutstarts, boutends)
             return boutstarts, boutends
 
-        threshstd = 5
+        std_thresh = 5
         tailang = [tail[-1] for tail in self.fishdata.tailangle]
         ta_std = [np.abs(np.nanstd(tw)) for tw in sliding_window(5, tailang)]
         bts = scipy.signal.argrelmax(np.array(ta_std), order=3)[0]
-        bts = [b for b in bts if ta_std[b] > threshstd]
+        bts = [b for b in bts if ta_std[b] > std_thresh]
         boutstarts = []
         boutends = []
 
@@ -1157,7 +1151,7 @@ class Experiment():
             backwin = np.array(backwin)
             forwardwin = np.array(ta_std[b:b+winlen])
         #thresh here will be noise + min calculation
-            std_thresh = 3
+
             try:
                 crossback = -np.where(backwin < std_thresh)[0][0] + b
             except IndexError:
@@ -1168,7 +1162,7 @@ class Experiment():
                 crossforward = b + 5
             boutstarts.append(crossback)
             boutends.append(crossforward)
-        boutstarts, boutends = boutfilter_recur(boutstarts, boutends, 3)
+        boutstarts, boutends = boutfilter_recur(boutstarts, boutends)
         bout_durations = [
             be - bs for bs, be in zip(boutstarts, boutends)]
         
@@ -1351,7 +1345,7 @@ class Experiment():
                                                  self.para_continuity_window)
 # This establishes a setup where para_continuity_window is used for correlation, and integ_window frames before the first bout are kept for wrth. so the framewindow adds para_continuity_window to the 3D para coords so that you don't map 10 seconds backwards, but only 500 ms backwards.         
         self.framewindow = [window[0] + self.para_continuity_window, window[1]]
-        self.map_bouts_to_heading(index, hunt_wins)
+        # self.map_bouts_to_heading(index, hunt_wins)
         self.map_para_to_heading(index)
         return True
 
@@ -1378,6 +1372,8 @@ class Experiment():
             vid = imageio.get_reader(dirct + 'top_contrasted.AVI', 'ffmpeg')
         elif cont_side == 2:
             vid = imageio.get_reader(dirct + 'side_contrasted.AVI', 'ffmpeg')
+        elif cont_side == 3:
+            vid = imageio.get_reader(dirct + 'tailcontvid.AVI', 'ffmpeg')
         else:
             print('unspecified stream')
             return False
@@ -1411,7 +1407,7 @@ class Experiment():
             ret = self.para_during_hunt(h_ind, True, hunt_wins)
             cv2.destroyAllWindows()
             if ret:
-                self.paradata.watch_event(0)
+                self.paradata.watch_event(1)
         cv2.destroyAllWindows()
         return True
 
@@ -1568,12 +1564,14 @@ class Experiment():
         yaw_all = unit_to_angle(
             filter_uvec(
                 ang_to_unit(self.fishdata.headingangle), 1))
-        yaw_all = np.radians(yaw_all)
+        dyaw_degrees = calculate_delta_yaw(yaw_all)
+        dyaw_rad = np.radians(dyaw_degrees)
+        yaw_rad = np.radians(yaw_all)
         x_all = gaussian_filter(self.fishdata.x, filter_sd)
         y_all = gaussian_filter(self.fishdata.y, filter_sd)
         z_all = gaussian_filter(self.fishdata.z, filter_sd)
         for frame in range(len(x_all)):
-            yaw = yaw_all[frame]
+            yaw = yaw_rad[frame]
             pitch = pitch_all[frame]
             x = x_all[frame]
             y = y_all[frame]
@@ -1589,34 +1587,82 @@ class Experiment():
         self.uperp = uperp_list
         self.upar = upar_list
         self.ufish_origin = ufish_origin
+        self.spherical_pitch = pitch_all
+        self.spherical_yaw = yaw_rad
+        self.spherical_dyaw = dyaw_rad
 # this will yield a vector normal to the shearing plane of the fish.
 
-    def map_bouts_to_heading(self, h_index, hunt_wins):
-        firstbout, lastbout = hunt_wins[h_index]
-        bout_frames = [self.bout_frames[i] for i in range(
-            firstbout, lastbout+1)]
-        bout_durations = [self.bout_durations[i] for i in range(
-            firstbout, lastbout+1)]
-        bout_az = []
-        bout_alt = []
-        bout_dist = []
-        # make this a member variable b/c you also use it for para velocity and flags. did this. it's called parawin. make sure it is also used in flags. if its not, make sure you use the same number. 
-        for b_dur, bf in zip(bout_durations, bout_frames):
-            ufish = self.ufish[bf]
-            upar = self.upar[bf]
-            uperp = self.uperp[bf]
-            origin_start = self.ufish_origin[bf]
-#            origin_end = self.ufish_origin[bf+self.minboutlength]
-            origin_end = self.ufish_origin[bf + b_dur]
-            # here put new pmap to fish function
-            azimuth, altitude, nb_mag, nb_wrt_heading, ang3d = p_map_to_fish(
+    def map_bout_to_heading(self, bout_id):
+        bf = self.bout_frames[bout_id]
+        post_ib = self.bout_frames[bout_id+1] - self.bout_frames[bout_id]
+        bd = self.bout_durations[bout_id]
+        delta_pitch = self.spherical_pitch[
+                bf+bd] - self.spherical_pitch[bf]
+        delta_yaw = np.sum(
+                self.spherical_dyaw[bf:bf+bd])
+        ufish = self.ufish[bf]
+        upar = self.upar[bf]
+        uperp = self.uperp[bf]
+        origin_start = self.ufish_origin[bf]
+        origin_end = self.ufish_origin[bf + bd]
+        bout_az, bout_alt, bout_dist, nb_wrt_heading, ang3d = p_map_to_fish(
                 ufish, origin_start, uperp, upar, origin_end, 0)
-            bout_dist.append(nb_mag)
-            bout_az.append(azimuth)
-            bout_alt.append(altitude)
-        self.bout_dist = bout_dist
-        self.bout_az = bout_az
-        self.bout_alt = bout_alt
+        return [bout_az, bout_alt,
+                bout_dist, delta_pitch, delta_yaw, bd, post_ib]
+
+    def all_spherical_bouts(self):
+        # there is no interbout info for the last bout so ignore it.
+        for i in range(len(self.bout_frames) -1):
+            s_bout = self.map_bout_to_heading(i)
+            self.bout_az.append(s_bout[0])
+            self.bout_alt.append(s_bout[1])
+            self.bout_dist.append(s_bout[2])
+            self.bout_dpitch.append(s_bout[3])
+            self.bout_dyaw.append(-1*s_bout[4])
+
+        spherical_bouts = {'Bout Az': self.bout_az,
+                           'Bout Alt': self.bout_alt,
+                           'Bout Dist': self.bout_dist,
+                           'Interbouts': np.diff(self.bout_frames),
+                           'Bout Durations': self.bout_durations,
+                           'Delta Pitch': self.bout_dpitch,
+                           'Delta Yaw': self.bout_dyaw}
+        fig, axes = pl.subplots(1, len(spherical_bouts),
+                                sharex=False,
+                                sharey=False,
+                                figsize=(8, 8))
+        for ind, (title, entry) in enumerate(spherical_bouts.iteritems()):
+            sb.distplot(entry, ax=axes[ind])
+            axes[ind].set_title(title)
+        graph_3D = pl.figure(figsize=(10, 10))
+        ax3d = graph_3D.add_subplot(111, projection='3d')
+        ax3d.set_title('3D Para Record')
+        ax3d.set_xlim([-np.pi, np.pi])
+        ax3d.set_ylim([-np.pi, np.pi])
+        ax3d.set_zlim([0, 500])
+        ax3d.set_xlabel('Bout Az')
+        ax3d.set_ylabel('Bout Alt')
+        ax3d.set_zlabel('Bout Dist')
+        cmap = pl.get_cmap('seismic')
+#    yaw_max = np.max(np.abs(delta_yaw))
+#    norm = Normalize(-yaw_max, yaw_max)
+        norm = Normalize(vmin=-1, vmax=1)
+        scalarMap = cm.ScalarMappable(norm=norm, cmap=cmap)
+        rgba_vals = scalarMap.to_rgba(self.bout_dyaw)
+        for i in range(len(self.bout_az) - 1):
+            ax3d.plot([self.bout_az[i]],
+                      [self.bout_alt[i]],
+                      [self.bout_dist[i]],
+                      color=rgba_vals[i],
+                      marker='.',
+                      ms=10*self.bout_dpitch[i])
+        scalarMap.set_array(self.bout_dyaw)
+        graph_3D.colorbar(scalarMap)
+        pl.show()
+        return spherical_bouts
+
+
+    
         
     def map_para_to_heading(self, h_index):
         para_wrt_heading = []
@@ -1759,8 +1805,20 @@ def p_map_to_fish(uf, uf_origin, u_prp, u_paral, p_xyz, p_index):
     return azimuth, altitude, nb_mag, new_basis_wrt_heading, angle_to_para_3D
     
 
-# 1. Make sure this is correct.
-# 2. Add a switch here for fill_all. If fill_all is True, simply replace a nan with the value before it.
+# tailangle will get nanified in any case where an xy variable is missed
+# z will only get naned if z varbs aren't found. combining yields all nans
+
+def count_nans(fishdata):
+    nan_indices = []
+    tail_seg = [x[0] for x in fishdata.tailangle]
+    zcoord = [z for z in fishdata.z]
+    for t, z in zip(tail_seg, zcoord):
+        if math.isnan(t) or math.isnan(z):
+            nan_indices.append(1)
+        else:
+            nan_indices.append(0)
+    return nan_indices
+        
 
 # Linear interpolation over all nanwindows
 
@@ -2133,8 +2191,8 @@ def huntbouts_wrapped(hd, dim, exp, med_or_min, plotornot):
 def every_huntbout(dim, exp, hd):
     for h_id in hd.hunt_ind_list:
         bouts_during_hunt(h_id, dim, exp, True)
-    
-    
+
+        
 def bouts_during_hunt(hunt_ind, dimred, exp, plotornot):
     integ_win = exp.integration_window
     firstind = dimred.hunt_wins[hunt_ind][0]
@@ -2145,6 +2203,8 @@ def bouts_during_hunt(hunt_ind, dimred, exp, plotornot):
     print dim.cluster_membership[firstind:secondind+1]
     print('Bout Durations')
     print exp.bout_durations[firstind:secondind]
+    print('Nans in Bouts')
+    print [d[9] for d in dim.all_flags[firstind:secondind+1]]
     start = exp.bout_frames[firstind]-integ_win
     end = exp.bout_frames[secondind]+integ_win
     # gives last bout 500ms to occur
@@ -2174,8 +2234,8 @@ def bouts_during_hunt(hunt_ind, dimred, exp, plotornot):
              color='c')
     for ind, typ in enumerate(dim.cluster_membership[firstind:secondind+1]):
         ax2.text(bouts_tail[ind], -.5, str(typ))
-    pitch_during_hunt = exp.fishdata.pitch[start:end]
-    yaw_during_hunt = exp.fishdata.headingangle[start:end]
+    pitch_during_hunt = exp.spherical_pitch[start:end]
+    yaw_during_hunt = exp.spherical_yaw[start:end]
     z_during_hunt = exp.fishdata.z[start:end]
     ax3.plot(yaw_during_hunt, color='m')
     ax3.plot(pitch_during_hunt, color='k')
@@ -2211,16 +2271,10 @@ def hunted_para_descriptor(dim, exp, hd):
               'Avg Para Velocity']
     int_win = exp.integration_window
     cont_win = exp.para_continuity_window
-    pitch_flag = int(dim.inv_fdict['Total Pitch Change'])
-    yaw_flag = int(dim.inv_fdict['Total Yaw Change'])
     bout_descriptor = []
     df_labels = ["Bout Az", "Bout Alt",
                  "Bout Dist", "Bout Delta Pitch", "Bout Delta Yaw"]
     realfish = RealFishControl(exp)
-
-# going to make eb a bout range. eb will be a tuple. first entry is hunt start. second is hunt end.
-# hunt end is a negative value. 
-    
     for hi, hp, ac, br, iws, mz in zip(
             hd.hunt_ind_list,
             hd.para_id_list, hd.actions, hd.boutrange, hd.interp_windows,
@@ -2240,34 +2294,25 @@ def hunted_para_descriptor(dim, exp, hd):
         dist = [pr[4] for pr in poi_wrth]
         az = [pr[6] for pr in poi_wrth]
         alt = [pr[7] for pr in poi_wrth]
-        filter_sd = 0
+        filter_sd = 1
         filt_az = gaussian_filter(az, filter_sd)
         filt_alt = gaussian_filter(alt, filter_sd)
         filt_dist = gaussian_filter(dist, filter_sd)
         if len(filt_az) < 2 or len(filt_dist) < 2:
             continue
-        delta_az = [b-a for a, b in sliding_window(2, filt_az)]
-        delta_alt = [b-a for a, b in sliding_window(2, filt_alt)]
-        delta_dist = [b-a for a, b in sliding_window(2, filt_dist)]
-#instead of asking about sensory input, just asking what para is doing right before and right after bout
         hunt_bouts = range(dim.hunt_wins[hi][0],
                            dim.hunt_wins[hi][1]+1)
         hunt_bout_frames = [exp.bout_frames[i] for i in hunt_bouts]
+        hunt_bout_durations = [exp.bout_durations[i] for i in hunt_bouts]
         realfish.hunt_firstframes.append(hunt_bout_frames[0])
-        # HERE YOU ALREADY HAVE THE INTERBOUT BACK FOR EACH BOUT. JUST SWITCH THEM TO
-        # A CUMSUM STARTING WITH 3 OR SO. 
         realfish.hunt_interbouts.append(
             [0] + np.diff(hunt_bout_frames).tolist())
+        realfish.huntbout_durations.append(hunt_bout_durations)
         realfish.hunt_results.append(ac)
         norm_bf = [hbf - hunt_bout_frames[0] for hbf in hunt_bout_frames]
         norm_bf = map(lambda(x): x+int_win, norm_bf)
         print('hunt_bout_frames')
-        exp.map_bouts_to_heading(hi, dim.hunt_wins)
-#        framewin = exp.minboutlength / 2
         framewin = exp.refract
-# WANT TO ASSIGN FRAMEWIN TO BE THE REFRACTORY PERIOD.
-# PUT THE REFRACTORY PERIOD INTO THE EXPERIMENT CLASS. USE IT IN BOUT_DETECTOR. 
-        
         # these are normed to the hunting bout so that first bout is 0.
         endhunt = False
         for ind, bout in enumerate(hunt_bouts):
@@ -2291,26 +2336,19 @@ def hunted_para_descriptor(dim, exp, hd):
                         infwin).any():
                     inferred_coordinate = 1
             #note that delta pitch and yaw are SINGULAR VALUES. not the same as the others. make norm_frame 3.
-            # should be 3 because that is your REFRACTORY PERIOD. 
-            delta_pitch = dim.all_flags[bout][pitch_flag]
-            delta_yaw = dim.all_flags[bout][yaw_flag]
-            para_az = np.nanmean(filt_az[norm_frame-framewin:norm_frame])
-            para_alt = np.nanmean(filt_alt[norm_frame-framewin:norm_frame])
-            para_dist = np.nanmean(filt_dist[norm_frame-framewin:norm_frame])
-            para_daz = np.nanmean(delta_az[norm_frame-framewin:norm_frame])
-            para_dalt = np.nanmean(delta_alt[norm_frame-framewin:norm_frame])
-            para_ddist = np.nanmean(
-                delta_dist[norm_frame-framewin:norm_frame])
-            postbout_az = np.nanmean(
-                filt_az[norm_frame+bout_dur:
-                        norm_frame+bout_dur+framewin])
-            postbout_alt = np.nanmean(
-                filt_alt[norm_frame+bout_dur:
-                         norm_frame+bout_dur+framewin])
-            postbout_dist = np.nanmean(
-                filt_dist[norm_frame+bout_dur:
-                          norm_frame+bout_dur+framewin])
-
+            # note previously used bout flags
+            delta_pitch = exp.bout_dpitch[bout]
+            delta_yaw = exp.bout_dyaw[bout]
+            para_az = filt_az[norm_frame]
+            para_alt = filt_alt[norm_frame]
+            para_dist = filt_dist[norm_frame]
+            para_daz = filt_az[norm_frame] - filt_az[norm_frame-framewin]
+            para_dalt = filt_alt[norm_frame] - filt_alt[norm_frame-framewin]
+            para_ddist = filt_dist[norm_frame] - filt_dist[norm_frame-framewin]
+            postbout_az = filt_az[norm_frame+bout_dur]
+            postbout_alt = filt_alt[norm_frame+bout_dur]
+            postbout_dist = filt_dist[norm_frame+bout_dur]
+            
     # -1s will be strike as deconvergence. -2 to -huntlenght will be strike before deconvergence
     # will be strike that continues into hunting mode
             if br[1] < 0:
@@ -2328,11 +2366,11 @@ def hunted_para_descriptor(dim, exp, hd):
                     last_bout = ind - len(hunt_bouts)
             bout_descriptor.append([hi,
                                     ind,
-                                    exp.bout_az[ind],
-                                    exp.bout_alt[ind],
-                                    exp.bout_dist[ind],
-                                    np.radians(delta_pitch),
-                                    -1*np.radians(delta_yaw),
+                                    exp.bout_az[bout],
+                                    exp.bout_alt[bout],
+                                    exp.bout_dist[bout],
+                                    delta_pitch,
+                                    delta_yaw,
                                     para_az,
                                     para_alt,
                                     para_dist,
@@ -2346,11 +2384,11 @@ def hunted_para_descriptor(dim, exp, hd):
                                     inferred_coordinate,
                                     avg_vel])
 #            if ind != -1:
-            hunt_df.loc[ind] = [exp.bout_az[ind],
-                                exp.bout_alt[ind],
-                                exp.bout_dist[ind],
-                                np.radians(delta_pitch),
-                                -1*np.radians(delta_yaw)]
+            hunt_df.loc[ind] = [exp.bout_az[bout],
+                                exp.bout_alt[bout],
+                                exp.bout_dist[bout],
+                                delta_pitch,
+                                delta_yaw]
             if endhunt:
                 bout_descriptor[-1][1] = last_bout
                 realfish.hunt_dataframes.append(copy.deepcopy(hunt_df))
@@ -2673,59 +2711,8 @@ def magvector(vector):
 # This function plots all the possible bouts the fish can perform.
 # It maps all bouts to Az, Alt, Dist coordinates with an interbout, pitch, and yaw.
 
-
-def map_all_bouts(myexp, dim):
-    # Don't forget delta yaw is negative with respect to Az changes. 
-    bout_window = range(0, len(myexp.bout_frames))
-    pitch_flag = int(dim.inv_fdict['Total Pitch Change'])
-    yaw_flag = int(dim.inv_fdict['Total Yaw Change'])
-    interbouts = [b-a for a, b in sliding_window(2, myexp.bout_frames)]
-    myexp.map_bouts_to_heading(0, [[bout_window[0], bout_window[-1]]])
-    delta_pitch = np.radians(
-        [dim.all_flags[bout][pitch_flag]
-         for bout in bout_window])
-    delta_yaw = -1*np.radians([dim.all_flags[bout][yaw_flag]
-                               for bout in bout_window])
-    bout_descriptor = {'Bout Az': myexp.bout_az,
-                       'Bout Alt': myexp.bout_alt,
-                       'Bout Dist': myexp.bout_dist,
-                       'Interbouts': interbouts,
-                       'Delta Pitch': delta_pitch,
-                       'Delta Yaw': delta_yaw}
-    fig, axes = pl.subplots(1, len(bout_descriptor),
-                            sharex=False,
-                            sharey=False,
-                            figsize=(8, 8))
-    for ind, (title, entry) in enumerate(bout_descriptor.iteritems()):
-        sb.distplot(entry, ax=axes[ind])
-        axes[ind].set_title(title)
-
-    graph_3D = pl.figure(figsize=(10, 10))
-    ax3d = graph_3D.add_subplot(111, projection='3d')
-    ax3d.set_title('3D Para Record')
-    ax3d.set_xlim([-np.pi, np.pi])
-    ax3d.set_ylim([-np.pi, np.pi])
-    ax3d.set_zlim([0, 500])
-    ax3d.set_xlabel('Bout Az')
-    ax3d.set_ylabel('Bout Alt')
-    ax3d.set_zlabel('Bout Dist')
-    cmap = pl.get_cmap('seismic')
-#    yaw_max = np.max(np.abs(delta_yaw))
-#    norm = Normalize(-yaw_max, yaw_max)
-    norm = Normalize(vmin=-1, vmax=1)
-    scalarMap = cm.ScalarMappable(norm=norm, cmap=cmap)
-    rgba_vals = scalarMap.to_rgba(delta_yaw)
-    for i in range(len(myexp.bout_az) - 1):
-        ax3d.plot([myexp.bout_az[i]],
-                  [myexp.bout_alt[i]],
-                  [myexp.bout_dist[i]],
-                  color=rgba_vals[i],
-                  marker='.',
-                  ms=10*delta_pitch[i])
-    scalarMap.set_array(delta_yaw)
-    graph_3D.colorbar(scalarMap)
-    pl.show()
-    return bout_descriptor
+# THIS FUNCTION REQUIRES UPDATING. EACH BOUT IS ALREADY IMPLICIT GIVEN CALCULATIONS OF UFISH, ETC.
+# REDO THIS FUNCTION
 
 
 def monotonic_max(winsize, array_in, maxthresh):
@@ -2741,6 +2728,23 @@ def monotonic_max(winsize, array_in, maxthresh):
             print win
             print windiff
     return np.array(mmax)
+
+
+def calculate_delta_yaw(raw_yaw):
+    delta_yaw = [0]
+    for h in sliding_window(2, raw_yaw):
+        if abs(h[1]-h[0]) < 180:
+            delta_yaw.append(h[1]-h[0])
+        elif h[1]-h[0] <= -180:
+            diff = h[1] + (360-h[0])
+            delta_yaw.append(diff)
+        elif h[1]-h[0] >= 180:
+            diff = -(360-h[1])+h[0]
+            delta_yaw.append(diff)
+        elif math.isnan(h[1]) or math.isnan(h[0]):
+            delta_yaw.append(float('nan'))
+    return delta_yaw
+
 
 def fixmappings(exp, dim, hd):
     for hunt_id in hd.hunt_ind_list:
@@ -2788,7 +2792,7 @@ if __name__ == '__main__':
 # This dictionary describes the variables to use for clustering.
     sub_dict = { '8':'Vector Velocity'}
         
-
+    abort_dict = {'13': 'Eye Sum'}
 
     bout_dict = {
 #        '0': 'Pitch',
@@ -2819,7 +2823,9 @@ if __name__ == '__main__':
         '6': 'Total Yaw Change',
         '7': 'Fluorescence Level',
         '8': 'Bout Duration',
-        '9': 'Cluster ID'}
+        '9': 'Number of Nans',
+        '10': 'Cluster ID'}
+
 #        '9': 'Fish ID',
  
 
@@ -2839,7 +2845,7 @@ if __name__ == '__main__':
 
     fish_id = '041618_1'
     drct = os.getcwd() + '/' + fish_id
-    new_exp = True
+    new_exp = False
     dimreduce = False
     
     if new_exp:
@@ -2854,7 +2860,7 @@ if __name__ == '__main__':
         #         bouts_flags.exporter()
 #        else:
         
-        myexp = Experiment(10, 3, all_varbs_dict, flag_dict, drct)
+        myexp = Experiment(20, 3, all_varbs_dict, flag_dict, drct)
 #        myexp.bout_detector(True, 'combined')
 #        myexp.bout_detector(True, 'tail')
         myexp.bout_detector()
@@ -2864,6 +2870,7 @@ if __name__ == '__main__':
         bouts_flags.exporter()
         print("Creating Unit Vectors")
         myexp.create_unit_vectors()
+        myexp.all_spherical_bouts()
         myexp.exporter()
 
     else:
@@ -2883,7 +2890,7 @@ if __name__ == '__main__':
     clear_hunts = raw_input('New hunt windows?: ')
     if clear_hunts == 'y':
         dim.clear_huntwins()
-        dim.find_hunts([1],[0])
+        dim.find_hunts([1], [0])
         dim.exporter()
         hd = Hunt_Descriptor(drct)
     else:
