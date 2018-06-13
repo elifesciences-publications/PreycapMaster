@@ -31,6 +31,8 @@ class PreyCap_Simulation:
         self.fish_yaw = [fishmodel.real_hunt_df["Initial Conditions"][2]]
         self.simulate_para = simulate_para
         self.interbouts = self.fishmodel.interbouts
+        self.bout_durations = self.fishmodel.bout_durations
+        self.interpolate = True
         self.create_para_trajectory()
 
     def create_para_trajectory(self):
@@ -63,6 +65,7 @@ class PreyCap_Simulation:
             
     def run_simulation(self):
         framecounter = 0
+        bout_counter = 0
         # spacing is an integer describing the sampling of vectors by the para. i.e.       # draws a new accel vector every 'spacing' frames
         spacing = np.load('spacing.npy')
         vel_history = 6
@@ -154,7 +157,15 @@ class PreyCap_Simulation:
 
             ''' you will store these vals in a
             list so you can determine velocities and accelerations '''
+# CURRENTLY THIS PART OF THE FUNCTION IS UNREALISTIC BECAUSE THE FISH INSTANTANEOUSLY
+# GOES TO THE NEW POSITION ON ONE FRAME. IF YOU LOOK AT CLUSTERS, CLEAR THAT INTERPOLATION IS REQUIRED.
+# WHAT YOU'll WANT TO DO IS LINSPACE OVER EACH VARIABLE THAT COMES OUT OF SPHERICALBOUT_TO_XYZ.
+# THEN YOU"LL ADD IT TO EACH VARIABLE AS A LIST. NEXT, YOU WILL ADD THE BOUT DURATION TO FRAMECOUNTER.
+# ALSO WANT TO MAKE SURE THAT NAN BOUTS DONT GET DELIVERED HERE. YOU WANT TWO THINGS. FILTER WHICH BOUTS GET PUT INTO THE
+# HUNTBOUT.CSV FILE AND FILTER ENTIRE HUNT SEQUENCES' ENTRY INTO REAL FISH CONTROL OBJECTS BASED ON CONTAINING A
+# NANBOUT (e.g. > 3 nans in the bout) 
 
+            
             if framecounter in self.interbouts:
                 fish_bout = self.fishmodel.model(para_varbs)
                 print para_varbs
@@ -164,16 +175,45 @@ class PreyCap_Simulation:
                                                   fish_basis[1],
                                                   fish_basis[3],
                                                   fish_basis[2])
-                new_xyz = self.fish_xyz[-1] + np.array([dx, dy, dz])
-                self.fish_xyz.append(new_xyz)
-                self.fish_pitch.append(self.fish_pitch[-1] + fish_bout[3])
-                self.fish_yaw.append(self.fish_yaw[-1] + fish_bout[4])
+                if self.interpolate:
+                    x_prog = np.linspace(
+                        self.fish_xyz[-1][0],
+                        self.fish_xyz[-1][0] + dx,
+                        self.bout_durations[bout_counter]).tolist()
+                    y_prog = np.linspace(
+                        self.fish_xyz[-1][1],
+                        self.fish_xyz[-1][1] + dy,
+                        self.bout_durations[bout_counter]).tolist()
+                    z_prog = np.linspace(
+                        self.fish_xyz[-1][2],
+                        self.fish_xyz[-1][2] + dz,
+                        self.bout_durations[bout_counter]).tolist()
+                    yaw_prog = np.linspace(
+                        self.fish_yaw[-1],
+                        self.fish_yaw[-1] + fish_bout[4],
+                        self.bout_durations[bout_counter]).tolist()
+                    pitch_prog = np.linspace(
+                        self.fish_pitch[-1],
+                        self.fish_pitch[-1] + fish_bout[3],
+                        self.bout_durations[bout_counter]).tolist()
+                    self.fish_xyz += zip(x_prog, y_prog, z_prog)
+                    self.fish_pitch += pitch_prog
+                    self.fish_yaw += yaw_prog
+                    framecounter += self.bout_durations[bout_counter]
+
+                else:
+                    new_xyz = self.fish_xyz[-1] + np.array([dx, dy, dz])
+                    self.fish_xyz.append(new_xyz)
+                    self.fish_pitch.append(self.fish_pitch[-1] + fish_bout[3])
+                    self.fish_yaw.append(self.fish_yaw[-1] + fish_bout[4])
+                    framecounter += 1
+                bout_counter += 1
             else:
                 self.fish_xyz.append(self.fish_xyz[-1])
                 self.fish_pitch.append(self.fish_pitch[-1])
                 self.fish_yaw.append(self.fish_yaw[-1])
-
-            framecounter += 1
+                framecounter += 1
+            
         return self.fishmodel.num_bouts_generated
     
 
@@ -190,6 +230,7 @@ class FishModel:
         self.strike_params = strike_params
         self.real_hunt_df = real_hunt_df
         self.interbouts = real_hunt_df["Interbouts"]
+        self.bout_durations = real_hunt_df["Bout Durations"]
         self.interbouts = np.cumsum(
             self.interbouts) + real_hunt_df["First Bout Delay"]
         # note that the fish is given 5 frames before initializing a bout.

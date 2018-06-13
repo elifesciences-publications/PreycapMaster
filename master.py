@@ -5,6 +5,7 @@ import cv2
 import pandas as pd
 import imageio
 import itertools
+from astropy.convolution import Gaussian1DKernel, convolve
 from sklearn.manifold import SpectralEmbedding, Isomap
 from sklearn.cluster import SpectralClustering
 import numpy as np
@@ -2293,11 +2294,26 @@ def hunted_para_descriptor(dim, exp, hd):
         poi_wrth = create_poirec(hi, 3, exp.directory, hp)
         dist = [pr[4] for pr in poi_wrth]
         az = [pr[6] for pr in poi_wrth]
+        np.save('az.npy', az)
         alt = [pr[7] for pr in poi_wrth]
-        filter_sd = 1
-        filt_az = gaussian_filter(az, filter_sd)
-        filt_alt = gaussian_filter(alt, filter_sd)
-        filt_dist = gaussian_filter(dist, filter_sd)
+        # filtering here with 2 b/c velocities can be created by noise.
+        # 2 suffices but scipy gaussian can't handle nans, and drops
+        # para once it disappears too early. used astropy filter instead
+        # which interpolates, but it interpolates to infinity. so have to
+        # list comp the nans. 
+        filter_sd = 2
+        kernel = Gaussian1DKernel(filter_sd)
+        filt_az = convolve(az, kernel)
+        filt_az = [f if not math.isnan(a) else np.nan for f, a in zip(
+            filt_az, az)]        
+#        filt_az = gaussian_filter(az, filter_sd)
+        np.save('filtaz.npy', filt_az)
+        filt_alt = convolve(alt, kernel)
+        filt_alt = [f if not math.isnan(a) else np.nan for f, a in zip(
+            filt_alt, alt)]
+        filt_dist = convolve(dist, kernel)
+        filt_dist = [f if not math.isnan(d) else np.nan for f, d in zip(
+            filt_dist, dist)]
         if len(filt_az) < 2 or len(filt_dist) < 2:
             continue
         hunt_bouts = range(dim.hunt_wins[hi][0],
@@ -2342,9 +2358,12 @@ def hunted_para_descriptor(dim, exp, hd):
             para_az = filt_az[norm_frame]
             para_alt = filt_alt[norm_frame]
             para_dist = filt_dist[norm_frame]
-            para_daz = filt_az[norm_frame] - filt_az[norm_frame-framewin]
-            para_dalt = filt_alt[norm_frame] - filt_alt[norm_frame-framewin]
-            para_ddist = filt_dist[norm_frame] - filt_dist[norm_frame-framewin]
+            para_daz = np.nanmedian(
+                np.diff(filt_az)[norm_frame-framewin:norm_frame])
+            para_dalt = np.nanmedian(
+                np.diff(filt_alt)[norm_frame-framewin:norm_frame])
+            para_ddist = np.nanmedian(
+                np.diff(filt_dist)[norm_frame-framewin:norm_frame])
             postbout_az = filt_az[norm_frame+bout_dur]
             postbout_alt = filt_alt[norm_frame+bout_dur]
             postbout_dist = filt_dist[norm_frame+bout_dur]
