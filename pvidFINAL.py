@@ -906,7 +906,7 @@ class ParaMaster():
         all_remaining_xy = [self.all_xy[i] for i in xyrecs]
         all_remaining_xz = [self.all_xz[j] for j in xzrecs]
         fig, (ax, ax2) = pl.subplots(
-            1, 2, sharex=True, sharey=True, figsize=(7, 7))
+            1, 2, sharex=True, sharey=True, figsize=(6, 6))
         ax.set_xlim([pcw, self.framewindow[1] - self.framewindow[0]])
         ax.set_title("XY Misses")
         ax2.set_xlim([pcw, self.framewindow[1] - self.framewindow[0]])
@@ -957,14 +957,14 @@ class ParaMaster():
     #this function plots a list of pairs in one figure, with all xy recs in magenta, all xz in cyan
 
     def x_y_z_coords(self, rec_id):
-        pl.figure(figsize=(7, 7))
+        pl.figure(figsize=(6, 6))
         pl.plot(self.para3Dcoords[rec_id*3])
         pl.plot(self.para3Dcoords[(rec_id*3) + 1])
         pl.plot(self.para3Dcoords[(rec_id*3) + 2])
         self.plotxyzrec(rec_id)
     
     def plotxyzrec(self, rec_id):
-        fg = pl.figure(figsize=(7, 7))
+        fg = pl.figure(figsize=(6, 6))
         ax = fg.add_subplot(111)
         ax.set_title('XY XZ Matcher')
         ax.set_xlim([0, self.framewindow[-1] - self.framewindow[0]])
@@ -1059,7 +1059,7 @@ class ParaMaster():
 
     def onerec_and_misses(self, rec_id):
         fig, (ax, ax2) = pl.subplots(
-            1, 2, sharex=True, sharey=True, figsize=(7, 7))
+            1, 2, sharex=True, sharey=True, figsize=(6, 6))
         ax.set_xlim([self.pcw, self.framewindow[1] - self.framewindow[0]])
         ax.set_ylim([0, 1888])
         ax.set_title('XY Misses')
@@ -1102,12 +1102,12 @@ class ParaMaster():
                      str(pair[0]), fontsize=8)
         
     def recs_and_misses(self):
-        fig = pl.figure(figsize=(7, 7))
+        fig = pl.figure(figsize=(6, 6))
         ax = fig.add_subplot(111)
         ax.set_xlim([0, self.framewindow[1] - self.framewindow[0]])
         ax.set_ylim([0, 1888])
         ax.set_title('XY Misses')
-        fig2 = pl.figure(figsize=(7, 7))
+        fig2 = pl.figure(figsize=(6, 6))
         ax2 = fig2.add_subplot(111)
         ax2.set_xlim([0, self.framewindow[1] - self.framewindow[0]])
         ax2.set_ylim([0, 1888])
@@ -1175,6 +1175,9 @@ class ParaMaster():
             nan_base_z = [float('nan')
                           for i in range(self.framewindow[1] -
                                          self.framewindow[0])]
+            nan_base_x2 = [float('nan')
+                           for i in range(self.framewindow[1] -
+                                          self.framewindow[0])]
             for pair in xyzrec:
                 x = [xcoord
                      for xcoord, ycoord in self.all_xy[pair[0]].location]
@@ -1182,13 +1185,32 @@ class ParaMaster():
                      for xcoord, ycoord in self.all_xy[pair[0]].location]
                 z = [zcoord
                      for x2coord, zcoord in self.all_xz[pair[1]].location]
+                x2 = [x2coord
+                      for x2coord, zcoord in self.all_xz[pair[1]].location]
                 nan_base_x[self.all_xy[pair[0]].timestamp:self.all_xy[pair[
                     0]].timestamp + len(self.all_xy[pair[0]].location)] = x
                 nan_base_y[self.all_xy[pair[0]].timestamp:self.all_xy[pair[
                     0]].timestamp + len(self.all_xy[pair[0]].location)] = y
                 nan_base_z[self.all_xz[pair[1]].timestamp:self.all_xz[pair[
                     1]].timestamp + len(self.all_xz[pair[1]].location)] = z
-            return nan_base_x, nan_base_y, nan_base_z
+                nan_base_x2[self.all_xz[pair[1]].timestamp:self.all_xz[pair[
+                    1]].timestamp + len(self.all_xz[pair[1]].location)] = x2
+
+            return nan_base_x, nan_base_y, nan_base_z, nan_base_x2
+
+        def max_z_scan(x2input, poi):
+            max_z_stretch = False
+            start_ind = 0
+            for ind, x2c in enumerate(x2input):
+                if max_z_stretch:
+                    if x2c != 0:
+                        self.interp_indices.append(
+                            [[poi], [start_ind, ind]])
+                        max_z_stretch = False
+                else:
+                    if x2c == 0:
+                        start_ind = ind
+                        max_z_stretch = True
 
         def coord_inference(z_in, para_number):
             duration_thresh = 200
@@ -1208,14 +1230,12 @@ class ParaMaster():
                     nan_end_ind = ind
                     nan_windows.append([nan_start_ind, nan_end_ind])
                     nanstretch = False
-#this checks if you are at the end of the record and have no z info.
+# this checks if you are at the end of the record and have no z info.
 # create a linear interpolation based on most recent 10 z coords
 
             for win in nan_windows:
                 if win[1]-win[0] < duration_thresh:
                     if win[1] == len(z_in) - 1:
-   #                     print(para_number)
-   #                     print('extension to end')
                         slope = (z_in[win[0]-1] - z_in[win[0]-11]) / 10.0
                         width = win[1] - win[0]
                         endpoint = int(slope * width) + z_in[win[0]-1]
@@ -1225,8 +1245,6 @@ class ParaMaster():
                                 endpoint,
                                 width).astype(np.int)
                     else:
-#                        print(para_number)
- #                       print('inter nanfill')
                         z_out[win[0]:win[1]] = np.linspace(
                             z_in[win[0]-1],
                             z_in[win[1]],
@@ -1238,13 +1256,14 @@ class ParaMaster():
             return z_out
 
         for recnumber, rec in enumerate(self.xyzrecords):
-            x, y, z = create3dpath(rec)
+            x, y, z, x2 = create3dpath(rec)
             index = recnumber * 3
             yinv = [1888 - ycoord for ycoord in y]
             zinv = [1888 - zcoord for zcoord in z]
             zinv_nonan = coord_inference(zinv, recnumber)
             xinf = coord_inference(x, recnumber)
             yinf = coord_inference(yinv, recnumber)
+            max_z_scan(x2, recnumber)
             self.para3Dcoords[index] = xinf
             self.para3Dcoords[index + 1] = yinf
 #these inversions put paracoords in same reference frame as fish
@@ -1264,7 +1283,7 @@ class ParaMaster():
 
     def graph3D(self, animatebool):
         framecount = self.framewindow[1] - self.framewindow[0]
-        graph_3D = pl.figure(figsize=(7, 7))
+        graph_3D = pl.figure(figsize=(6, 6))
         ax = graph_3D.add_subplot(111, projection='3d')
         ax.set_title('3D Para Record')
         ax.set_xlim([0, 1888])

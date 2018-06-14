@@ -127,7 +127,6 @@ class Hunt_Descriptor:
         self.actions = []
         self.boutrange = []
         self.directory = directory
-        self.infer_z = []
         self.interp_windows = []
 
     def exporter(self):
@@ -136,16 +135,19 @@ class Hunt_Descriptor:
 
     def parse_interp_windows(self, exp, poi):
         cont_win = exp.paradata.pcw
-        int_win = exp.integration_window
+        inferred_window_ranges_poi = []
         iw = copy.deepcopy(exp.paradata.interp_indices)
         unique_wins = [k for k, a in itertools.groupby(iw)]
-        inferred_windows_poi = [
-            np.array(win[1]) - cont_win - int_win
-            for win in unique_wins if win[0] == [poi]]
-        if inferred_windows_poi:
-            inferred_windows_poi = inferred_windows_poi[0]
-        inferred_window_ranges_poi = [
-            range(win[0], win[1]) for win in inferred_windows_poi]
+        inferred_windows_poi = [np.array(win[1]) - cont_win
+                                for win in unique_wins if win[0] == [poi]]
+        if inferred_windows_poi != []:
+            inferred_windows_poi = np.concatenate(inferred_windows_poi)
+            if type(inferred_windows_poi[0]) == np.int64:
+                inferred_window_ranges_poi = [range(
+                    inferred_windows_poi[0], inferred_windows_poi[1])]
+            else:
+                inferred_window_ranges_poi = [
+                    range(win[0], win[1]) for win in inferred_windows_poi]
         self.interp_windows.append(inferred_window_ranges_poi)
         
     def current(self):
@@ -153,7 +155,6 @@ class Hunt_Descriptor:
         print self.para_id_list
         print self.actions
         print self.boutrange
-        print self.infer_z
 
     def remove_entry(self, ind):
         del self.hunt_ind_list[ind]
@@ -161,15 +162,13 @@ class Hunt_Descriptor:
         del self.actions[ind]
         del self.boutrange[ind]
         del self.interp_windows[ind]
-        del self.infer_z[ind]
 
-    def update_hunt_data(self, p, a, br, exp, maxz):
+    def update_hunt_data(self, p, a, br, exp):
         self.hunt_ind_list.append(copy.deepcopy(exp.current_hunt_ind))
         self.para_id_list.append(p)
         self.actions.append(a)
         self.boutrange.append(br)
         self.parse_interp_windows(exp, p)
-        self.infer_z.append(maxz)
         self.exporter()
 
 
@@ -783,7 +782,7 @@ class Experiment():
         self.bout_of_interest = 0
         self.hunt_windows = []
         self.current_hunt_ind = 0
-        self.integration_window = 30        
+        self.integration_window = 30
         self.bout_az = []
         self.bout_alt = []
         self.bout_dist = []
@@ -1169,7 +1168,7 @@ class Experiment():
         
         self.bout_frames = boutstarts
         self.bout_durations = bout_durations
-        fig, (ax1, ax2) = pl.subplots(1, 2, sharex=True, figsize=(7, 7))
+        fig, (ax1, ax2) = pl.subplots(1, 2, sharex=True, figsize=(6, 6))
         ax1.plot(bts, np.zeros(len(bts)), marker='.', color='b')
         ax2.plot(bts, np.zeros(len(bts)), marker='.', color='b')
         ax1.plot(
@@ -1506,7 +1505,7 @@ class Experiment():
 
         t_window = (int(timestamp), int(timestamp) + int(rec_len))
         self.paradata.assign_z(xyrec, t_window, zmax)
-        self.paradata.watch_event(1)
+        self.paradata.watch_event(2)
         accept = raw_input("Accept Fix?: ")
         if accept == 'n':
             new_maxz = raw_input("Enter New Max Z: ")
@@ -2213,7 +2212,7 @@ def bouts_during_hunt(hunt_ind, dimred, exp, plotornot):
           (ax3, ax4)) = pl.subplots(
               2, 2,
               sharex=True,
-              figsize=(7, 7))
+              figsize=(6, 6))
     filt_phir = gaussian_filter(exp.fishdata.phiright, 2)[start:end]
     filt_phil = gaussian_filter(exp.fishdata.phileft, 2)[start:end]
     ax1.plot(filt_phir, color='g')
@@ -2268,24 +2267,24 @@ def hunted_para_descriptor(dim, exp, hd):
               'Postbout Para Alt',
               'Postbout Para Dist',
               'Strike Or Abort',
-              'Inferred'
-              'Avg Para Velocity']
+              'Inferred',
+              'Avg Para Velocity',
+              'Percent Nans in Bout']
     int_win = exp.integration_window
     cont_win = exp.para_continuity_window
     bout_descriptor = []
     df_labels = ["Bout Az", "Bout Alt",
                  "Bout Dist", "Bout Delta Pitch", "Bout Delta Yaw"]
     realfish = RealFishControl(exp)
-    for hi, hp, ac, br, iws, mz in zip(
+    for hi, hp, ac, br, iws in zip(
             hd.hunt_ind_list,
-            hd.para_id_list, hd.actions, hd.boutrange, hd.interp_windows,
-            hd.infer_z):
+            hd.para_id_list, hd.actions, hd.boutrange, hd.interp_windows):
         para3D = np.load(
             exp.directory + "/para3D" + str(hi).zfill(
                 2) + ".npy")[
                     hp*3:hp*3 + 3][
                         :, cont_win+int_win-realfish.firstbout_para_intwin:]
-        realfish.para_xyz_per_hunt.append(para3D)
+
         penv = ParaEnv(hi, exp.directory)
         penv.find_paravectors(False, hp)
         avg_vel = np.nanmean(penv.velocity_mags[0][
@@ -2294,7 +2293,6 @@ def hunted_para_descriptor(dim, exp, hd):
         poi_wrth = create_poirec(hi, 3, exp.directory, hp)
         dist = [pr[4] for pr in poi_wrth]
         az = [pr[6] for pr in poi_wrth]
-        np.save('az.npy', az)
         alt = [pr[7] for pr in poi_wrth]
         # filtering here with 2 b/c velocities can be created by noise.
         # 2 suffices but scipy gaussian can't handle nans, and drops
@@ -2305,9 +2303,7 @@ def hunted_para_descriptor(dim, exp, hd):
         kernel = Gaussian1DKernel(filter_sd)
         filt_az = convolve(az, kernel)
         filt_az = [f if not math.isnan(a) else np.nan for f, a in zip(
-            filt_az, az)]        
-#        filt_az = gaussian_filter(az, filter_sd)
-        np.save('filtaz.npy', filt_az)
+            filt_az, az)]
         filt_alt = convolve(alt, kernel)
         filt_alt = [f if not math.isnan(a) else np.nan for f, a in zip(
             filt_alt, alt)]
@@ -2318,13 +2314,13 @@ def hunted_para_descriptor(dim, exp, hd):
             continue
         hunt_bouts = range(dim.hunt_wins[hi][0],
                            dim.hunt_wins[hi][1]+1)
+        nans_in_bouts = [d[9] for d
+                         in dim.all_flags[
+                             dim.hunt_wins[hi][0]:dim.hunt_wins[hi][1]+1]]
         hunt_bout_frames = [exp.bout_frames[i] for i in hunt_bouts]
         hunt_bout_durations = [exp.bout_durations[i] for i in hunt_bouts]
-        realfish.hunt_firstframes.append(hunt_bout_frames[0])
-        realfish.hunt_interbouts.append(
-            [0] + np.diff(hunt_bout_frames).tolist())
-        realfish.huntbout_durations.append(hunt_bout_durations)
-        realfish.hunt_results.append(ac)
+        percent_nans = np.array([na / float(bd) for na, bd
+                                 in zip(nans_in_bouts, hunt_bout_durations)])
         norm_bf = [hbf - hunt_bout_frames[0] for hbf in hunt_bout_frames]
         norm_bf = map(lambda(x): x+int_win, norm_bf)
         print('hunt_bout_frames')
@@ -2344,15 +2340,13 @@ def hunted_para_descriptor(dim, exp, hd):
             norm_frame = norm_bf[ind]
             bout_dur = exp.bout_durations[bout]
             inferred_coordinate = 0
-            if mz:
-                inferred_coordinate = 2
             for infwin in iws:
                 if np.intersect1d(
-                        range(norm_frame-framewin, norm_frame),
+                        range(
+                            norm_frame-framewin,
+                            norm_frame),
                         infwin).any():
                     inferred_coordinate = 1
-            #note that delta pitch and yaw are SINGULAR VALUES. not the same as the others. make norm_frame 3.
-            # note previously used bout flags
             delta_pitch = exp.bout_dpitch[bout]
             delta_yaw = exp.bout_dyaw[bout]
             para_az = filt_az[norm_frame]
@@ -2368,8 +2362,6 @@ def hunted_para_descriptor(dim, exp, hd):
             postbout_alt = filt_alt[norm_frame+bout_dur]
             postbout_dist = filt_dist[norm_frame+bout_dur]
             
-    # -1s will be strike as deconvergence. -2 to -huntlenght will be strike before deconvergence
-    # will be strike that continues into hunting mode
             if br[1] < 0:
                 if br[1] == -100:
                     if ind == len(hunt_bouts) - 1:
@@ -2401,7 +2393,8 @@ def hunted_para_descriptor(dim, exp, hd):
                                     postbout_dist,
                                     ac,
                                     inferred_coordinate,
-                                    avg_vel])
+                                    avg_vel,
+                                    percent_nans[ind]])
 #            if ind != -1:
             hunt_df.loc[ind] = [exp.bout_az[bout],
                                 exp.bout_alt[bout],
@@ -2410,7 +2403,14 @@ def hunted_para_descriptor(dim, exp, hd):
                                 delta_yaw]
             if endhunt:
                 bout_descriptor[-1][1] = last_bout
-                realfish.hunt_dataframes.append(copy.deepcopy(hunt_df))
+                if (percent_nans < 1.0/3).all():
+                    realfish.hunt_firstframes.append(hunt_bout_frames[0])
+                    realfish.hunt_interbouts.append(
+                        [0] + np.diff(hunt_bout_frames).tolist())
+                    realfish.huntbout_durations.append(hunt_bout_durations)
+                    realfish.hunt_results.append(ac)
+                    realfish.para_xyz_per_hunt.append(para3D)
+                    realfish.hunt_dataframes.append(copy.deepcopy(hunt_df))
                 break
     realfish.exporter()
     csv_data(header, bout_descriptor, 'huntingbouts', exp.directory)
@@ -2862,7 +2862,7 @@ if __name__ == '__main__':
 # bout array, matched with a flag array that describes summary statistics for each bout. A new BoutsandFlags object is then created
 # whose only role is to contain the bouts and corresponding flags for each fish. 
 
-    fish_id = '041618_1'
+    fish_id = '042318_6'
     drct = os.getcwd() + '/' + fish_id
     new_exp = False
     dimreduce = False

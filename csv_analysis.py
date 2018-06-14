@@ -97,7 +97,6 @@ class BayesDB_Simulator:
                           r_yint) + ', ' + 'r = ' + str(reg_fit),
                       color='k', fontsize=14)
 
-        
     def compare_sim_to_real(self, query_expression):
         df_real = self.rejection_query(1)
         df_sim = self.rejection_query(0)
@@ -395,7 +394,6 @@ def twod_scatter(data, var1, var2):
             print('miss')
             ignored1.append(val1)
             ignored2.append(val2)
-    
     f = pl.figure()
     ax = f.add_subplot(111)
     ax.plot(ignored1, ignored2, marker='o', linestyle='None', color=ig_color)
@@ -472,10 +470,11 @@ def huntbouts_plotter(data):
 #csv_file = 'huntingbouts_all.csv'
 #csv_file = 'stimuli_all.csv'
 #csv_file = 'huntbouts1_2s.csv'
-csv_file = 'huntbouts_rad.csv'
+fish_id = '041618_1'
+csv_file = os.getcwd() + '/' + fish_id + '/huntingbouts.csv'
 #csv_file = '~/bayesDB/huntbouts_inverted.csv'
 data = pd.read_csv(csv_file)
-bdsim = BayesDB_Simulator()
+#bdsim = BayesDB_Simulator()
 
     
 #pred_wrapper(data, [[0, .1], [.1, .2], [.3, .4], [.4, .5]], [1,2], 'alt')
