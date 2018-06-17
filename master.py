@@ -149,14 +149,15 @@ class Hunt_Descriptor:
                 inferred_window_ranges_poi = [
                     range(win[0], win[1]) for win in inferred_windows_poi]
         self.interp_windows.append(inferred_window_ranges_poi)
-        
+
     def current(self):
         print self.hunt_ind_list
         print self.para_id_list
         print self.actions
         print self.boutrange
 
-    def remove_entry(self, ind):
+    def remove_entry(self, h_id):
+        ind = np.where(np.array(self.hunt_ind_list == h_id))[0][0]
         del self.hunt_ind_list[ind]
         del self.para_id_list[ind]
         del self.actions[ind]
@@ -1374,6 +1375,8 @@ class Experiment():
             vid = imageio.get_reader(dirct + 'side_contrasted.AVI', 'ffmpeg')
         elif cont_side == 3:
             vid = imageio.get_reader(dirct + 'tailcontvid.AVI', 'ffmpeg')
+        elif cont_side == 4:
+            vid = imageio.get_reader(dirct + 'sideconts.AVI', 'ffmpeg')
         else:
             print('unspecified stream')
             return False
@@ -2279,6 +2282,8 @@ def hunted_para_descriptor(dim, exp, hd):
     for hi, hp, ac, br, iws in zip(
             hd.hunt_ind_list,
             hd.para_id_list, hd.actions, hd.boutrange, hd.interp_windows):
+        print('Hunt ID')
+        print hi
         para3D = np.load(
             exp.directory + "/para3D" + str(hi).zfill(
                 2) + ".npy")[
@@ -2323,20 +2328,15 @@ def hunted_para_descriptor(dim, exp, hd):
                                  in zip(nans_in_bouts, hunt_bout_durations)])
         norm_bf = [hbf - hunt_bout_frames[0] for hbf in hunt_bout_frames]
         norm_bf = map(lambda(x): x+int_win, norm_bf)
-        print('hunt_bout_frames')
         framewin = exp.refract
         # these are normed to the hunting bout so that first bout is 0.
         endhunt = False
         for ind, bout in enumerate(hunt_bouts):
-            print('true index')
-            print ind
-            print hunt_bouts
             if br[0] != 0:
                 ind += br[0]
                 bout += br[0]
                 print('altered index')
                 print ind
-
             norm_frame = norm_bf[ind]
             bout_dur = exp.bout_durations[bout]
             inferred_coordinate = 0

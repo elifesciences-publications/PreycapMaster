@@ -18,9 +18,8 @@ from matplotlib.colors import Normalize, ListedColormap
 
 
 class BayesDB_Simulator:
-    def __init__(self):
-        self.bdb_file = bl.bayesdb_open(
-            '/home/nightcrawler/bayesDB/Bolton_HuntingBouts_inversion_nonoptimized.bdb')
+    def __init__(self, fish_id, file_id):
+        self.bdb_file = bl.bayesdb_open(fish_id + '/' + file_id)
 #        self.bdb_file = bl.bayesdb_open(
 #            '/home/nightcrawler/bayesDB/Bolton_HuntingBouts_Sim_Inverted_optimized.bdb')
         self.model_varbs = {"Model Number": 37,
@@ -69,22 +68,37 @@ class BayesDB_Simulator:
         self.query_params['query_expression'] = query_expression
         self.query_params['conditioner'] = conditioner
 
+    def single_hist(self, query_exp, condition):
+        self.set_query_params(query_exp, condition)
+        df = self.rejection_query(1)        
+        hist_data = df[query_exp.replace('"','')]
+        p = sb.distplot(hist_data, color='b')
+        return p 
+
     def rejection_query(self, real):
         if not real:
             self.query_params['source'] = "bout_simulation"
         elif real:
             self.query_params['source'] = "bout_table"
-        df = query(self.bdb_file,
-                   '''SELECT {query_expression} FROM {source} WHERE {conditioner}'''.format(
-                       **self.query_params))
+        if self.query_params['conditioner'] == '':
+            qstring = '''SELECT {query_expression} FROM {source}'''.format(**self.query_params)
+        else:
+            qstring =  '''SELECT {query_expression} FROM {source} WHERE {conditioner}'''.format(**self.query_params)
+#        df = query(self.bdb_file,
+#                   '''SELECT {query_expression} FROM {source} WHERE {conditioner}'''.format(
+#                       **self.query_params))
+        print qstring
+        df = query(self.bdb_file, qstring)
         self.query_dataframe = df
         return df
 
+    # format of query_expression is '"Var1","Var2"'
     def two_variable_regression(self, query_expression, condition):
         self.set_query_params(query_expression, condition)
         v1 = query_expression.split(',')[0].replace('"', '')
         v2 = query_expression.split(',')[1].replace('"', '')                
         df_real = self.rejection_query(1)
+        fig = pl.figure()
         reg_plot = sb.regplot(df_real[v1],
                               df_real[v2],
                               fit_reg=True, n_boot=100, robust=True, color='g')
@@ -96,6 +110,7 @@ class BayesDB_Simulator:
                       str(r_slope) + 'x + ' + str(
                           r_yint) + ', ' + 'r = ' + str(reg_fit),
                       color='k', fontsize=14)
+        return fig
 
     def compare_sim_to_real(self, query_expression):
         df_real = self.rejection_query(1)
@@ -113,9 +128,10 @@ class BayesDB_Simulator:
         c1_result = self.rejection_query(real)
         self.set_query_params(q_exp, condition2)
         c2_result = self.rejection_query(real)
+        fig = pl.figure()
         sb.distplot(c1_result[q_exp.replace('"', '')], fit_kws={"color":"blue"}, fit=norm, kde=False,color='b')
         sb.distplot(c2_result[q_exp.replace('"', '')], fit_kws={"color":"yellow"}, fit=norm, kde=False,color='y')
-        pl.show()
+        return fig
 #        sb.distplot(c1_result[q_exp.replace('"', '')], bins=100, color='b')
 #        sb.distplot(c2_result[q_exp.replace('"', '')], bins=100, color='y')
         
@@ -172,7 +188,7 @@ def generate_random_data(raw_data, invert):
 # in the model, you will need to transform backwards...i.e. when you get a left down coord, have to transform it
 # back into a rightward up.
 
-def invert_all_bouts(raw_data):
+def invert_all_bouts(raw_data, drct):
     new_df = pd.DataFrame(columns=raw_data.columns.tolist())
     for i in range(raw_data.shape[0]):
         row_dict = data.loc[i]
@@ -181,7 +197,7 @@ def invert_all_bouts(raw_data):
         if not np.isfinite(row_values).all():
             continue
         new_df.loc[i] = row_values
-    new_df.to_csv('huntbouts_inverted.csv')
+    new_df.to_csv(drct + 'huntbouts_inverted.csv')
     
         
 def bout_inversion(row):
@@ -462,7 +478,7 @@ def huntbouts_plotter(data):
                           v2_cond2, v1_cond2, [v2_char, v1_char])
 
 
-
+if __name__ == "__main__":
 
 #NOTE ONLY RUN FUNCTIONS AFTER YOU HAVE NORMALIZED THE YAW AND PITCH
 #TO RADIANS. 
@@ -470,16 +486,18 @@ def huntbouts_plotter(data):
 #csv_file = 'huntingbouts_all.csv'
 #csv_file = 'stimuli_all.csv'
 #csv_file = 'huntbouts1_2s.csv'
-fish_id = '041618_1'
-csv_file = os.getcwd() + '/' + fish_id + '/huntingbouts.csv'
+    fish_id = '042318_6'
+    drct = os.getcwd() + '/' + fish_id + '/'
+#csv_file = drct + 'huntbouts_inverted.csv'
+    csv_file = drct + 'huntbouts_filtmore.csv'
 #csv_file = '~/bayesDB/huntbouts_inverted.csv'
-data = pd.read_csv(csv_file)
-#bdsim = BayesDB_Simulator()
+    data = pd.read_csv(csv_file)
+    bdsim = BayesDB_Simulator(fish_id, 'bdb_hunts_filt.bdb')
 
     
 #pred_wrapper(data, [[0, .1], [.1, .2], [.3, .4], [.4, .5]], [1,2], 'alt')
 
-pred_wrapper(data, [[0, .05], [.05, .1], [.1, .15], [.15, .2], [.2, .25], [.25, .3]], [1,2], 'alt')
+#pred_wrapper(data, [[0, .05], [.05, .1], [.1, .15], [.15, .2], [.2, .25], [.25, .3]], [1,2], 'alt')
 
 #pred_wrapper(data, [[0, 1]], [1,2], 'az')
 
