@@ -21,14 +21,14 @@ class PreyCap_Simulation:
         self.paramodel = paramodel
         self.sim_length = simlen
         self.para_states = []
-        self.para_xyz = [fishmodel.real_hunt_df["Para XYZ"][0],
-                         fishmodel.real_hunt_df["Para XYZ"][1],
-                         fishmodel.real_hunt_df["Para XYZ"][2]]
+        self.para_xyz = [fishmodel.real_hunt["Para XYZ"][0],
+                         fishmodel.real_hunt["Para XYZ"][1],
+                         fishmodel.real_hunt["Para XYZ"][2]]
         self.para_spherical = []
-        self.fish_xyz = [fishmodel.real_hunt_df["Initial Conditions"][0]]
+        self.fish_xyz = [fishmodel.real_hunt["Initial Conditions"][0]]
         self.fish_bases = []
-        self.fish_pitch = [fishmodel.real_hunt_df["Initial Conditions"][1]]
-        self.fish_yaw = [fishmodel.real_hunt_df["Initial Conditions"][2]]
+        self.fish_pitch = [fishmodel.real_hunt["Initial Conditions"][1]]
+        self.fish_yaw = [fishmodel.real_hunt["Initial Conditions"][2]]
         self.simulate_para = simulate_para
         self.interbouts = self.fishmodel.interbouts
         self.bout_durations = self.fishmodel.bout_durations
@@ -36,6 +36,7 @@ class PreyCap_Simulation:
         self.create_para_trajectory()
 
     def create_para_trajectory(self):
+
         def make_accel_vectors():
             spacing = int(np.load('spacing.npy'))
             vx = [p[-1] - p[0] for p in partition(spacing, self.para_xyz[0])]
@@ -98,7 +99,7 @@ class PreyCap_Simulation:
             px, py, pz = self.para_xyz
 
         while True:
-
+            print framecounter
             fish_basis = fishxyz_to_unitvecs(self.fish_xyz[-1],
                                              self.fish_yaw[-1],
                                              self.fish_pitch[-1])
@@ -167,8 +168,8 @@ class PreyCap_Simulation:
 
             
             if framecounter in self.interbouts:
-                fish_bout = self.fishmodel.model(para_varbs)
                 print para_varbs
+                fish_bout = self.fishmodel.model(para_varbs)
                 dx, dy, dz = sphericalbout_to_xyz(fish_bout[0],
                                                   fish_bout[1],
                                                   fish_bout[2],
@@ -199,6 +200,11 @@ class PreyCap_Simulation:
                     self.fish_xyz += zip(x_prog, y_prog, z_prog)
                     self.fish_pitch += pitch_prog
                     self.fish_yaw += yaw_prog
+                    for x, y, z, p, yw in zip(x_prog[1:],
+                                              y_prog[1:],
+                                              z_prog[1:], pitch_prog[1:], yaw_prog[1:]):
+                        fish_basis = fishxyz_to_unitvecs((x,y,z), yw, p)
+                        self.fish_bases.append(fish_basis[1])
                     framecounter += self.bout_durations[bout_counter]
 
                 else:
@@ -218,7 +224,7 @@ class PreyCap_Simulation:
     
 
 class FishModel:
-    def __init__(self, modchoice, strike_params, real_hunt_df):
+    def __init__(self, modchoice, strike_params, real_hunt_input):
         self.bdb_file = bl.bayesdb_open('Bolton_HuntingBouts_Sim_inverted.bdb')
         if modchoice == 0:
             self.model = (lambda pv: self.regression_model(pv))
@@ -228,11 +234,11 @@ class FishModel:
             self.model = (lambda pv: self.real_fish(pv))
             
         self.strike_params = strike_params
-        self.real_hunt_df = real_hunt_df
-        self.interbouts = real_hunt_df["Interbouts"]
-        self.bout_durations = real_hunt_df["Bout Durations"]
+        self.real_hunt = real_hunt_input
+        self.interbouts = real_hunt["Interbouts"]
+        self.bout_durations = real_hunt["Bout Durations"]
         self.interbouts = np.cumsum(
-            self.interbouts) + real_hunt_df["First Bout Delay"]
+            self.interbouts) + real_hunt["First Bout Delay"]
         # note that the fish is given 5 frames before initializing a bout.
         # this is so the model has a proper velocity to work with. occurs
         # at the exact same time as the fish bouts in reality. para
@@ -255,12 +261,12 @@ class FishModel:
             return False
 
     def real_fish(self, para_varbs):
-        if self.num_bouts_generated == len(self.real_hunt_df["Hunt Dataframe"]) - 1:
-            hunt_df = self.real_hunt_df[
-                "Hunt Dataframe"].loc[-1]
-        else:
-            hunt_df = self.real_hunt_df[
-                "Hunt Dataframe"].loc[self.num_bouts_generated]
+        # if self.num_bouts_generated == len(self.real_hunt["Hunt Dataframe"]) - 1:
+        #     hunt_df = self.real_hunt[
+        #         "Hunt Dataframe"].loc[-1]
+#        else:
+        hunt_df = self.real_hunt[
+            "Hunt Dataframe"].loc[self.num_bouts_generated]
         print self.num_bouts_generated        
         bout = np.array(
             [hunt_df["Bout Az"],
@@ -421,17 +427,34 @@ def characterize_strikes(hb_data):
     avg_strike_position = np.mean(np.abs(strike_characteristics), axis=0)
     return avg_strike_position
 
+def hunt_allframes(rfo, h_id):
+    delay = rfo.firstbout_para_intwin
+    frames = np.array(rfo.hunt_frames[h_id]) - delay
+    np.save('ufish.npy', rfo.ufish[frames[0]:frames[1]])
+    np.save('ufish_origin.npy', rfo.ufish_origin[frames[0]:frames[1]])
+    np.save('3D_paracoords.npy', rfo.model_input(h_id)["Para XYZ"])
+    
+
 
 csv_file = 'huntbouts_rad.csv'
 hb = pd.read_csv(csv_file)
-fish_id = '030118_2'
+fish_id = '042318_6'
 real_fish_object = pd.read_pickle(
     os.getcwd() + '/' + fish_id + '/RealHuntData_' + fish_id + '.pkl')
+
 para_model = pickle.load(open(os.getcwd() + '/pmm.pkl', 'rb'))
 np.random.seed()
 sequence_length = 10000
 strike_params = characterize_strikes(hb)
-fish = FishModel(2, strike_params, real_fish_object.model_input(0))
+
+#before you start this have to re-run hunted_para_desc in any fish
+h_id = 0
+print("Analyzing Hunt " + str(real_fish_object.hunt_id[h_ids]))
+hunt_allframes(real_fish_object, h_id)
+fish = FishModel(2, strike_params, real_fish_object.model_input(h_id))
+                 
+
+
 print('Creating Simulator')
 sim = PreyCap_Simulation(
     fish,
@@ -440,12 +463,9 @@ sim = PreyCap_Simulation(
     False)
 
 sim.run_simulation()
-# np.save('/home/nightcrawler/PandaModels/para_simulation.npy', sim.para_xyz)
-# np.save('/home/nightcrawler/PandaModels/origin_model.npy', sim.fish_xyz)
-# np.save('/home/nightcrawler/PandaModels/uf_model.npy', sim.fish_bases)
 np.save('para_simulation.npy', sim.para_xyz)
-np.save('origin_model.npy', sim.fish_xyz)
-np.save('uf_model.npy', sim.fish_bases)
+np.save('origin_model.npy', sim.fish_xyz[:-1])
+np.save('uf_model.npy', sim.fish_bases[:-1])
 
 
 

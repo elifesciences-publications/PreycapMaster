@@ -1271,7 +1271,9 @@ class ParaMaster():
             # pl.plot(zinv_nonan)
             # pl.plot(zinv)
             # pl.show()
-        np.save('/Users/nightcrawler2/3D_paracoords.npy', self.para3Dcoords)
+        np.save(
+            '/Users/nightcrawler2/PreycapMaster/3D_paracoords.npy',
+            self.para3Dcoords)
 
 
 

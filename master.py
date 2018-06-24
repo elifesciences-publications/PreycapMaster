@@ -75,9 +75,11 @@ class RealFishControl:
     def __init__(self, exp):
         self.firstbout_para_intwin = 5
         self.fish_xyz = exp.ufish_origin
+        self.fish_orientation = exp.ufish
         self.pitch_all = exp.spherical_pitch
         self.yaw_all = exp.spherical_yaw
         self.fish_id = exp.directory[-8:]
+        self.hunt_ids = []
         self.hunt_results = []
         self.hunt_firstframes = []
         self.hunt_interbouts = []
@@ -91,7 +93,7 @@ class RealFishControl:
 # create realfishcontrol objects as it runs. 
 
     def find_initial_conditions(self):
-        for firstframe in self.hunt_firstframes:
+        for (firstframe, lastframe) in self.hunt_frames:
             self.initial_conditions.append([self.fish_xyz[firstframe],
                                             self.pitch_all[firstframe],
                                             self.yaw_all[firstframe]])
@@ -198,9 +200,6 @@ class ParaEnv:
     def __init__(self, index, directory):
         self.wrth = np.load(
             directory + '/wrth' + str(index).zfill(2) + '.npy')
-        self.ufish = np.load('/Users/nightcrawler2/ufish.npy')
-        self.ufish_origin = np.load('/Users/nightcrawler2/ufish_origin.npy')
-        self.uperp = np.load('/Users/nightcrawler2/uperp.npy')
         self.para3D = np.load(
             directory + '/para3D' + str(index).zfill(2) + '.npy')
 #        self.high_density_coord = np.load('high_density_xyz.npy')
@@ -583,10 +582,11 @@ class DimensionalityReduce():
             self.exporter()
         else:
             self.hunt_wins[ind] = [start_ind, original_end_ind]
+            return
         view_bouts = raw_input("View Bouts During Hunt?: ")
         if view_bouts == 'y':
-            exp.watch_hunt(self, 0, 50, ind)
             bouts_during_hunt(exp.current_hunt_ind, dim, exp, True)
+            exp.watch_hunt(self, 0, 50, ind)
 
     def dim_reduction(self, dimension):
         print('running dimensionality reduction')
@@ -1396,16 +1396,16 @@ class Experiment():
                 cv2.destroyAllWindows()
                 vid.close()
                 return False
+            elif keypress == 49:
+                break
         cv2.destroyAllWindows()
         vid.close()
-
         cv2.namedWindow(
             'Enter 1 for Full Characterization',
             flags=cv2.WINDOW_NORMAL)
         cv2.moveWindow('Enter 1 for Full Characterization', 20, 20)
         key = cv2.waitKey(0)
         print key
-        # This is equivalent to pressing 1.
         if key == 49:
             ret = self.para_during_hunt(h_ind, True, hunt_wins)
             cv2.destroyAllWindows()
@@ -1734,18 +1734,18 @@ class Experiment():
             wrth_xy.append(temp_xypara)
 
         np.save(self.directory + '/para3D' + str(h_index).zfill(2) + '.npy',
-                self.paradata.para3Dcoords)
+                self.paradata.para3Dcoords)        
         np.save(self.directory + '/wrth' + str(h_index).zfill(2) + '.npy',
                 para_wrt_heading)
         np.save(self.directory + '/wrth_xy' + str(h_index).zfill(2) + '.npy',
                 wrth_xy)
-        np.save('/Users/nightcrawler2/ufish.npy',
+        np.save('/Users/nightcrawler2/PreycapMaster/ufish.npy',
                 self.ufish[self.framewindow[0]:self.framewindow[1]])
-        np.save('/Users/nightcrawler2/uperp.npy',
+        np.save('/Users/nightcrawler2/PreycapMaster/uperp.npy',
                 self.uperp[self.framewindow[0]:self.framewindow[1]])
-        np.save('/Users/nightcrawler2/ufish_origin.npy',
+        np.save('/Users/nightcrawler2/PreycapMaster/ufish_origin.npy',
                 self.ufish_origin[self.framewindow[0]:self.framewindow[1]])
-        np.save('/Users/nightcrawler2/para_continuity_window.npy',
+        np.save('/Users/nightcrawler2/PreycapMaster/para_continuity_window.npy',
                 np.array(self.para_continuity_window))
 
 
@@ -2404,7 +2404,9 @@ def hunted_para_descriptor(dim, exp, hd):
             if endhunt:
                 bout_descriptor[-1][1] = last_bout
                 if (percent_nans < 1.0/3).all():
-                    realfish.hunt_firstframes.append(hunt_bout_frames[0])
+                    realfish.hunt_ids.append(hi)
+                    realfish.hunt_frames.append(
+                        (hunt_bout_frames[0], hunt_bout_frames[-1] + 20))
                     realfish.hunt_interbouts.append(
                         [0] + np.diff(hunt_bout_frames).tolist())
                     realfish.huntbout_durations.append(hunt_bout_durations)
@@ -2862,10 +2864,10 @@ if __name__ == '__main__':
 # bout array, matched with a flag array that describes summary statistics for each bout. A new BoutsandFlags object is then created
 # whose only role is to contain the bouts and corresponding flags for each fish. 
 
-    fish_id = '042318_6'
+    fish_id = '042318_5'
     drct = os.getcwd() + '/' + fish_id
-    new_exp = False
-    dimreduce = False
+    new_exp = True
+    dimreduce = True
     
     if new_exp:
         # HERE IF YOU WANT TO CLUSTER MANY FISH IN THE FUTURE, MAKE A DICT OF FISH_IDs AND RUN THROUGH THIS LOOP. MAY WANT TO CLUSTER MORE FISH TO PULL OUT STRIKES VS ABORTS. 

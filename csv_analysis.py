@@ -9,7 +9,6 @@ from matplotlib import use
 import bayeslite as bl
 from iventure.utils_bql import query
 from iventure.utils_bql import subsample_table_columns
-#use('agg')
 from scipy.stats import norm
 import seaborn as sb
 from matplotlib import pyplot as pl
@@ -96,7 +95,7 @@ class BayesDB_Simulator:
     def two_variable_regression(self, query_expression, condition):
         self.set_query_params(query_expression, condition)
         v1 = query_expression.split(',')[0].replace('"', '')
-        v2 = query_expression.split(',')[1].replace('"', '')                
+        v2 = query_expression.split(',')[1].replace('"', '')           
         df_real = self.rejection_query(1)
         fig = pl.figure()
         reg_plot = sb.regplot(df_real[v1],
@@ -132,8 +131,6 @@ class BayesDB_Simulator:
         sb.distplot(c1_result[q_exp.replace('"', '')], fit_kws={"color":"blue"}, fit=norm, kde=False,color='b')
         sb.distplot(c2_result[q_exp.replace('"', '')], fit_kws={"color":"yellow"}, fit=norm, kde=False,color='y')
         return fig
-#        sb.distplot(c1_result[q_exp.replace('"', '')], bins=100, color='b')
-#        sb.distplot(c2_result[q_exp.replace('"', '')], bins=100, color='y')
         
                         
 def concatenate_all_csv(fish_list, file_name, invert):
