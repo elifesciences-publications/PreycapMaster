@@ -81,7 +81,7 @@ class RealFishControl:
         self.fish_id = exp.directory[-8:]
         self.hunt_ids = []
         self.hunt_results = []
-        self.hunt_firstframes = []
+        self.hunt_frames = []
         self.hunt_interbouts = []
         self.huntbout_durations = []
         self.initial_conditions = []
@@ -2864,10 +2864,10 @@ if __name__ == '__main__':
 # bout array, matched with a flag array that describes summary statistics for each bout. A new BoutsandFlags object is then created
 # whose only role is to contain the bouts and corresponding flags for each fish. 
 
-    fish_id = '042318_5'
+    fish_id = '042318_6'
     drct = os.getcwd() + '/' + fish_id
-    new_exp = True
-    dimreduce = True
+    new_exp = False
+    dimreduce = False
     
     if new_exp:
         # HERE IF YOU WANT TO CLUSTER MANY FISH IN THE FUTURE, MAKE A DICT OF FISH_IDs AND RUN THROUGH THIS LOOP. MAY WANT TO CLUSTER MORE FISH TO PULL OUT STRIKES VS ABORTS. 
