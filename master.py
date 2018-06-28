@@ -427,7 +427,6 @@ class DimensionalityReduce():
         elif vidtype == 0:
             vid = imageio.get_reader(
                 self.directory + '/conts.AVI', 'ffmpeg')
-
         cv2.namedWindow('vid', flags=cv2.WINDOW_AUTOSIZE)
         cv2.moveWindow('vid', 20, 20)
         c_mem_counter = 0
@@ -908,21 +907,6 @@ class Experiment():
                     part[ha_ind] = -1*part[ha_ind]
                 inverted_bout += part
             return inverted_bout
-
-        def nearwall(x_init, y_init, z_init, ha_init, pitch_init):
-            wall_thresh = 50
-            if x_init < wall_thresh and (90 < ha_init < 270):
-                return True
-            elif x_init > 1888-wall_thresh and (ha_init < 90 or ha_init > 270):
-                return True
-            elif y_init < wall_thresh and (ha_init > 180):
-                return True
-            elif y_init > 1888-wall_thresh and (ha_init < 180):
-                return True
-            elif z_init < wall_thresh and pitch_init < 0:
-                return True
-            elif z_init > 1888-wall_thresh and pitch_init > 0:
-                return True
         
         all_bout_data = []
         filtered_bout_frames = []
@@ -944,7 +928,6 @@ class Experiment():
         post_fluor_inds = [i for i, v in enumerate(frametypes_ir) if v == 1]
 # enumerate fluor_inds to get the correct frame in fluor_data.gut_values
         bout_windows = [win for win in sliding_window(2, self.bout_frames)]
-
         z_diffs = [0]
         eye_sd = 3
         phileft_filt = gaussian_filter(self.fishdata.phileft, eye_sd)
@@ -969,7 +952,7 @@ class Experiment():
                         y_init,
                         z_init,
                         ha_init,
-                        pitch_init):
+                        pitch_init, 50):
                 rejected_bouts.append([bout[0], 'nearwall'])
 # if filter_walls input to this function is false, bouts will still be candidates for clustering, but will be flagged in rejection. 
                 if filter_walls:
@@ -1613,28 +1596,100 @@ class Experiment():
         return [bout_az, bout_alt,
                 bout_dist, delta_pitch, delta_yaw, bd, post_ib]
 
+    def watch_spherical_bouts(self, vidtype, sbouts):
+        # Note you can just enter a subset of sbouts (or one) b/c of dict use
+        if vidtype == 2:
+            vid = imageio.get_reader(
+                self.directory + '/side_contrasted.AVI', 'ffmpeg')
+        elif vidtype == 1:
+            vid = imageio.get_reader(
+                self.directory + '/top_contrasted.AVI', 'ffmpeg')
+        elif vidtype == 0:
+            vid = imageio.get_reader(
+                self.directory + '/conts.AVI', 'ffmpeg')
+        cv2.namedWindow('vid', flags=cv2.WINDOW_AUTOSIZE)
+        cv2.moveWindow('vid', 20, 20)
+        for s_bout in sbouts:
+            firstframe = s_bout["Bout Frame"] - 10
+            lastframe = s_bout["Bout Duration"] + s_bout["Bout Frame"] + 10
+            if firstframe <= 0:
+                    continue
+            for frame in range(firstframe, lastframe):
+                im = vid.get_data(frame)
+                im = cv2.resize(im, (700, 700))
+                if frame == lastframe - 1:
+                    im = np.zeros([700, 700])
+                cv2.imshow('vid', im)
+                keypress = cv2.waitKey(delay=15)
+                if keypress == 50:
+                    cv2.destroyAllWindows()
+                    vid.close()
+                    return
+        cv2.destroyAllWindows()
+        vid.close()
+        return
+
+    def filtered_spherical_bouts(self, spherical_bouts):
+        # filter for near walls and > 10% fish interpolation
+        filt_sb = []
+        for sbout in spherical_bouts:
+            bf = sbout["Bout Frame"]
+            bd = sbout["Bout Duration"]
+            pct_interp = np.sum(self.nans_in_original[bf:bf+bd]) / bd
+            if bf - 3 >= 0:
+                ha_init = np.median(self.fishdata.headingangle[bf-3:bf])
+                x_init = np.median(self.fishdata.x[bf-3:bf])
+                y_init = np.median(self.fishdata.y[bf-3:bf])
+                z_init = np.median(self.fishdata.z[bf-3:bf])
+                pitch_init = np.median(self.fishdata.pitch[bf-3:bf])
+                x_end = np.median(self.fishdata.x[bf+bd:bf+bd+3])
+                y_end = np.median(self.fishdata.y[bf+bd:bf+bd+3])
+                z_end = np.median(self.fishdata.z[bf+bd:bf+bd+3])
+                pitch_end = np.median(self.fishdata.pitch[bf+bd:bf+bd+3])
+                ha_end = np.median(self.fishdata.headingangle[bf+bd:bf+bd+3])
+                nw_begin = nearwall(x_init,
+                                    y_init,
+                                    z_init, ha_init, pitch_init, 200)
+                nw_end = nearwall(x_end, y_end, z_end, ha_end, pitch_end, 200)
+                if not nw_begin and not nw_end and pct_interp <= .1:
+                    filt_sb.append(sbout)
+        return filt_sb
+                            
     def all_spherical_bouts(self):
         # there is no interbout info for the last bout so ignore it.
-        for i in range(len(self.bout_frames) -1):
-            s_bout = self.map_bout_to_heading(i)
-            self.bout_az.append(s_bout[0])
-            self.bout_alt.append(s_bout[1])
-            self.bout_dist.append(s_bout[2])
-            self.bout_dpitch.append(s_bout[3])
-            self.bout_dyaw.append(-1*s_bout[4])
+        spherical_bouts = []
+        empty_bouts = (self.bout_az == [])
+        for b_num, b_frame in enumerate(self.bout_frames):
+            if b_num == len(self.bout_frames) - 1:
+                break
+            s_bout = self.map_bout_to_heading(b_num)
+            if empty_bouts:
+                self.bout_az.append(s_bout[0])
+                self.bout_alt.append(s_bout[1])
+                self.bout_dist.append(s_bout[2])
+                self.bout_dpitch.append(s_bout[3])
+                self.bout_dyaw.append(-1*s_bout[4])
+            spherical_bouts.append({'Bout Az': s_bout[0],
+                                    'Bout Alt': s_bout[1],
+                                    'Bout Dist': s_bout[2],
+                                    'Interbout': s_bout[-1],
+                                    'Bout Duration': s_bout[-2],
+                                    'Delta Pitch': s_bout[3],
+                                    'Delta Yaw': -1*s_bout[4],
+                                    'Bout Frame': b_frame})
+        b_dict = {'Bout Az': self.bout_az,
+                  'Bout Alt': self.bout_alt,
+                  'Bout Dist': self.bout_dist,
+                  'Interbout': np.diff(self.bout_frames),
+                  'Bout Duration': self.bout_durations,
+                  'Delta Pitch': self.bout_dpitch,
+                  'Delta Yaw': self.bout_dyaw}
 
-        spherical_bouts = {'Bout Az': self.bout_az,
-                           'Bout Alt': self.bout_alt,
-                           'Bout Dist': self.bout_dist,
-                           'Interbouts': np.diff(self.bout_frames),
-                           'Bout Durations': self.bout_durations,
-                           'Delta Pitch': self.bout_dpitch,
-                           'Delta Yaw': self.bout_dyaw}
-        fig, axes = pl.subplots(1, len(spherical_bouts),
+        fig, axes = pl.subplots(1, len(spherical_bouts[0]),
                                 sharex=False,
                                 sharey=False,
                                 figsize=(8, 8))
-        for ind, (title, entry) in enumerate(spherical_bouts.iteritems()):
+        for ind, (title, entry) in enumerate(b_dict.iteritems()):
             sb.distplot(entry, ax=axes[ind])
             axes[ind].set_title(title)
         graph_3D = pl.figure(figsize=(10, 10))
@@ -2772,6 +2827,23 @@ def calculate_delta_yaw(raw_yaw):
     return delta_yaw
 
 
+def nearwall(x_init, y_init, z_init, ha_init, pitch_init, wall_thresh):
+    if x_init < wall_thresh and (90 < ha_init < 270):
+        return True
+    elif x_init > 1888-wall_thresh and (ha_init < 90 or ha_init > 270):
+        return True
+    elif y_init < wall_thresh and (ha_init > 180):
+        return True
+    elif y_init > 1888-wall_thresh and (ha_init < 180):
+        return True
+    elif z_init < wall_thresh and pitch_init < 0:
+        return True
+    elif z_init > 1888-wall_thresh and pitch_init > 0:
+        return True
+    else:
+        return False
+
+
 def fixmappings(exp, dim, hd):
     for hunt_id in hd.hunt_ind_list:
         init_frame = exp.bout_frames[dim.hunt_wins[hunt_id][0]]
@@ -2873,6 +2945,7 @@ if __name__ == '__main__':
     drct = os.getcwd() + '/' + fish_id
     new_exp = False
     dimreduce = False
+    filtered_spherical_bouts = []
     
     if new_exp:
         # HERE IF YOU WANT TO CLUSTER MANY FISH IN THE FUTURE, MAKE A DICT OF FISH_IDs AND RUN THROUGH THIS LOOP. MAY WANT TO CLUSTER MORE FISH TO PULL OUT STRIKES VS ABORTS. 
@@ -2926,3 +2999,5 @@ if __name__ == '__main__':
         elif import_hd == 'n':
             hd = Hunt_Descriptor(drct)
 
+    sbouts = myexp.all_spherical_bouts()
+    fsb = myexp.filtered_spherical_bouts(sbouts)
