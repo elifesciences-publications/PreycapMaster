@@ -2403,7 +2403,12 @@ def hunted_para_descriptor(dim, exp, hd):
                                 delta_yaw]
             if endhunt:
                 bout_descriptor[-1][1] = last_bout
-                if (percent_nans < 1.0/3).all():
+                para_interp_list = [
+                    1.0 / len(bout_descriptor)
+                    for b in bout_descriptor if b[-3] != 0]
+                prcnt_para_interp = np.sum(para_interp_list)
+                if (percent_nans < 1.0/3).all() and (
+                        prcnt_para_interp < 1.0 / 3):
                     realfish.hunt_ids.append(hi)
                     realfish.hunt_frames.append(
                         (hunt_bout_frames[0], hunt_bout_frames[-1] + 20))

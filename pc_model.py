@@ -1,4 +1,5 @@
 import csv
+import copy
 import numpy as np
 import pickle
 from matplotlib import pyplot as pl
@@ -14,6 +15,9 @@ from iventure.utils_bql import query
 from iventure.utils_bql import subsample_table_columns
 from collections import deque
 from master import fishxyz_to_unitvecs, sphericalbout_to_xyz, p_map_to_fish, RealFishControl
+
+# Next steps: make sure bayesDB runs look like real bouts. see what regression does too. 
+
 
 class PreyCap_Simulation:
     def __init__(self, fishmodel, paramodel, simlen, simulate_para, *para_input):
@@ -69,6 +73,7 @@ class PreyCap_Simulation:
             self.para_states = self.paramodel.model.predict(accelerations)
             
     def run_simulation(self):
+        hunt_result = 0
         framecounter = 0
         bout_counter = 0
         # spacing is an integer describing the sampling of vectors by the para. i.e.       # draws a new accel vector every 'spacing' frames
@@ -109,7 +114,8 @@ class PreyCap_Simulation:
                                              self.fish_pitch[-1])
             self.fish_bases.append(fish_basis[1])
             if framecounter == len(px):
-                print("hunt epoch complete")
+                print("hunt epoch complete w/out strike")
+                hunt_result = 2
                 break
             para_spherical = p_map_to_fish(fish_basis[1],
                                            fish_basis[0],
@@ -155,15 +161,20 @@ class PreyCap_Simulation:
                 print self.para_xyz[0].shape
                 print('len fishxyz')
                 print len(self.fish_xyz)
+                hunt_result = 1
                 # note that para may be "eaten" by model faster than in real life (i.e. it enters the strike zone)
                 # 
-                
                 break
 
             ''' you will store these vals in a
             list so you can determine velocities and accelerations '''
             if framecounter in self.interbouts:
                 print para_varbs
+                if not np.isfinite(para_varbs.values()).all():
+                    hunt_result = 3
+                    break
+                else:
+                    last_finite_pvarbs = copy.deepcopy(para_varbs)
                 fish_bout = self.fishmodel.model(para_varbs)
                 dx, dy, dz = sphericalbout_to_xyz(fish_bout[0],
                                                   fish_bout[1],
@@ -214,13 +225,15 @@ class PreyCap_Simulation:
                 self.fish_pitch.append(self.fish_pitch[-1])
                 self.fish_yaw.append(self.fish_yaw[-1])
                 framecounter += 1
-            
-        return self.fishmodel.num_bouts_generated
+        if hunt_result == 3:
+            para_varbs = last_finite_pvarbs
+        return self.fishmodel.num_bouts_generated, para_varbs, hunt_result
     
 
 class FishModel:
     def __init__(self, modchoice, strike_params, real_hunt_input):
-        self.bdb_file = bl.bayesdb_open('Bolton_HuntingBouts_Sim_inverted.bdb')
+#        self.bdb_file = bl.bayesdb_open('Bolton_HuntingBouts_Sim_inverted.bdb')
+        self.bdb_file = bl.bayesdb_open('bdb_hunts_inverted.bdb')
         if modchoice == 0:
             self.model = (lambda pv: self.regression_model(pv))
         elif modchoice == 1:
@@ -228,7 +241,8 @@ class FishModel:
         elif modchoice == 2:
             self.model = (lambda pv: self.real_fish(pv))
             
-        self.strike_params = strike_params
+        self.strike_means = strike_params[0]
+        self.strike_std = strike_params[1]
         self.real_hunt = real_hunt_input
         self.interbouts = real_hunt_input["Interbouts"]
         self.bout_durations = real_hunt_input["Bout Durations"]
@@ -247,10 +261,13 @@ class FishModel:
         return bout_indices
 
     def strike(self, p):
-        if (
-                p["Para Dist"] < self.strike_params[2]) and (
-                    np.abs(p["Para Az"]) < self.strike_params[0]) and (
-                        np.abs(p["Para Alt"]) < self.strike_params[1]):
+        in_az_win = (p["Para Az"] < self.strike_means[0] + self.strike_std[0] and
+                     p["Para Az"] > self.strike_means[0] - self.strike_std[0])
+        in_alt_win = (p["Para Alt"] < self.strike_means[1] + self.strike_std[1] and
+                     p["Para Alt"] > self.strike_means[1] - self.strike_std[1])
+        in_dist_win = (p["Para Dist"] < self.strike_means[2] + self.strike_std[2] and
+                     p["Para Dist"] > self.strike_means[2] - self.strike_std[2])
+        if in_az_win and in_alt_win and in_dist_win:
             return True
         else:
             return False
@@ -302,8 +319,9 @@ class FishModel:
     def bdb_model(self, para_varbs):
         self.num_bouts_generated += 1
         invert = True
-#        sampling = 'median'
-        sampling = 'sample'
+#        invert = False
+        sampling = 'median'
+#        sampling = 'sample'
         
         def invert_pvarbs(pvarbs):
             pvcopy = copy.deepcopy(pvarbs)
@@ -343,8 +361,8 @@ class FishModel:
                            "Para Az Velocity" = {Para Az Velocity},
                            "Para Alt Velocity" = {Para Alt Velocity},
                            "Para Dist velocity" = {Para Dist Velocity}
-                           USING MODEL 37
-                           LIMIT 5000 '''.format(**para_varbs))
+--                           USING MODEL 37
+                           LIMIT 500 '''.format(**para_varbs))
             bout_az = df_sim['Bout Az'].median()
             bout_alt = df_sim['Bout Alt'].median()
             bout_dist = df_sim['Bout Dist'].median()
@@ -362,7 +380,7 @@ class FishModel:
                            "Para Az Velocity" = {Para Az Velocity},
                            "Para Alt Velocity" = {Para Alt Velocity},
                            "Para Dist velocity" = {Para Dist Velocity}
-                           USING MODEL 37
+  --                         USING MODEL 37
                            LIMIT 1 '''.format(**para_varbs))
             bout_az = df_sim['Bout Az'][0]
             bout_alt = df_sim['Bout Alt'][0]
@@ -419,8 +437,9 @@ def characterize_strikes(hb_data):
                                    hb_data["Para Dist"][i]])
                 if np.isfinite(strike).all():
                     strike_characteristics.append(strike)
-    avg_strike_position = np.mean(np.abs(strike_characteristics), axis=0)
-    return avg_strike_position
+    avg_strike_position = np.mean(strike_characteristics, axis=0)
+    std = np.std(strike_characteristics, axis=0)
+    return avg_strike_position, std
 
 def realhunt_allframes(rfo, h_id):
     delay = rfo.firstbout_para_intwin
@@ -450,8 +469,8 @@ def model_vs_real(rfo, strike_params, para_model):
                 para_model,
                 sequence_length,
                 False)
-            num_bouts = sim.run_simulation()
-            bout_container[model_number].append(num_bouts)
+            bouts_and_p_params = sim.run_simulation()
+            bout_container[model_number].append(bouts_and_p_params)
     return bout_container
     
 def model_vs_paramodel(rfo, strike_params, para_model):
@@ -482,8 +501,8 @@ def model_vs_paramodel(rfo, strike_params, para_model):
                     sequence_length,
                     False,
                     p_xyz)
-            num_bouts = sim.run_simulation()
-            bout_container[model_number].append(num_bouts)
+            bouts_and_p_params = sim.run_simulation()
+            bout_container[model_number].append(bouts_and_p_params)
     return bout_container
 
     # this will take the paramodel object
@@ -500,10 +519,10 @@ if __name__ == "__main__":
     sequence_length = 10000
     strike_params = characterize_strikes(hb)
     #before you start this have to re-run hunted_para_desc in any fish
-    h_id = 5
+    h_id = 1
     print("Analyzing Hunt " + str(real_fish_object.hunt_ids[h_id]))
     realhunt_allframes(real_fish_object, h_id)
-    fish = FishModel(2, strike_params, real_fish_object.model_input(h_id))
+    fish = FishModel(1, strike_params, real_fish_object.model_input(h_id))
     print('Creating Simulator')
     sim = PreyCap_Simulation(
         fish,
