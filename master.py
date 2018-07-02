@@ -86,6 +86,8 @@ class RealFishControl:
         self.huntbout_durations = []
         self.initial_conditions = []
         self.hunt_dataframes = []
+        self.all_spherical_bouts = []
+        self.all_spherical_huntbouts = []
         self.para_xyz_per_hunt = []
         self.directory = exp.directory
 
@@ -1629,6 +1631,19 @@ class Experiment():
         vid.close()
         return
 
+    def spherical_huntbouts(self, fsbs, hd, dim):
+        shbs = []
+        huntframes = [range(
+            self.bout_frames[d[0]], self.bout_frames[d[1]] + 1)
+                      for i, d in enumerate(
+                              dim.hunt_wins) if i in hd.hunt_ind_list]
+        hf_concat = np.concatenate(huntframes)
+        for sbout in fsbs:
+            bf = sbout["Bout Frame"]
+            if bf in hf_concat:
+                shbs.append(sbout)
+        return shbs
+
     def filtered_spherical_bouts(self, spherical_bouts):
         # filter for near walls and > 10% fish interpolation
         filt_sb = []
@@ -2945,7 +2960,6 @@ if __name__ == '__main__':
     drct = os.getcwd() + '/' + fish_id
     new_exp = False
     dimreduce = False
-    filtered_spherical_bouts = []
     
     if new_exp:
         # HERE IF YOU WANT TO CLUSTER MANY FISH IN THE FUTURE, MAKE A DICT OF FISH_IDs AND RUN THROUGH THIS LOOP. MAY WANT TO CLUSTER MORE FISH TO PULL OUT STRIKES VS ABORTS. 
@@ -3001,3 +3015,4 @@ if __name__ == '__main__':
 
     sbouts = myexp.all_spherical_bouts()
     fsb = myexp.filtered_spherical_bouts(sbouts)
+    shbs = myexp.spherical_huntbouts(fsb, hd, dim)

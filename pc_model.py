@@ -25,6 +25,7 @@ class PreyCap_Simulation:
         self.paramodel = paramodel
         self.sim_length = simlen
         self.para_states = []
+        self.model_para_xyz = []
         if para_input == ():
             self.para_xyz = [fishmodel.real_hunt["Para XYZ"][0],
                              fishmodel.real_hunt["Para XYZ"][1],
@@ -40,7 +41,7 @@ class PreyCap_Simulation:
         self.interbouts= self.fishmodel.interbouts
         self.bout_durations = self.fishmodel.bout_durations
         self.interpolate = True
-        self.create_para_trajectory
+        self.create_para_trajectory()
         
     def create_para_trajectory(self):
 
@@ -73,6 +74,17 @@ class PreyCap_Simulation:
             self.para_states = self.paramodel.model.predict(accelerations)
             
     def run_simulation(self):
+
+        def project_para(p_coords, nback, proj_forward, curr_frame):
+            def final_pos(pc):
+                fp = (
+                    ((pc[curr_frame] - pc[curr_frame-nback])
+                     / float(nback)) * proj_forward) + pc[curr_frame]
+                return fp
+            p_xyz = [final_pos(p) for p in p_coords]                
+            return 
+        
+        
         hunt_result = 0
         framecounter = 0
         bout_counter = 0
@@ -117,14 +129,15 @@ class PreyCap_Simulation:
                 print("hunt epoch complete w/out strike")
                 hunt_result = 2
                 break
+            self.model_para_xyz = [px[framecounter], py[framecounter], pz[framecounter]]
             para_spherical = p_map_to_fish(fish_basis[1],
                                            fish_basis[0],
                                            fish_basis[3],
                                            fish_basis[2],
-                                           [px[framecounter],
-                                            py[framecounter],
-                                            pz[framecounter]],
+                                           self.model_para_xyz, 
                                            0)
+            # If project 10 frames forward with known XYZ, futureframe = framecoutner + 10
+            # model_para_xyz = [px[futureframe], py[futureframe], pz[futureframe]]
             p_az_hist.append(para_spherical[0])
             p_alt_hist.append(para_spherical[1])
             p_dist_hist.append(para_spherical[2])
@@ -169,8 +182,14 @@ class PreyCap_Simulation:
             ''' you will store these vals in a
             list so you can determine velocities and accelerations '''
             if framecounter in self.interbouts:
+
                 print para_varbs
-                if not np.isfinite(para_varbs.values()).all():
+                if fishmodel.linear_predict_para:
+                    self.model_para_xyz = project_para([px, py, pz], 5, 10, framecounter):
+                if fishmodel.bouts_forward != 0:
+                    future_frame = framecounter + fishmodel.bouts_forward
+                    self.model_para_xyz = [px[future_frame], py[future_frame], pz[future_frame]]
+                if not np.isfinite(para_varbs.values()).all() or not np.isfinite(self.model_para_xyz).all():
                     hunt_result = 3
                     break
                 else:
@@ -231,8 +250,14 @@ class PreyCap_Simulation:
     
 
 class FishModel:
-    def __init__(self, modchoice, strike_params, real_hunt_input):
+    def __init__(self, modchoice, strike_params, real_hunt_input, *spherical_bouts):
 #        self.bdb_file = bl.bayesdb_open('Bolton_HuntingBouts_Sim_inverted.bdb')
+        self.modchoice = modchoice
+        if spherical_bouts != ():
+            self.spherical_bout_bag = spherical_bouts[0]
+            self.spherical_huntbout_bag = spherical_bouts[1]
+        else:
+            self.spherical_bout_bag = self.spherical_huntbout_bag = spherical_bouts
         self.bdb_file = bl.bayesdb_open('bdb_hunts_inverted.bdb')
         if modchoice == 0:
             self.model = (lambda pv: self.regression_model(pv))
@@ -240,7 +265,14 @@ class FishModel:
             self.model = (lambda pv: self.bdb_model(pv))
         elif modchoice == 2:
             self.model = (lambda pv: self.real_fish(pv))
-            
+        elif 3 <= modchoice <= 7:
+            self.model = (lambda pv: self.ideal_model(pv))
+        # 3 is greedy1.
+        # 4 is greedy + 10 frames
+        # 5 is linear interpolation -- can also do this with regression 
+        # 6 is greedy1 with only huntbouts
+        # 7 is greedy + 10 frames with only huntbouts
+        self.linear_predict_para = False
         self.strike_means = strike_params[0]
         self.strike_std = strike_params[1]
         self.real_hunt = real_hunt_input
@@ -291,12 +323,110 @@ class FishModel:
         self.num_bouts_generated += 1
         return bout
 
-    def ideal_model(self):
+    def random_model(self, para_varbs):
+        self.num_bouts_generated += 1
+        r_int = np.random.randint(0, len(self.spherical_bout_bag))
+        rand_bout = self.spherical_bout_bag[r_int]
+        bout = np.array(
+            [rand_bout["Bout Az"],
+             rand_bout["Bout Alt"],
+             rand_bout["Bout Dist"],
+             rand_bout["Delta Pitch"],
+             -1*rand_bout["Delta Yaw"]])
+
+    def random_hunt_model(self, para_varbs):
+        self.num_bouts_generated += 1
+        r_int = np.random.randint(0, len(self.spherical_huntbout_bag))
+        rand_bout = self.spherical_huntbout_bag[r_int]
+        bout = np.array(
+            [rand_bout["Bout Az"],
+             rand_bout["Bout Alt"],
+             rand_bout["Bout Dist"],
+             rand_bout["Delta Pitch"],
+             -1*rand_bout["Delta Yaw"]])
+
+    def ideal_model(self, para_varbs):
+
+        def score_para(p_results, strike_varbs):
+            # first ask if any para are IN strike zone
+            strikes = np.array([self.strike(p) for p in p_results])
+            if strikes.any():
+                strike_args = np.argwhere(strikes)
+                rand_strike = np.random.randint(strike_args.shape[0])
+                bout_choice = strike_args[rand_strike][0]
+                return bout_choice
+            az = np.array([p['Para Az'] for p in p_results]) - self.strike_means[0]
+            alt = np.array([p['Para Alt'] for p in p_results]) - self.strike_means[1]
+            dist = np.array([p['Para Dist'] for p in p_results]) - self.strike_means[2]
+            norm_az = az / np.std(az)
+            norm_alt = alt / np.std(alt)
+            norm_dist = dist / np.std(dist)
+            score = norm_az + norm_alt + norm_dist
+            bout_choice = np.argmin(score)
+            return bout_choice
+ 
+        # Use this model for all greedy models and simply manipulate the model_para_xyz
+        self.num_bouts_generated += 1
+        if self.modchoice == 6:
+            boutbag = self.spherical_huntbout_bag
+        else:
+            boutbag = self.spherical_bout_bag
+        fish_basis = fishxyz_to_unitvecs(self.fish_xyz[-1],
+                                         self.fish_yaw[-1],
+                                         self.fish_pitch[-1])
+        para_results = []
+        for bt in self.spherical_bout_bag:
+            dx, dy, dz = sphericalbout_to_xyz(bt["Bout Az"],
+                                              bt["Bout Alt"],
+                                              bt["Bout Dist"],
+                                              fish_basis[1],
+                                              fish_basis[3],
+                                              fish_basis[2])
+            temp_yaw = bt["Delta Yaw"] + self.fish_yaw[-1]
+            temp_pitch = bt["Delta Pitch"] + self.fish_pitch[-1]
+            temp_xyz = np.array(self.fish_xyz[-1]) + np.array([dx, dy, dz])
+            temp_fish_basis = fishxyz_to_unitvecs(temp_xyz, 
+                                                  temp_yaw, 
+                                                  temp_pitch)
+            postbout_para_spherical = p_map_to_fish(temp_fish_basis[1],
+                                                    temp_fish_basis[0],
+                                                    temp_fish_basis[3],
+                                                    temp_fish_basis[2],
+                                                    self.model_para_xyz,
+                                                    0)
+            para_results.append(postbout_para_spherical)
+        best_bout = score_para(para_results)
+            
+            
+        
+        # first have to generate the bout 
+
+        
+        bout_az = (para_varbs['Para Az'] * 1.36) + .02
+        # NOTE THAT YOUR BOUT DESCRIPTOR IN MASTER.PY NOW OUTPUTS THE RIGHT SIGN OF DELTA YAW. CAN GET RID OF THISINVERSION WHEN ANALYZING NEW DATASET 
+        bout_yaw = -1 * ((.46 * para_varbs['Para Az']) - .02)
+        bout_alt = (1.5 * para_varbs['Para Alt']) + -.37
+        bout_pitch = (.27 * para_varbs['Para Alt']) - .04
+        bout_dist = (.09 * para_varbs['Para Dist']) + 29
+        print para_varbs
+        bout_array = np.array([bout_az,
+                               bout_alt,
+                               bout_dist, bout_pitch, bout_yaw])
+        noise_array = np.ones(5)
+        # noise_array = np.array(
+        # [(np.random.random() * .4) + .8 for i in bout_array])
+        bout = bout_array * noise_array
+        return bout
+
 
     # This model will assess the postbout az, alt, and dist and ask while whether there was a better bout to be had. can do this purely from
     # the output of the csv file. i.e. if postbout az is opp in sign, look for bouts that wouldve gotten it closer (i.e. less az). see if you could hav
         # gotten 0 az, 0 alt, 0 dist (i.e. food in the mouth)
+        possible_bouts = self.spherical_bout_bag
+        
         pass
+
+    
 
     def regression_model(self, para_varbs):
         self.num_bouts_generated += 1
