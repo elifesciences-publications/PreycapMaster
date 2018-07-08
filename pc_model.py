@@ -82,11 +82,11 @@ class PreyCap_Simulation:
                      / float(nback)) * proj_forward) + pc[curr_frame]
                 return fp
             p_xyz = [final_pos(p) for p in p_coords]                
-            return 
-        
+            return p_xyz
         
         hunt_result = 0
         framecounter = 0
+        future_frame = 0
         bout_counter = 0
         # spacing is an integer describing the sampling of vectors by the para. i.e.       # draws a new accel vector every 'spacing' frames
         spacing = np.load('spacing.npy')
@@ -129,7 +129,23 @@ class PreyCap_Simulation:
                 print("hunt epoch complete w/out strike")
                 hunt_result = 2
                 break
-            self.model_para_xyz = [px[framecounter], py[framecounter], pz[framecounter]]
+            
+            if fishmodel.linear_predict_para or fishmodel.boutbound_prediction:
+                if framecounter > future_frame:
+                    if fishmodel.boutbound_prediction:
+                        future_frame = framecounter + fishmodel.predict_forward_frames
+                        if not fishmodel.linear_predict_para:
+                            self.model_para_xyz = [px[future_frame], py[future_frame], pz[future_frame]],
+                        else:
+                            self.model_para_xyz = project_para([px, py, pz],
+                                                           5, self.predict_forward_frames, framecounter):
+                    else:
+                        self.model_para_xyz = project_para([px, py, pz],
+                                                           5, self.predict_forward_frames, framecounter):
+
+            else:
+                self.model_para_xyz = [px[framecounter], py[framecounter], pz[framecounter]]
+                
             para_spherical = p_map_to_fish(fish_basis[1],
                                            fish_basis[0],
                                            fish_basis[3],
@@ -184,11 +200,6 @@ class PreyCap_Simulation:
             if framecounter in self.interbouts:
 
                 print para_varbs
-                if fishmodel.linear_predict_para:
-                    self.model_para_xyz = project_para([px, py, pz], 5, 10, framecounter):
-                if fishmodel.bouts_forward != 0:
-                    future_frame = framecounter + fishmodel.bouts_forward
-                    self.model_para_xyz = [px[future_frame], py[future_frame], pz[future_frame]]
                 if not np.isfinite(para_varbs.values()).all() or not np.isfinite(self.model_para_xyz).all():
                     hunt_result = 3
                     break
@@ -247,32 +258,34 @@ class PreyCap_Simulation:
         if hunt_result == 3:
             para_varbs = last_finite_pvarbs
         return self.fishmodel.num_bouts_generated, para_varbs, hunt_result
-    
 
+
+# 3 is greedy1.
+# 4 is greedy + n frames
+# 5 is linear interpolation -- can also do this with regression 
+# 6 is greedy1 with only huntbouts
+# 7 is greedy + 10 frames with only huntbouts
+
+    
 class FishModel:
     def __init__(self, modchoice, strike_params, real_hunt_input, *spherical_bouts):
 #        self.bdb_file = bl.bayesdb_open('Bolton_HuntingBouts_Sim_inverted.bdb')
         self.modchoice = modchoice
-        if spherical_bouts != ():
-            self.spherical_bout_bag = spherical_bouts[0]
-            self.spherical_huntbout_bag = spherical_bouts[1]
-        else:
-            self.spherical_bout_bag = self.spherical_huntbout_bag = spherical_bouts
+        self.spherical_bouts = []
         self.bdb_file = bl.bayesdb_open('bdb_hunts_inverted.bdb')
-        if modchoice == 0:
-            self.model = (lambda pv: self.regression_model(pv))
-        elif modchoice == 1:
-            self.model = (lambda pv: self.bdb_model(pv))
-        elif modchoice == 2:
+        if modchoice == "Real":
             self.model = (lambda pv: self.real_fish(pv))
-        elif 3 <= modchoice <= 7:
+        elif modchoice == "Regression":
+            self.model = (lambda pv: self.regression_model(pv))
+        elif modchoice == "Bayes":
+            self.model = (lambda pv: self.bdb_model(pv))
+        elif modchoice == "Ideal":
             self.model = (lambda pv: self.ideal_model(pv))
-        # 3 is greedy1.
-        # 4 is greedy + 10 frames
-        # 5 is linear interpolation -- can also do this with regression 
-        # 6 is greedy1 with only huntbouts
-        # 7 is greedy + 10 frames with only huntbouts
+        elif modchoice == "Random":
+            self.model = ((lambda pv: self.random_model(pv))
         self.linear_predict_para = False
+        self.boutbound_prediction = False
+        self.predict_forward_frames = 0
         self.strike_means = strike_params[0]
         self.strike_std = strike_params[1]
         self.real_hunt = real_hunt_input
@@ -325,19 +338,8 @@ class FishModel:
 
     def random_model(self, para_varbs):
         self.num_bouts_generated += 1
-        r_int = np.random.randint(0, len(self.spherical_bout_bag))
-        rand_bout = self.spherical_bout_bag[r_int]
-        bout = np.array(
-            [rand_bout["Bout Az"],
-             rand_bout["Bout Alt"],
-             rand_bout["Bout Dist"],
-             rand_bout["Delta Pitch"],
-             -1*rand_bout["Delta Yaw"]])
-
-    def random_hunt_model(self, para_varbs):
-        self.num_bouts_generated += 1
-        r_int = np.random.randint(0, len(self.spherical_huntbout_bag))
-        rand_bout = self.spherical_huntbout_bag[r_int]
+        r_int = np.random.randint(0, len(self.spherical_boutbag))
+        rand_bout = self.spherical_boutbag[r_int]
         bout = np.array(
             [rand_bout["Bout Az"],
              rand_bout["Bout Alt"],
@@ -369,6 +371,8 @@ class FishModel:
         self.num_bouts_generated += 1
         if self.modchoice == 6:
             boutbag = self.spherical_huntbout_bag
+        elif self.modchoice == 7:
+            boutbag = [b for b in self.spherical_bout_bag if b not in self.spherical_huntbout_bag]
         else:
             boutbag = self.spherical_bout_bag
         fish_basis = fishxyz_to_unitvecs(self.fish_xyz[-1],
@@ -583,17 +587,28 @@ def realhunt_allframes(rfo, h_id):
     np.save('ufish_origin.npy', rfo.fish_xyz[frames[0]:frames[1]])
     np.save('3D_paracoords.npy', para_xyz)
 
-def model_vs_real(rfo, strike_params, para_model):
-    num_fishmodels = 4
-    bout_container = [[] for i in range(num_fishmodels)]
+def model_vs_real(rfo, strike_params, para_model, model_params):
+    bout_container = [[] for i in range(len(model_params))]
     sequence_length = 10000
     # this will iterate through hunt_ids and through types of Fishmodel.
     # function takes a real_fish_object and creates a Simulation for each hunt id and each model.
     # have to have the Sim output a -1 or something if the fish never catches the para
     for h_ind, hid in enumerate(rfo.hunt_ids):
-        for model_number in range(num_fishmodels):
-            fish = FishModel(model_number,
+        for model_run in model_params:
+            fish = FishModel(model_run["Model Type"],
                              strike_params, rfo.model_input(h_ind))
+            try:
+                if model_run["Extrapolate Para"]:
+                    fish.linear_predict_para = True
+                    fish.predict_forward_frames = model_run["Extrapolate Para"]
+            except KeyError: pass
+            try: 
+                if model_run["Willie Mays"]:
+                    fish.boutbound_prediction = True
+                    fish.predict_forward_frames = model_run["Willie Mays"]
+            except KeyError: pass
+            if model_run["Model Type"] == "Ideal" or model_run["Model Type"] == "Random":
+                fish.spherical_bout_bag = model_run["Spherical Bouts"]            
             sim = PreyCap_Simulation(
                 fish,
                 para_model,
@@ -601,29 +616,44 @@ def model_vs_real(rfo, strike_params, para_model):
                 False)
             bouts_and_p_params = sim.run_simulation()
             bout_container[model_number].append(bouts_and_p_params)
+# Note that bout container contains 3 elements. The number of bouts
+# executed by the model, the coordinates of the para before the last bout
+# and the result of the hunt. 
     return bout_container
     
-def model_vs_paramodel(rfo, strike_params, para_model):
-    real_model = 2
-    num_fishmodels = 4
-    bout_container = [[] for i in range(num_fishmodels)]
+def model_vs_paramodel(rfo, strike_params, para_model, model_params):
+    bout_container = [[] for i in range(len(model_params))]
     sequence_length = 10000
+    sim_created = False
     p_xyz = []
     # Here the initial conditions of each hunt will be kept, and
     # para simulations will proceed from there. 
     for h_ind, hid in enumerate(rfo.hunt_ids):
-        for model_number in range(num_fishmodels):
-            if model_number == real_model:
-                continue
-            fish = FishModel(model_number,
+        for model_run in model_params:            
+            fish = FishModel(model_run["Model Type"],
                              strike_params, rfo.model_input(h_ind))
-            if model_number == 0:
+            try:
+                if model_run["Extrapolate Para"]:
+                    fish.linear_predict_para = True
+                    fish.predict_forward_frames = model_run["Extrapolate Para"]
+            except KeyError: pass
+            try: 
+                if model_run["Willie Mays"]:
+                    fish.boutbound_prediction = True
+                    fish.predict_forward_frames = model_run["Willie Mays"]
+            except KeyError: pass
+            if model_run["Model Type"] == "Ideal" or model_run["Model Type"] == "Random":
+                fish.spherical_boutbag = model_run["Spherical Bouts"]
+# this is in place so that the para simulation gets run once, and all
+# models chase the same para
+            if not sim_created:
                 sim = PreyCap_Simulation(
                     fish,
                     para_model,
                     sequence_length,
                     True)
                 p_xyz = sim.para_xyz
+                sim_created = True
             else:
                 sim = PreyCap_Simulation(
                     fish,

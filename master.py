@@ -3015,4 +3015,7 @@ if __name__ == '__main__':
 
     sbouts = myexp.all_spherical_bouts()
     fsb = myexp.filtered_spherical_bouts(sbouts)
+    # spherical huntbouts
     shbs = myexp.spherical_huntbouts(fsb, hd, dim)
+    # spherical nonhuntbouts
+    nhbs = [f for f in fsb if f not in shbs]
