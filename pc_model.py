@@ -83,17 +83,17 @@ class PreyCap_Simulation:
                 return fp
             p_xyz = [final_pos(p) for p in p_coords]                
             return p_xyz
-        
+
+        last_finite_pvarbs = {}
+        endtime_last_bout = 0
         hunt_result = 0
         framecounter = 0
-        future_frame = 0
+        future_frame = 5
         bout_counter = 0
         # spacing is an integer describing the sampling of vectors by the para. i.e.       # draws a new accel vector every 'spacing' frames
         spacing = np.load('spacing.npy')
         vel_history = 6
         # fish_basis is origin, x, y, z unit vecs
-        print("Para Shape")
-        print self.para_xyz[0].shape[0]
         p_az_hist = deque(maxlen=vel_history)
         p_alt_hist = deque(maxlen=vel_history)
         p_dist_hist = deque(maxlen=vel_history)
@@ -120,7 +120,6 @@ class PreyCap_Simulation:
             px, py, pz = self.para_xyz
 
         while True:
-            print framecounter
             fish_basis = fishxyz_to_unitvecs(self.fish_xyz[-1],
                                              self.fish_yaw[-1],
                                              self.fish_pitch[-1])
@@ -129,23 +128,38 @@ class PreyCap_Simulation:
                 print("hunt epoch complete w/out strike")
                 hunt_result = 2
                 break
+
+            # could add in a 4th condition where para has left field of view. simply abs(para_az) > pi 
             
-            if fishmodel.linear_predict_para or fishmodel.boutbound_prediction:
-                if framecounter > future_frame:
-                    if fishmodel.boutbound_prediction:
-                        future_frame = framecounter + fishmodel.predict_forward_frames
-                        if not fishmodel.linear_predict_para:
-                            self.model_para_xyz = [px[future_frame], py[future_frame], pz[future_frame]],
-                        else:
-                            self.model_para_xyz = project_para([px, py, pz],
-                                                           5, self.predict_forward_frames, framecounter):
+            if self.fishmodel.linear_predict_para or self.fishmodel.boutbound_prediction:
+                if self.fishmodel.boutbound_prediction:
+                    # if framecounter not greater than future_frame, don't update model_para_xyz.
+                    # PROBLEM IS FIRST BOUT HAPPENS BEFORE FUTURE FRAME. fut frame is 10, bout is at 5.
+                    # i think the right answer is you change future_frame like below, but don't make the
+                    # model updates based on the conditional. 
+                    if framecounter >= future_frame:
+                        future_frame = framecounter + self.fishmodel.predict_forward_frames
+                    if not self.fishmodel.linear_predict_para:
+                        try:
+                            self.model_para_xyz = [px[future_frame], py[future_frame], pz[future_frame]]
+                        except IndexError:
+                            self.model_para_xyz = [px[-1], py[-1], pz[-1]]
                     else:
                         self.model_para_xyz = project_para([px, py, pz],
-                                                           5, self.predict_forward_frames, framecounter):
+                                            5, self.fishmodel.predict_forward_frames, framecounter)
+                            # print("MODEL XYZ BOTH")
+                            # print self.model_para_xyz
+                            # print framecounter
+                else:
+                    self.model_para_xyz = project_para([px, py, pz],
+                                                       5, self.fishmodel.predict_forward_frames, framecounter)
+                    # print("MODEL XYZ -- EXTRAP")
+                    # print self.model_para_xyz
+                    # print framecounter
 
             else:
                 self.model_para_xyz = [px[framecounter], py[framecounter], pz[framecounter]]
-                
+            self.fishmodel.current_target_xyz = self.model_para_xyz
             para_spherical = p_map_to_fish(fish_basis[1],
                                            fish_basis[0],
                                            fish_basis[3],
@@ -163,7 +177,7 @@ class PreyCap_Simulation:
                           "Para Az Velocity": np.mean(np.diff(p_az_hist)),
                           "Para Alt Velocity": np.mean(np.diff(p_alt_hist)),
                           "Para Dist Velocity": np.mean(np.diff(p_dist_hist))}
-
+            print framecounter
             if framecounter == 2000:
                 print("EVASIVE PARA!!!!!")
                 self.para_xyz[0] = px
@@ -171,7 +185,8 @@ class PreyCap_Simulation:
                 self.para_xyz[2] = pz
                 break
             
-            if self.fishmodel.strike(para_varbs):
+            if self.fishmodel.strike(
+                    para_varbs) and framecounter-endtime_last_bout >= self.fishmodel.strike_refractory_period:
                 print("Para Before Strike")
                 print para_varbs
                 print("STRIKE!!!!!!!!")
@@ -188,8 +203,6 @@ class PreyCap_Simulation:
                 np.save('strikelist.npy', np.zeros(framecounter).tolist() + [1]
                         + np.zeros(len(px) - framecounter -1).tolist() )
                 print self.para_xyz[0].shape
-                print('len fishxyz')
-                print len(self.fish_xyz)
                 hunt_result = 1
                 # note that para may be "eaten" by model faster than in real life (i.e. it enters the strike zone)
                 # 
@@ -198,9 +211,13 @@ class PreyCap_Simulation:
             ''' you will store these vals in a
             list so you can determine velocities and accelerations '''
             if framecounter in self.interbouts:
-
+                self.fishmodel.current_fish_xyz = self.fish_xyz[-1]
+                self.fishmodel.current_fish_pitch = self.fish_pitch[-1]
+                self.fishmodel.current_fish_yaw = self.fish_yaw[-1]
                 print para_varbs
-                if not np.isfinite(para_varbs.values()).all() or not np.isfinite(self.model_para_xyz).all():
+                if not np.isfinite(self.model_para_xyz).all():
+                    # here para record ends before fish catches.
+                    # para can't be nan at beginning due to real fish filters in master.py
                     hunt_result = 3
                     break
                 else:
@@ -242,6 +259,7 @@ class PreyCap_Simulation:
                         fish_basis = fishxyz_to_unitvecs((x,y,z), yw, p)
                         self.fish_bases.append(fish_basis[1])
                     framecounter += self.bout_durations[bout_counter]
+                    endtime_last_bout = framecounter
 
                 else:
                     new_xyz = self.fish_xyz[-1] + np.array([dx, dy, dz])
@@ -268,7 +286,7 @@ class PreyCap_Simulation:
 
     
 class FishModel:
-    def __init__(self, modchoice, strike_params, real_hunt_input, *spherical_bouts):
+    def __init__(self, modchoice, strike_params, real_hunt_input):
 #        self.bdb_file = bl.bayesdb_open('Bolton_HuntingBouts_Sim_inverted.bdb')
         self.modchoice = modchoice
         self.spherical_bouts = []
@@ -282,15 +300,20 @@ class FishModel:
         elif modchoice == "Ideal":
             self.model = (lambda pv: self.ideal_model(pv))
         elif modchoice == "Random":
-            self.model = ((lambda pv: self.random_model(pv))
+            self.model = (lambda pv: self.random_model(pv))
         self.linear_predict_para = False
         self.boutbound_prediction = False
         self.predict_forward_frames = 0
         self.strike_means = strike_params[0]
         self.strike_std = strike_params[1]
+        self.strike_refractory_period = strike_params[2]
         self.real_hunt = real_hunt_input
         self.interbouts = real_hunt_input["Interbouts"]
         self.bout_durations = real_hunt_input["Bout Durations"]
+        self.current_fish_xyz = []
+        self.current_fish_yaw = 0
+        self.current_fish_pitch = 0
+        self.current_target_xyz = []
         self.interbouts = np.cumsum(
             self.interbouts) + real_hunt_input["First Bout Delay"]
         # note that the fish is given 5 frames before initializing a bout.
@@ -318,38 +341,32 @@ class FishModel:
             return False
 
     def real_fish(self, para_varbs):
-        # if self.num_bouts_generated == len(self.real_hunt["Hunt Dataframe"]) - 1:
-        #     hunt_df = self.real_hunt[
-        #         "Hunt Dataframe"].loc[-1]
-#        else:
         hunt_df = self.real_hunt[
             "Hunt Dataframe"].loc[self.num_bouts_generated]
-        print self.num_bouts_generated        
         bout = np.array(
             [hunt_df["Bout Az"],
              hunt_df["Bout Alt"],
              hunt_df["Bout Dist"],
              hunt_df["Bout Delta Pitch"],
              -1*hunt_df["Bout Delta Yaw"]])
-        print('bout')
-        print bout
         self.num_bouts_generated += 1
         return bout
 
     def random_model(self, para_varbs):
         self.num_bouts_generated += 1
-        r_int = np.random.randint(0, len(self.spherical_boutbag))
-        rand_bout = self.spherical_boutbag[r_int]
+        r_int = np.random.randint(0, len(self.spherical_bouts))
+        rand_bout = self.spherical_bouts[r_int]
         bout = np.array(
             [rand_bout["Bout Az"],
              rand_bout["Bout Alt"],
              rand_bout["Bout Dist"],
              rand_bout["Delta Pitch"],
              -1*rand_bout["Delta Yaw"]])
+        return bout
 
     def ideal_model(self, para_varbs):
 
-        def score_para(p_results, strike_varbs):
+        def score_para(p_results):
             # first ask if any para are IN strike zone
             strikes = np.array([self.strike(p) for p in p_results])
             if strikes.any():
@@ -363,32 +380,26 @@ class FishModel:
             norm_az = az / np.std(az)
             norm_alt = alt / np.std(alt)
             norm_dist = dist / np.std(dist)
-            score = norm_az + norm_alt + norm_dist
+            score = np.abs(norm_az) + np.abs(norm_alt) + np.abs(norm_dist)
             bout_choice = np.argmin(score)
             return bout_choice
  
         # Use this model for all greedy models and simply manipulate the model_para_xyz
         self.num_bouts_generated += 1
-        if self.modchoice == 6:
-            boutbag = self.spherical_huntbout_bag
-        elif self.modchoice == 7:
-            boutbag = [b for b in self.spherical_bout_bag if b not in self.spherical_huntbout_bag]
-        else:
-            boutbag = self.spherical_bout_bag
-        fish_basis = fishxyz_to_unitvecs(self.fish_xyz[-1],
-                                         self.fish_yaw[-1],
-                                         self.fish_pitch[-1])
+        fish_basis = fishxyz_to_unitvecs(self.current_fish_xyz,
+                                         self.current_fish_yaw,
+                                         self.current_fish_pitch)
         para_results = []
-        for bt in self.spherical_bout_bag:
+        for bt in self.spherical_bouts:
             dx, dy, dz = sphericalbout_to_xyz(bt["Bout Az"],
                                               bt["Bout Alt"],
                                               bt["Bout Dist"],
                                               fish_basis[1],
                                               fish_basis[3],
                                               fish_basis[2])
-            temp_yaw = bt["Delta Yaw"] + self.fish_yaw[-1]
-            temp_pitch = bt["Delta Pitch"] + self.fish_pitch[-1]
-            temp_xyz = np.array(self.fish_xyz[-1]) + np.array([dx, dy, dz])
+            temp_yaw = -1*bt["Delta Yaw"] + self.current_fish_yaw
+            temp_pitch = bt["Delta Pitch"] + self.current_fish_pitch
+            temp_xyz = np.array(self.current_fish_xyz) + np.array([dx, dy, dz])
             temp_fish_basis = fishxyz_to_unitvecs(temp_xyz, 
                                                   temp_yaw, 
                                                   temp_pitch)
@@ -396,42 +407,19 @@ class FishModel:
                                                     temp_fish_basis[0],
                                                     temp_fish_basis[3],
                                                     temp_fish_basis[2],
-                                                    self.model_para_xyz,
+                                                    self.current_target_xyz,
                                                     0)
-            para_results.append(postbout_para_spherical)
-        best_bout = score_para(para_results)
-            
-            
-        
-        # first have to generate the bout 
+            pvarbs = {"Para Az": postbout_para_spherical[0],
+                      "Para Alt": postbout_para_spherical[1],
+                      "Para Dist": postbout_para_spherical[2]}
+            para_results.append(pvarbs)
+        best_bout = self.spherical_bouts[score_para(para_results)]
 
-        
-        bout_az = (para_varbs['Para Az'] * 1.36) + .02
-        # NOTE THAT YOUR BOUT DESCRIPTOR IN MASTER.PY NOW OUTPUTS THE RIGHT SIGN OF DELTA YAW. CAN GET RID OF THISINVERSION WHEN ANALYZING NEW DATASET 
-        bout_yaw = -1 * ((.46 * para_varbs['Para Az']) - .02)
-        bout_alt = (1.5 * para_varbs['Para Alt']) + -.37
-        bout_pitch = (.27 * para_varbs['Para Alt']) - .04
-        bout_dist = (.09 * para_varbs['Para Dist']) + 29
-        print para_varbs
-        bout_array = np.array([bout_az,
-                               bout_alt,
-                               bout_dist, bout_pitch, bout_yaw])
-        noise_array = np.ones(5)
-        # noise_array = np.array(
-        # [(np.random.random() * .4) + .8 for i in bout_array])
-        bout = bout_array * noise_array
-        return bout
-
-
-    # This model will assess the postbout az, alt, and dist and ask while whether there was a better bout to be had. can do this purely from
-    # the output of the csv file. i.e. if postbout az is opp in sign, look for bouts that wouldve gotten it closer (i.e. less az). see if you could hav
-        # gotten 0 az, 0 alt, 0 dist (i.e. food in the mouth)
-        possible_bouts = self.spherical_bout_bag
-        
-        pass
-
+        bout_array = np.array([best_bout['Bout Az'],
+                               best_bout['Bout Alt'],
+                               best_bout['Bout Dist'], best_bout['Delta Pitch'], -1*best_bout['Delta Yaw']])
+        return bout_array
     
-
     def regression_model(self, para_varbs):
         self.num_bouts_generated += 1
         bout_az = (para_varbs['Para Az'] * 1.36) + .02
@@ -440,7 +428,6 @@ class FishModel:
         bout_alt = (1.5 * para_varbs['Para Alt']) + -.37
         bout_pitch = (.27 * para_varbs['Para Alt']) - .04
         bout_dist = (.09 * para_varbs['Para Dist']) + 29
-        print para_varbs
         bout_array = np.array([bout_az,
                                bout_alt,
                                bout_dist, bout_pitch, bout_yaw])
@@ -573,28 +560,48 @@ def characterize_strikes(hb_data):
                     strike_characteristics.append(strike)
     avg_strike_position = np.mean(strike_characteristics, axis=0)
     std = np.std(strike_characteristics, axis=0)
-    return avg_strike_position, std
+    return [avg_strike_position, std]
 
-def realhunt_allframes(rfo, h_id):
+
+def view_and_sim_single_hunt(rfo, strike_params, para_model, model_params, hunt_id):
+    realhunt_allframes(rfo, hunt_id)
+    sim = model_wrapper(rfo, strike_params, para_model, model_params, hunt_id)    
+    np.save('para_simulation.npy', sim.para_xyz)
+    np.save('origin_model.npy', sim.fish_xyz[:-1])
+    np.save('uf_model.npy', sim.fish_bases[:-1])
+    return sim
+    
+def realhunt_allframes(rfo, hunt_id):
     delay = rfo.firstbout_para_intwin
-    frames = np.array(rfo.hunt_frames[h_id]) - delay
-    mod_input = rfo.model_input(h_id)
+    h_ind = np.argwhere(np.array(rfo.hunt_ids) == hunt_id)[0][0]
+    frames = np.array(rfo.hunt_frames[h_ind]) - delay
+    mod_input = rfo.model_input(h_ind)
     para_xyz = [mod_input["Para XYZ"][0],
                 mod_input["Para XYZ"][1],
                 mod_input["Para XYZ"][2]]
-
     np.save('ufish.npy', rfo.fish_orientation[frames[0]:frames[1]])
     np.save('ufish_origin.npy', rfo.fish_xyz[frames[0]:frames[1]])
     np.save('3D_paracoords.npy', para_xyz)
 
-def model_vs_real(rfo, strike_params, para_model, model_params):
+def model_wrapper(rfo, strike_params, para_model, model_params, *hunt_id):
+    print("Executing Models")
     bout_container = [[] for i in range(len(model_params))]
     sequence_length = 10000
+    p_xyz = []
     # this will iterate through hunt_ids and through types of Fishmodel.
     # function takes a real_fish_object and creates a Simulation for each hunt id and each model.
     # have to have the Sim output a -1 or something if the fish never catches the para
-    for h_ind, hid in enumerate(rfo.hunt_ids):
-        for model_run in model_params:
+    if hunt_id == ():
+        hunt_ids = rfo.hunt_ids
+    else:
+        hunt_ids = hunt_id
+        
+    for h_ind, hid in enumerate(hunt_ids):
+        if hunt_id != ():
+            h_ind = np.argwhere(np.array(rfo.hunt_ids) == hunt_id[0])[0][0]
+        sim_created = False
+        for mi, model_run in enumerate(model_params):
+            print("Running " + model_run["Model Type"] + " on hunt " + str(hid))
             fish = FishModel(model_run["Model Type"],
                              strike_params, rfo.model_input(h_ind))
             try:
@@ -608,62 +615,42 @@ def model_vs_real(rfo, strike_params, para_model, model_params):
                     fish.predict_forward_frames = model_run["Willie Mays"]
             except KeyError: pass
             if model_run["Model Type"] == "Ideal" or model_run["Model Type"] == "Random":
-                fish.spherical_bout_bag = model_run["Spherical Bouts"]            
-            sim = PreyCap_Simulation(
-                fish,
-                para_model,
-                sequence_length,
-                False)
+                fish.spherical_bouts = model_run["Spherical Bouts"]
+            if model_run["Real or Sim"] == "Real":
+                sim = PreyCap_Simulation(
+                    fish,
+                    para_model,
+                    sequence_length,
+                    False)
+            elif model_run["Real or Sim"] == "Sim":
+                # this allows same para sim to be run on all models for each hunt
+                # if you want to run multiple sims per hunt, just submit the same dictionary
+                # list with no real hunts in it.           
+                if not sim_created:
+                    sim = PreyCap_Simulation(
+                        fish,
+                        para_model,
+                        sequence_length,
+                        True)
+                    p_xyz = sim.para_xyz
+                    sim_created = True
+                else: 
+                    sim = PreyCap_Simulation(
+                        fish,
+                        para_model,
+                        sequence_length,
+                        False,
+                        p_xyz)                                          
             bouts_and_p_params = sim.run_simulation()
-            bout_container[model_number].append(bouts_and_p_params)
+            bout_container[mi].append(bouts_and_p_params)
 # Note that bout container contains 3 elements. The number of bouts
 # executed by the model, the coordinates of the para before the last bout
-# and the result of the hunt. 
-    return bout_container
+# and the result of the hunt.
+    if hunt_id != ():
+        return sim
+    else:
+        return bout_container
     
-def model_vs_paramodel(rfo, strike_params, para_model, model_params):
-    bout_container = [[] for i in range(len(model_params))]
-    sequence_length = 10000
-    sim_created = False
-    p_xyz = []
-    # Here the initial conditions of each hunt will be kept, and
-    # para simulations will proceed from there. 
-    for h_ind, hid in enumerate(rfo.hunt_ids):
-        for model_run in model_params:            
-            fish = FishModel(model_run["Model Type"],
-                             strike_params, rfo.model_input(h_ind))
-            try:
-                if model_run["Extrapolate Para"]:
-                    fish.linear_predict_para = True
-                    fish.predict_forward_frames = model_run["Extrapolate Para"]
-            except KeyError: pass
-            try: 
-                if model_run["Willie Mays"]:
-                    fish.boutbound_prediction = True
-                    fish.predict_forward_frames = model_run["Willie Mays"]
-            except KeyError: pass
-            if model_run["Model Type"] == "Ideal" or model_run["Model Type"] == "Random":
-                fish.spherical_boutbag = model_run["Spherical Bouts"]
-# this is in place so that the para simulation gets run once, and all
-# models chase the same para
-            if not sim_created:
-                sim = PreyCap_Simulation(
-                    fish,
-                    para_model,
-                    sequence_length,
-                    True)
-                p_xyz = sim.para_xyz
-                sim_created = True
-            else:
-                sim = PreyCap_Simulation(
-                    fish,
-                    para_model,
-                    sequence_length,
-                    False,
-                    p_xyz)
-            bouts_and_p_params = sim.run_simulation()
-            bout_container[model_number].append(bouts_and_p_params)
-    return bout_container
 
     # this will take the paramodel object
     
@@ -678,21 +665,35 @@ if __name__ == "__main__":
     np.random.seed()
     sequence_length = 10000
     strike_params = characterize_strikes(hb)
-    #before you start this have to re-run hunted_para_desc in any fish
-    h_id = 1
-    print("Analyzing Hunt " + str(real_fish_object.hunt_ids[h_id]))
-    realhunt_allframes(real_fish_object, h_id)
-    fish = FishModel(1, strike_params, real_fish_object.model_input(h_id))
-    print('Creating Simulator')
-    sim = PreyCap_Simulation(
-        fish,
-        para_model,
-        sequence_length,
-        False)
-    num_bouts = sim.run_simulation()
-    np.save('para_simulation.npy', sim.para_xyz)
-    np.save('origin_model.npy', sim.fish_xyz[:-1])
-    np.save('uf_model.npy', sim.fish_bases[:-1])
+    str_refractory_list = [b["Interbouts"][-1] - b["Bout Durations"][-2]
+                           for b in [real_fish_object.model_input(i)
+                                     for i in range(len(real_fish_object.hunt_ids))]]
+    str_refractory = np.ceil(np.percentile(str_refractory_list, 10)).astype(np.int)
+    strike_params.append(str_refractory)
+    spherical_bouts = np.load('spherical_bouts.npy').tolist()
+    spherical_huntbouts = np.load('spherical_huntbouts.npy').tolist()
+    spherical_nonhunt_bouts = [b for b in spherical_bouts if b not in spherical_huntbouts]
+
+    # Dict fields are  "Model Type" : Real, Regression, Bayes, Ideal, Random. This is the fish model
+    #                  "Real or Sim": Real, Sim, which generates a para or uses real para coords
+    #                  "Willie Mays": Enter number of frames ahead to predict
+    #                  "Extrapolate Para": ''
+    #                  "Spherical Bouts": Enter the list of possible bouts here
+    #
+    # Hunt Results are: 1 = Success, 2 = Fail, 3 = Para Rec nans before end of hunt
+    
+    modlist = [{"Model Type": "Regression", "Real or Sim": "Real"},
+               {"Model Type": "Regression", "Real or Sim": "Real", "Extrapolate Para": 10},
+               {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": spherical_bouts},
+               {"Model Type": "Regression", "Real or Sim": "Real", "Willie Mays": 10},
+               {"Model Type": "Regression", "Real or Sim": "Real", "Extrapolate Para": 10, "Willie Mays": 10},
+               {"Model Type": "Random", "Real or Sim": "Real", "Spherical Bouts": spherical_bouts},
+               {"Model Type": "Regression", "Real or Sim": "Sim"}]
 
 
+#    bpm = model_wrapper(real_fish_object, strike_params, para_model, modlist)
+
+    sim = view_and_sim_single_hunt(real_fish_object, strike_params, para_model, [modlist[-1]], 9)
+    
+# Problem with Sim is that the bouts run out of bouts. All bouts are completed, but fish stops moving after bouts. 
 

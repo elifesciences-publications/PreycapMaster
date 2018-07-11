@@ -2477,7 +2477,10 @@ def hunted_para_descriptor(dim, exp, hd):
                     1.0 / len(bout_descriptor)
                     for b in bout_descriptor if b[-3] != 0]
                 prcnt_para_interp = np.sum(para_interp_list)
-                if (percent_nans < 1.0/3).all() and (
+                pararec_present_at_outset = np.isfinite(
+                    bout_descriptor[0][7:10]).all()
+                if pararec_present_at_outset and (
+                        percent_nans < 1.0/3).all() and (
                         prcnt_para_interp < 1.0 / 3):
                     realfish.hunt_ids.append(hi)
                     realfish.hunt_frames.append(
@@ -3019,3 +3022,5 @@ if __name__ == '__main__':
     shbs = myexp.spherical_huntbouts(fsb, hd, dim)
     # spherical nonhuntbouts
     nhbs = [f for f in fsb if f not in shbs]
+    np.save('spherical_bouts.npy', fsb)
+    np.save('spherical_huntbouts.npy', shbs)
