@@ -26,22 +26,30 @@ class PreyCap_Simulation:
         self.sim_length = simlen
         self.para_states = []
         self.model_para_xyz = []
+        self.simulate_para = simulate_para
+
+# Problem is definitely here as i was f'ing with it when showing martin.
+# Somehow simulation is run on the real hunt paramecium. 
+        
         if para_input == ():
             self.para_xyz = [fishmodel.real_hunt["Para XYZ"][0],
-                             fishmodel.real_hunt["Para XYZ"][1],
+                             fishmodel.real_hunt["Para XYZ"][1],                             
                              fishmodel.real_hunt["Para XYZ"][2]]
+            self.create_para_trajectory()
         else:
-            self.para_xyz = para_input
+            self.para_xyz = para_input[0]
+            self.create_para_trajectory()
+            # want to generate new interbouts only once per simhunt
         self.para_spherical = []
         self.fish_xyz = [fishmodel.real_hunt["Initial Conditions"][0]]
         self.fish_bases = []
         self.fish_pitch = [fishmodel.real_hunt["Initial Conditions"][1]]
-        self.fish_yaw = [fishmodel.real_hunt["Initial Conditions"][2]]
-        self.simulate_para = simulate_para
+        self.fish_yaw = [fishmodel.real_hunt["Initial Conditions"][2]]        
         self.interbouts= self.fishmodel.interbouts
         self.bout_durations = self.fishmodel.bout_durations
         self.interpolate = True
-        self.create_para_trajectory()
+
+    
         
     def create_para_trajectory(self):
 
@@ -178,8 +186,9 @@ class PreyCap_Simulation:
                           "Para Alt Velocity": np.mean(np.diff(p_alt_hist)),
                           "Para Dist Velocity": np.mean(np.diff(p_dist_hist))}
             print framecounter
-            if framecounter == 2000:
+            if framecounter >= 2000:
                 print("EVASIVE PARA!!!!!")
+                hunt_result = 2
                 self.para_xyz[0] = px
                 self.para_xyz[1] = py
                 self.para_xyz[2] = pz
@@ -194,14 +203,16 @@ class PreyCap_Simulation:
                     len(px)-framecounter, np.nan).tolist()
                 print('para lengths')
                 print len(nanstretch)
-                self.para_xyz[0] = np.concatenate(
-                    (px[0:framecounter], nanstretch), axis=0)
-                self.para_xyz[1] = np.concatenate(
-                    (py[0:framecounter], nanstretch), axis=0)
-                self.para_xyz[2] = np.concatenate(
-                    (pz[0:framecounter], nanstretch), axis=0)
-                np.save('strikelist.npy', np.zeros(framecounter).tolist() + [1]
-                        + np.zeros(len(px) - framecounter -1).tolist() )
+                # self.para_xyz[0] = np.concatenate(
+                #     (px[0:framecounter], nanstretch), axis=0)
+                # self.para_xyz[1] = np.concatenate(
+                #     (py[0:framecounter], nanstretch), axis=0)
+                # self.para_xyz[2] = np.concatenate(
+                #     (pz[0:framecounter], nanstretch), axis=0)
+                self.para_xyz[0] = px
+                self.para_xyz[1] = py
+                self.para_xyz[2] = pz
+                # I THINK THIS IS MESSED UP TOO!
                 print self.para_xyz[0].shape
                 hunt_result = 1
                 # note that para may be "eaten" by model faster than in real life (i.e. it enters the strike zone)
@@ -275,6 +286,13 @@ class PreyCap_Simulation:
                 framecounter += 1
         if hunt_result == 3:
             para_varbs = last_finite_pvarbs
+        np.save('para_simulation.npy', [px[0:framecounter], py[0:framecounter], pz[0:framecounter]])
+        np.save('origin_model.npy', self.fish_xyz[:-1])
+        np.save('uf_model.npy', self.fish_bases[:-1])                
+        if hunt_result == 1:
+            np.save('strikelist.npy', np.zeros(framecounter-1).tolist() + [1])                    
+        else:
+            np.save('strikelist.npy', np.zeros(framecounter))
         return self.fishmodel.num_bouts_generated, para_varbs, hunt_result
 
 
@@ -286,10 +304,11 @@ class PreyCap_Simulation:
 
     
 class FishModel:
-    def __init__(self, modchoice, strike_params, real_hunt_input):
+    def __init__(self, model_param, strike_params, real_hunt_input, *spherical_bouts):
 #        self.bdb_file = bl.bayesdb_open('Bolton_HuntingBouts_Sim_inverted.bdb')
-        self.modchoice = modchoice
-        self.spherical_bouts = []
+        modchoice = model_param["Model Type"]
+        if spherical_bouts != ():
+            self.spherical_bouts = spherical_bouts[0]
         self.bdb_file = bl.bayesdb_open('bdb_hunts_inverted.bdb')
         if modchoice == "Real":
             self.model = (lambda pv: self.real_fish(pv))
@@ -308,8 +327,13 @@ class FishModel:
         self.strike_std = strike_params[1]
         self.strike_refractory_period = strike_params[2]
         self.real_hunt = real_hunt_input
-        self.interbouts = real_hunt_input["Interbouts"]
-        self.bout_durations = real_hunt_input["Bout Durations"]
+        if model_param["Real or Sim"] == "Real":
+            self.interbouts = real_hunt_input["Interbouts"]
+            self.bout_durations = real_hunt_input["Bout Durations"]
+        elif model_param["Real or Sim"] == "Sim":
+            self.interbouts = []
+            self.bout_durations = []
+            self.generate_simulated_interbouts(1000)
         self.current_fish_xyz = []
         self.current_fish_yaw = 0
         self.current_fish_pitch = 0
@@ -328,13 +352,33 @@ class FishModel:
         bout_indices = np.cumsum(all_ibs)
         return bout_indices
 
+    def generate_simulated_interbouts(self, num_bouts):
+        filt_ibs = []
+        filt_bdur = []
+        pct10ib, pct10bdur = np.percentile([(b["Interbout"],
+                                             b["Bout Duration"]) for b in self.spherical_bouts],
+                                           10, axis=0)
+        pct90ib, pct90bdur = np.percentile([(b["Interbout"],
+                                             b["Bout Duration"]) for b in self.spherical_bouts],
+                                           90, axis=0)
+        for b in self.spherical_bouts:
+            if pct10ib < b["Interbout"] < pct90ib:
+                if pct10bdur < b["Bout Duration"] < pct90bdur:
+                    filt_ibs.append(b["Interbout"])
+                    filt_bdur.append(b["Bout Duration"])
+        rand_intlist = np.random.randint(0, len(filt_ibs), num_bouts)
+        for r in rand_intlist:
+            self.interbouts.append(filt_ibs[r])
+            self.bout_durations.append(filt_bdur[r])
+
     def strike(self, p):
         in_az_win = (p["Para Az"] < self.strike_means[0] + self.strike_std[0] and
                      p["Para Az"] > self.strike_means[0] - self.strike_std[0])
         in_alt_win = (p["Para Alt"] < self.strike_means[1] + self.strike_std[1] and
                      p["Para Alt"] > self.strike_means[1] - self.strike_std[1])
-        in_dist_win = (p["Para Dist"] < self.strike_means[2] + self.strike_std[2] and
-                     p["Para Dist"] > self.strike_means[2] - self.strike_std[2])
+        # in_dist_win = (p["Para Dist"] < self.strike_means[2] + self.strike_std[2] and
+        #              p["Para Dist"] > self.strike_means[2] - self.strike_std[2])
+        in_dist_win = p["Para Dist"] <= self.strike_means[2]
         if in_az_win and in_alt_win and in_dist_win:
             return True
         else:
@@ -563,13 +607,10 @@ def characterize_strikes(hb_data):
     return [avg_strike_position, std]
 
 
-def view_and_sim_single_hunt(rfo, strike_params, para_model, model_params, hunt_id):
+def view_and_sim_hunt(rfo, strike_params, para_model, model_params, hunt_id):
     realhunt_allframes(rfo, hunt_id)
-    sim = model_wrapper(rfo, strike_params, para_model, model_params, hunt_id)    
-    np.save('para_simulation.npy', sim.para_xyz)
-    np.save('origin_model.npy', sim.fish_xyz[:-1])
-    np.save('uf_model.npy', sim.fish_bases[:-1])
-    return sim
+    sim, bpm = model_wrapper(rfo, strike_params, para_model, model_params, hunt_id)
+    return sim, bpm
     
 def realhunt_allframes(rfo, hunt_id):
     delay = rfo.firstbout_para_intwin
@@ -586,8 +627,11 @@ def realhunt_allframes(rfo, hunt_id):
 def model_wrapper(rfo, strike_params, para_model, model_params, *hunt_id):
     print("Executing Models")
     bout_container = [[] for i in range(len(model_params))]
+    prev_interbouts = []
+    prev_bout_durations = []
     sequence_length = 10000
     p_xyz = []
+    pause_wrapper = True
     # this will iterate through hunt_ids and through types of Fishmodel.
     # function takes a real_fish_object and creates a Simulation for each hunt id and each model.
     # have to have the Sim output a -1 or something if the fish never catches the para
@@ -595,15 +639,19 @@ def model_wrapper(rfo, strike_params, para_model, model_params, *hunt_id):
         hunt_ids = rfo.hunt_ids
     else:
         hunt_ids = hunt_id
+        pause_wrapper = True
         
     for h_ind, hid in enumerate(hunt_ids):
         if hunt_id != ():
             h_ind = np.argwhere(np.array(rfo.hunt_ids) == hunt_id[0])[0][0]
         sim_created = False
+    # Make a variable that copies prevoius interbouts and durations so that each sim has the same ibs and durations
         for mi, model_run in enumerate(model_params):
             print("Running " + model_run["Model Type"] + " on hunt " + str(hid))
-            fish = FishModel(model_run["Model Type"],
-                             strike_params, rfo.model_input(h_ind))
+            try:
+                fish = FishModel(model_run, strike_params, rfo.model_input(h_ind), model_run["Spherical Bouts"])
+            except KeyError:
+                fish = FishModel(model_run, strike_params, rfo.model_input(h_ind))
             try:
                 if model_run["Extrapolate Para"]:
                     fish.linear_predict_para = True
@@ -614,8 +662,7 @@ def model_wrapper(rfo, strike_params, para_model, model_params, *hunt_id):
                     fish.boutbound_prediction = True
                     fish.predict_forward_frames = model_run["Willie Mays"]
             except KeyError: pass
-            if model_run["Model Type"] == "Ideal" or model_run["Model Type"] == "Random":
-                fish.spherical_bouts = model_run["Spherical Bouts"]
+            
             if model_run["Real or Sim"] == "Real":
                 sim = PreyCap_Simulation(
                     fish,
@@ -632,22 +679,43 @@ def model_wrapper(rfo, strike_params, para_model, model_params, *hunt_id):
                         para_model,
                         sequence_length,
                         True)
-                    p_xyz = sim.para_xyz
-                    sim_created = True
-                else: 
+                    sim_created = True 
+                    
+                else:
+                    fish.interbouts = prev_interbouts
+                    fish.bout_durations = prev_boutdurations
                     sim = PreyCap_Simulation(
                         fish,
                         para_model,
                         sequence_length,
                         False,
-                        p_xyz)                                          
+                        p_xyz)
+
             bouts_and_p_params = sim.run_simulation()
+            p_xyz = copy.deepcopy(sim.para_xyz)
+            prev_interbouts = copy.deepcopy(sim.fishmodel.interbouts)
+            prev_boutdurations = copy.deepcopy(sim.fishmodel.bout_durations)                
             bout_container[mi].append(bouts_and_p_params)
+            print("PARA Y SUM")
+            print(np.sum(sim.para_xyz[1]))
+            print("PARA Z SUM")
+            print(np.sum(sim.para_xyz[2]))
+            
+            print np.sum(sim.fishmodel.bout_durations)
+            print('init fish')
+            print(sim.fish_xyz[0])
+            print(sim.fish_yaw[0])
+            print(sim.fish_pitch[0])
+            if pause_wrapper:
+                # There's something wrong here. Coords are off for regression
+                r = raw_input('Press Enter to Continue')
+
+                
 # Note that bout container contains 3 elements. The number of bouts
 # executed by the model, the coordinates of the para before the last bout
 # and the result of the hunt.
     if hunt_id != ():
-        return sim
+        return sim, bout_container
     else:
         return bout_container
     
@@ -668,11 +736,12 @@ if __name__ == "__main__":
     str_refractory_list = [b["Interbouts"][-1] - b["Bout Durations"][-2]
                            for b in [real_fish_object.model_input(i)
                                      for i in range(len(real_fish_object.hunt_ids))]]
-    str_refractory = np.ceil(np.percentile(str_refractory_list, 10)).astype(np.int)
+    str_refractory = np.ceil(np.percentile(str_refractory_list, 20)).astype(np.int)
     strike_params.append(str_refractory)
     spherical_bouts = np.load('spherical_bouts.npy').tolist()
     spherical_huntbouts = np.load('spherical_huntbouts.npy').tolist()
     spherical_nonhunt_bouts = [b for b in spherical_bouts if b not in spherical_huntbouts]
+    
 
     # Dict fields are  "Model Type" : Real, Regression, Bayes, Ideal, Random. This is the fish model
     #                  "Real or Sim": Real, Sim, which generates a para or uses real para coords
@@ -688,12 +757,28 @@ if __name__ == "__main__":
                {"Model Type": "Regression", "Real or Sim": "Real", "Willie Mays": 10},
                {"Model Type": "Regression", "Real or Sim": "Real", "Extrapolate Para": 10, "Willie Mays": 10},
                {"Model Type": "Random", "Real or Sim": "Real", "Spherical Bouts": spherical_bouts},
-               {"Model Type": "Regression", "Real or Sim": "Sim"}]
+               {"Model Type": "Regression", "Real or Sim": "Sim", "Spherical Bouts": spherical_huntbouts},
+               {"Model Type": "Regression", "Real or Sim": "Sim", "Spherical Bouts": spherical_huntbouts},
+               {"Model Type": "Regression", "Real or Sim": "Sim", "Spherical Bouts": spherical_huntbouts, "Extrapolate Para": 50}]
 
+    modlist2 = [{"Model Type": "Regression", "Real or Sim": "Sim", "Spherical Bouts": spherical_huntbouts},
+               {"Model Type": "Regression", "Real or Sim": "Sim", "Spherical Bouts": spherical_huntbouts}]
 
-#    bpm = model_wrapper(real_fish_object, strike_params, para_model, modlist)
+#    bpm = model_wrapper(real_fish_object, strike_params, para_model, modlist2)
 
-    sim = view_and_sim_single_hunt(real_fish_object, strike_params, para_model, [modlist[-1]], 9)
+    sim, bpm = view_and_sim_hunt(real_fish_object, strike_params, para_model, modlist2, 9)
+
+    # THERE'S CLEARLY A PROBLEM WITH THE LOOP B/C MODLIST[-1] fails too even though it succeeds as the second item in the modlist list.
+    # what's probably happening is that the model is running on the REAL para instead of the simulated para on the first iteration,
+    # but on the second iteration, it gets the simulated para back from the first model's creation of it. this is why the bouts look
+    # much smaller 
+
     
-# Problem with Sim is that the bouts run out of bouts. All bouts are completed, but fish stops moving after bouts. 
+# Problem with Sim is that the bouts run out of bouts. All bouts are completed, but fish stops moving after bouts.
+# Tomorrow, you will sample from the known spherical bouts b/c they contain interbouts and bout durations.
+# post_ib and bout dur are thought of as properties of a single bout (i.e. i used this much energy in the bout,
+# therefore i have to wait X long before another bout). Get all the interbouts out and np.percentile them
+# and then only keep bouts that have an IB and bout dur in the 10-90 window. make those the bout durations and interbouts
+# and don't stop until the cumsum of interbouts is greater than 2000 (or the EVASIVE thresh-- match those as a variable). 
 
+# BUG IS PARA GET THE NAN ON THE ENDS WHEN CAUGHT. GET RID OF THAT IF THE FLAG IS SIM?

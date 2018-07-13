@@ -3024,3 +3024,4 @@ if __name__ == '__main__':
     nhbs = [f for f in fsb if f not in shbs]
     np.save('spherical_bouts.npy', fsb)
     np.save('spherical_huntbouts.npy', shbs)
+
