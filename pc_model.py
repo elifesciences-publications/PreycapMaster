@@ -27,10 +27,11 @@ class PreyCap_Simulation:
         self.para_states = []
         self.model_para_xyz = []
         self.simulate_para = simulate_para
-
-# Problem is definitely here as i was f'ing with it when showing martin.
-# Somehow simulation is run on the real hunt paramecium. 
-        
+        # + 1 is b/c init condition is already in fish_xyz, pitch, yaw
+        self.realframes_start = fishmodel.rfo.hunt_frames[
+            fishmodel.h_ind][0] - fishmodel.rfo.firstbout_para_intwindelay + 1
+        self.realframes_end = fishmodel.rfo.hunt_frames[
+            fishmodel.h_ind][1]
         if para_input == ():
             self.para_xyz = [fishmodel.real_hunt["Para XYZ"][0],
                              fishmodel.real_hunt["Para XYZ"][1],                             
@@ -49,7 +50,23 @@ class PreyCap_Simulation:
         self.bout_durations = self.fishmodel.bout_durations
         self.interpolate = True
 
-    
+    def score_real_vs_model(self, plot_or_not):
+        # call this with flag that para is REAL (b/c have real fish record to compare to)
+        frames_in_model = len(self.fish_xyz)
+        start = self.realframes_start - 1
+        realxyz = self.fishmodel.rfo.fish_xyz[
+            start:start + frames_in_model]
+        realyaw = self.fishmodel.rfo.fish_yaw[
+            start:start + frames_in_model]
+        realpitch = self.fishmodel.rfo.fish_pitch[
+            start:start + frames_in_model]
+        model_xyz = [np.array(xyz) for xyz in self.fish_xyz]
+        mag_diff_xyz = np.array([np.linalg.norm(r-m) for r,m in zip(realxyz, model_xyz)])
+        diff_pitch = realpitch - np.array(self.fish_pitch)
+        norm_md = mag_diff_xyz / np.std(mag_diff_xyz)
+        norm_pitch = (np.array(self.fish_pitch) - realpitch) / np.std(np.array(self.fish_pitch) - realpitch)
+        norm_yaw = (np.array(self.fish_yaw) - realyaw) / np.std(np.array(self.fish_yaw) - realyaw)
+        score = norm_md + norm_pitch + norm_yaw
         
     def create_para_trajectory(self):
 
@@ -83,6 +100,12 @@ class PreyCap_Simulation:
             
     def run_simulation(self):
 
+        # for real_coords model, just have to map the para, get the para_varbs back,
+        # run the strike, update bouts at the correct times (i.e. framecounter + realframes_start)
+        # from there, strike function knows the refractory period.
+
+        # do this by simply adding the framecounter+realframes_start fish_xyz, pitch, and yaw to the sims versions 
+
         def project_para(p_coords, nback, proj_forward, curr_frame):
             def final_pos(pc):
                 fp = (
@@ -93,6 +116,7 @@ class PreyCap_Simulation:
             return p_xyz
 
         last_finite_pvarbs = {}
+        num_frames_out_of_view = 0
         endtime_last_bout = 0
         hunt_result = 0
         framecounter = 0
@@ -128,11 +152,11 @@ class PreyCap_Simulation:
             px, py, pz = self.para_xyz
 
         while True:
+            
             fish_basis = fishxyz_to_unitvecs(self.fish_xyz[-1],
                                              self.fish_yaw[-1],
                                              self.fish_pitch[-1])
             # fish_basis is a 4D vec with origin, ufish, upar, and uperp
-            np.save('fb.npy', fish_basis)
             self.fish_bases.append(fish_basis[1])
             if framecounter == len(px):
                 print("hunt epoch complete w/out strike")
@@ -164,6 +188,7 @@ class PreyCap_Simulation:
             else:
                 self.model_para_xyz = [px[framecounter], py[framecounter], pz[framecounter]]
             self.fishmodel.current_target_xyz = self.model_para_xyz
+            
             para_spherical = p_map_to_fish(fish_basis[1],
                                            fish_basis[0],
                                            fish_basis[3],
@@ -181,6 +206,14 @@ class PreyCap_Simulation:
                           "Para Az Velocity": np.mean(np.diff(p_az_hist)),
                           "Para Alt Velocity": np.mean(np.diff(p_alt_hist)),
                           "Para Dist Velocity": np.mean(np.diff(p_dist_hist))}
+
+# can get more fancy with this function -- could have an entire object
+# that counts interesting facets of the hunt. e.g. how many frames
+# was the az greater than the init az after the first bout?
+# alt? dist? you know that successful hunts have linear drops. 
+            if np.abs(para_varbs["Para Az"]) > np.pi / 2:
+                num_frames_out_of_view += 1
+            
             if framecounter % 20 == 0:
                 print framecounter
             if framecounter >= 2000:
@@ -204,7 +237,8 @@ class PreyCap_Simulation:
 
             ''' you will store these vals in a
             list so you can determine velocities and accelerations '''
-            if framecounter in self.interbouts:
+                
+            if framecounter in self.interbouts and not self.fishmodel.modchoice == "Real Coords":
                 self.fishmodel.current_fish_xyz = self.fish_xyz[-1]
                 self.fishmodel.current_fish_pitch = self.fish_pitch[-1]
                 self.fishmodel.current_fish_yaw = self.fish_yaw[-1]
@@ -221,16 +255,7 @@ class PreyCap_Simulation:
                 # dx, dy, dz= fish_xyz[-1] to real fish coords. dyaw and dpitch
                 # are just fish_pitch[-1] to current fish_pitch, yaw etc. 
                 # final coords and yaw are framecounter + bout_durations[bout_counter]
-                if self.fishmodel.modchoice != "Real Coords":
-                    fish_bout = self.fishmodel.model(para_varbs)                
-                    dx, dy, dz = sphericalbout_to_xyz(fish_bout[0],
-                                                      fish_bout[1],
-                                                      fish_bout[2],
-                                                      fish_basis[1],
-                                                      fish_basis[3],
-                                                      fish_basis[2])
-                else:
-                    pass 
+                
                 if self.interpolate:
                     x_prog = np.linspace(
                         self.fish_xyz[-1][0],
@@ -261,7 +286,7 @@ class PreyCap_Simulation:
                         fish_basis = fishxyz_to_unitvecs((x,y,z), yw, p)
                         self.fish_bases.append(fish_basis[1])
                     framecounter += self.bout_durations[bout_counter]
-                    endtime_last_bout = framecounter
+
 
                 else:
                     new_xyz = self.fish_xyz[-1] + np.array([dx, dy, dz])
@@ -269,11 +294,26 @@ class PreyCap_Simulation:
                     self.fish_pitch.append(self.fish_pitch[-1] + fish_bout[3])
                     self.fish_yaw.append(self.fish_yaw[-1] + fish_bout[4])
                     framecounter += 1
+                endtime_last_bout = framecounter                    
                 bout_counter += 1
+                
             else:
-                self.fish_xyz.append(self.fish_xyz[-1])
-                self.fish_pitch.append(self.fish_pitch[-1])
-                self.fish_yaw.append(self.fish_yaw[-1])
+                if self.fishmodel.modchoice == 'Real Coords':
+                    self.fish_xyz.append(self.fishmodel.fish_xyz[framecounter + self.realframes_start])
+                    self.fish_pitch.append(self.fishmodel.pitch_all[framecounter + self.realframes_start])
+                    self.fish_yaw.append(self.fishmodel.yaw_all[framecounter + self.realframes_start])
+                    if framecounter in self.interbouts:
+                        if not np.isfinite(self.model_para_xyz).all():
+                            hunt_result = 3
+                            break
+                        else:
+                            last_finite_pvarbs = copy.deepcopy(para_varbs)
+                        endtime_last_bout = framecounter + self.bout_durations[bout_counter]                            
+                        bout_counter += 1
+                else:    
+                    self.fish_xyz.append(self.fish_xyz[-1])
+                    self.fish_pitch.append(self.fish_pitch[-1])
+                    self.fish_yaw.append(self.fish_yaw[-1])
                 framecounter += 1
         if hunt_result == 3:
             para_varbs = last_finite_pvarbs
@@ -284,19 +324,14 @@ class PreyCap_Simulation:
             np.save('strikelist.npy', np.zeros(framecounter-1).tolist() + [1])                    
         else:
             np.save('strikelist.npy', np.zeros(framecounter))
-        return self.fishmodel.num_bouts_generated, para_varbs, hunt_result
-
-
-# 3 is greedy1.
-# 4 is greedy + n frames
-# 5 is linear interpolation -- can also do this with regression 
-# 6 is greedy1 with only huntbouts
-# 7 is greedy + 10 frames with only huntbouts
+        return bout_counter, para_varbs, num_frames_out_of_view, hunt_result
 
     
 class FishModel:
-    def __init__(self, model_param, strike_params, real_hunt_input, *spherical_bouts):
+    def __init__(self, model_param, strike_params, rfo, hunt_ind,  *spherical_bouts):
 #        self.bdb_file = bl.bayesdb_open('Bolton_HuntingBouts_Sim_inverted.bdb')
+        self.rfo = rfo
+        self.hunt_ind = hunt_ind
         self.modchoice = model_param["Model Type"]
         if spherical_bouts != ():
             self.spherical_bouts = spherical_bouts[0]
@@ -319,7 +354,7 @@ class FishModel:
         self.strike_means = strike_params[0]
         self.strike_std = strike_params[1]
         self.strike_refractory_period = strike_params[2]
-        self.real_hunt = real_hunt_input
+        self.real_hunt = self.rfo.model_input(hunt_ind)
         if model_param["Real or Sim"] == "Real":
             self.interbouts = real_hunt_input["Interbouts"]
             self.bout_durations = real_hunt_input["Bout Durations"]
@@ -378,8 +413,8 @@ class FishModel:
             return False
 
     def real_fish_coords(self, para_varbs):
-        
-        pass
+        bout = np.zeros(5)
+        return bout
     
     def real_fish_bouts(self, para_varbs):
         hunt_df = self.real_hunt[
@@ -394,7 +429,6 @@ class FishModel:
         return bout
 
     def random_model(self, para_varbs):
-        self.num_bouts_generated += 1
         r_int = np.random.randint(0, len(self.spherical_bouts))
         rand_bout = self.spherical_bouts[r_int]
         bout = np.array(
@@ -425,8 +459,7 @@ class FishModel:
             bout_choice = np.argmin(score)
             return bout_choice
  
-        # Use this model for all greedy models and simply manipulate the model_para_xyz
-        self.num_bouts_generated += 1
+        # Use this model for all greedy models and simply manipulate the model_para_xyz        
         fish_basis = fishxyz_to_unitvecs(self.current_fish_xyz,
                                          self.current_fish_yaw,
                                          self.current_fish_pitch)
@@ -462,7 +495,6 @@ class FishModel:
         return bout_array
     
     def regression_model(self, para_varbs):
-        self.num_bouts_generated += 1
         bout_az = (para_varbs['Para Az'] * 1.36) + .02
         # NOTE THAT YOUR BOUT DESCRIPTOR IN MASTER.PY NOW OUTPUTS THE RIGHT SIGN OF DELTA YAW. CAN GET RID OF THISINVERSION WHEN ANALYZING NEW DATASET 
         bout_yaw = -1 * ((.46 * para_varbs['Para Az']) - .02)
@@ -479,7 +511,6 @@ class FishModel:
         return bout
 
     def bdb_model(self, para_varbs):
-        self.num_bouts_generated += 1
         invert = True
 #        invert = False
         sampling = 'median'
@@ -765,11 +796,11 @@ if __name__ == "__main__":
     total_bouts = [np.sum([b[0] for b in bp]) for bp in bpm]
     result_counts = [Counter([b[-1] for b in bp]) for bp in bpm]
     
-# 2 Things to do.
-#   1. finish the real_coords model. use the fish_xyz, yaw_all, and pitch_all from the
-#   real fish object. instead of passing a model input to the FishModel, pass the whole RFO.
-#   that way, fishmodel.fish_xyz, yaw_all, and pitch_all can be used to map the para to the fish
-#   while bouts and bout durations will be required to figure out when strikes are allowed to occur.
+
+# Things to do.
+
+#   1. Add in a new metric to the return from the Sim that says whether the para ever disappeared from
+#      view of the fish. My guess is this will never occur in the real data. Allow things to keep running.
 
 #   2. create a metric for asking how similar a model result is to the real fish's behavior. can even
 #   write a function that takes two models and compares them with a score. i think a good start would be
