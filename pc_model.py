@@ -17,7 +17,7 @@ import bayeslite as bl
 from iventure.utils_bql import query
 from iventure.utils_bql import subsample_table_columns
 from collections import deque, Counter
-from master import fishxyz_to_unitvecs, sphericalbout_to_xyz, p_map_to_fish, RealFishControl
+from master import fishxyz_to_unitvecs, sphericalbout_to_xyz, p_map_to_fish, RealFishControl, normalize_kernel
 from toolz.itertoolz import sliding_window, partition
 
 # Next steps: make sure bayesDB runs look like real bouts. see what regression does too. 
@@ -27,17 +27,12 @@ class PreyCap_Simulation:
     def __init__(self, fishmodel, paramodel, simlen, simulate_para, *para_input):
         self.fishmodel = fishmodel
         self.paramodel = paramodel
+        self.velocity_kernel = np.load('hb_velocity_kernel.npy')
         self.sim_length = simlen
         self.para_states = []
         self.model_para_xyz = []
         self.simulate_para = simulate_para
         # + 1 is b/c init condition is already in fish_xyz, pitch, yaw
-
-        # THINK ABOUT THIS. PARA RECORD IS 5 BACK, BUT NOTHING ELSE IS.
-        # YOUR INIT CONDITIONS ARE 5 AHEAD OF FIRST PARA COORD. 
-
-        # INTERBOUTS ALSO
-        # NORMALIZED BY PARA INTWIN. 
         self.realframes_start = fishmodel.rfo.hunt_frames[
             fishmodel.hunt_ind][0] - fishmodel.rfo.firstbout_para_intwin
         self.realframes_end = fishmodel.rfo.hunt_frames[
@@ -59,7 +54,7 @@ class PreyCap_Simulation:
         self.interbouts= self.fishmodel.interbouts
         self.bout_durations = self.fishmodel.bout_durations
         self.bout_counter = 0
-        self.interpolate = True
+        self.interpolate = 'kernel'
         self.strikelist = []
         self.framecounter = 0
         self.hunt_result = 0
@@ -152,10 +147,6 @@ class PreyCap_Simulation:
             bout_times = self.interbouts[self.interbouts < len(rx)]
             bout_ends = self.bout_durations + self.interbouts
             bout_ends = bout_ends[bout_ends < len(rx)]
-            
-
-            
-            
             fig = pl.figure(figsize=(6,6))
             gs = gridspec.GridSpec(4, 4)
             ax1 = fig.add_subplot(gs[0:2,0:2])
@@ -180,11 +171,7 @@ class PreyCap_Simulation:
             ax1.plot(bout_ends, [rx[bt] for bt in bout_ends], 'm', marker='.', linestyle='None')
             ax1.plot(bout_ends, [ry[bt] for bt in bout_ends], 'm', marker='.', linestyle='None')
             ax1.plot(bout_ends, [rz[bt] for bt in bout_ends], 'm', marker='.', linestyle='None')
-
-
-            
             ax1.set_title('XYZ vs T')
-
             ax4.plot(m1_yaw, 'r', linewidth=1)
             ax4.plot(self.fish_yaw, 'r', linewidth=1, alpha=.5)
             ax4.plot(m1_pitch, 'y', linewidth=1)
@@ -193,9 +180,7 @@ class PreyCap_Simulation:
             ax4.plot(bout_times, [self.fish_pitch for bt in bout_times], 'c', marker='.', linestyle='None')
             ax4.plot(bout_ends, [self.fish_yaw for bt in bout_ends], 'm', marker='.', linestyle='None')
             ax4.plot(bout_ends, [self.fish_pitch for bt in bout_ends], 'm', marker='.', linestyle='None')
-
             ax4.set_title('Yaw (Red), Pitch (Yellow)')
-
             ax2.plot(rx, ry, '.5', linewidth=.5)
             ax2.plot(mx, my, '.5', linewidth=.5)
             ax3.plot(rx, rz, '.5', linewidth=.5)
@@ -415,27 +400,60 @@ class PreyCap_Simulation:
                                                   fish_basis[1],
                                                   fish_basis[3],
                                                   fish_basis[2])
-                if self.interpolate:
-                    x_prog = np.linspace(
-                        self.fish_xyz[-1][0],
-                        self.fish_xyz[-1][0] + dx,
-                        self.bout_durations[self.bout_counter]).tolist()
-                    y_prog = np.linspace(
-                        self.fish_xyz[-1][1],
-                        self.fish_xyz[-1][1] + dy,
-                        self.bout_durations[self.bout_counter]).tolist()
-                    z_prog = np.linspace(
-                        self.fish_xyz[-1][2],
-                        self.fish_xyz[-1][2] + dz,
-                        self.bout_durations[self.bout_counter]).tolist()
-                    yaw_prog = np.linspace(
-                        self.fish_yaw[-1],
-                        self.fish_yaw[-1] + fish_bout[4],
-                        self.bout_durations[self.bout_counter]).tolist()
-                    pitch_prog = np.linspace(
-                        self.fish_pitch[-1],
-                        self.fish_pitch[-1] + fish_bout[3],
-                        self.bout_durations[self.bout_counter]).tolist()
+                if self.interpolate != 'none':
+                    if self.interpolate == 'kernel':
+                        kernel = normalize_kernel(self.velocity_kernel,
+                                                  self.bout_durations[self.bout_counter])
+                        x_prog = (np.cumsum(dx * kernel) + self.fish_xyz[-1][0]).tolist()
+                        y_prog = (np.cumsum(dy * kernel) + self.fish_xyz[-1][1]).tolist()
+                        z_prog = (np.cumsum(dz * kernel) + self.fish_xyz[-1][2]).tolist()
+                        yp_interp_win = np.min([5, self.bout_durations[self.bout_counter]])
+                        remainder = self.bout_durations[self.bout_counter] - yp_interp_win
+                        yaw_prog = np.linspace(
+                            self.fish_yaw[-1],
+                            self.fish_yaw[-1] + fish_bout[4],
+                            yp_interp_win).tolist()
+                        pitch_prog = np.linspace(
+                            self.fish_pitch[-1],
+                            self.fish_pitch[-1] + fish_bout[3], yp_interp_win).tolist()
+                        yaw_prog += [yaw_prog[-1] for i in range(remainder)]
+                        pitch_prog += [pitch_prog[-1] for i in range(remainder)]
+                        print("YAW LENGTH")
+                        print len(yaw_prog)
+                        print("XYZ LENGTH")
+                        print len(x_prog)
+                        print("kernel length")
+                        print len(kernel)
+                        print("Bout duration")
+                        print self.bout_durations[self.bout_counter]
+                        print("remainder")
+                        print remainder
+                        print("yp interp win")
+                        print yp_interp_win
+
+                        
+                    elif self.interpolate == 'linear':
+                        x_prog = np.linspace(
+                            self.fish_xyz[-1][0],
+                            self.fish_xyz[-1][0] + dx,
+                            self.bout_durations[self.bout_counter]).tolist()
+                        y_prog = np.linspace(
+                            self.fish_xyz[-1][1],
+                            self.fish_xyz[-1][1] + dy,
+                            self.bout_durations[self.bout_counter]).tolist()
+                        z_prog = np.linspace(
+                            self.fish_xyz[-1][2],
+                            self.fish_xyz[-1][2] + dz,
+                            self.bout_durations[self.bout_counter]).tolist()
+                        yaw_prog = np.linspace(
+                            self.fish_yaw[-1],
+                            self.fish_yaw[-1] + fish_bout[4],
+                            self.bout_durations[self.bout_counter]).tolist()
+                        pitch_prog = np.linspace(
+                            self.fish_pitch[-1],
+                            self.fish_pitch[-1] + fish_bout[3],
+                            self.bout_durations[self.bout_counter]).tolist()
+
                     self.fish_xyz += zip(x_prog, y_prog, z_prog)
                     # assures fish can't frontflip or backflip over. 
                     self.fish_pitch += np.clip(pitch_prog, -np.pi, np.pi).tolist()
@@ -443,13 +461,12 @@ class PreyCap_Simulation:
                     self.fish_yaw += np.mod(yaw_prog, 2*np.pi).tolist()
                     for x, y, z, p, yw in zip(x_prog[1:],
                                               y_prog[1:],
-                                              z_prog[1:], pitch_prog[1:], yaw_prog[1:]):
+                                              z_prog[1:], pitch_prog[1:], yaw_prog[1:]):                        
                         fish_basis = fishxyz_to_unitvecs((x,y,z), yw, p)
                         self.fish_bases.append(fish_basis[1])
                     framecounter += self.bout_durations[self.bout_counter]
-
-
-                else:
+                                            
+                elif self.interpolate == 'none':
                     new_xyz = self.fish_xyz[-1] + np.array([dx, dy, dz])
                     self.fish_xyz.append(new_xyz)
                     self.fish_pitch.append(np.clip(self.fish_pitch[-1] + fish_bout[3], -np.pi, np.pi))

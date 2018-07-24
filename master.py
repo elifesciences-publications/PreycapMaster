@@ -2332,13 +2332,15 @@ def hunted_para_descriptor(dim, exp, hd):
                                 delta_yaw]
             if endhunt:
                 bout_descriptor[-1][1] = last_bout
+                para_velocity = bout_descriptor[-1][-2]
+                bdesc_index = -1 * len(hunt_bouts)
                 para_interp_list = [
-                    1.0 / len(bout_descriptor)
-                    for b in bout_descriptor if b[-3] != 0]
+                    1.0 / len(hunt_bouts)
+                    for b in bout_descriptor[bdesc_index:] if b[-3] != 0]
                 prcnt_para_interp = np.sum(para_interp_list)
                 pararec_present_at_outset = np.isfinite(
-                    bout_descriptor[0][7:10]).all()
-                if pararec_present_at_outset and (
+                    bout_descriptor[bdesc_index][7:10]).all()
+                if para_velocity > 1.5 and pararec_present_at_outset and (
                         percent_nans < 1.0/3).all() and (
                         prcnt_para_interp < 1.0 / 3):
                     realfish.hunt_ids.append(hi)
@@ -2350,6 +2352,8 @@ def hunted_para_descriptor(dim, exp, hd):
                     realfish.hunt_results.append(ac)
                     realfish.para_xyz_per_hunt.append(para3D)
                     realfish.hunt_dataframes.append(copy.deepcopy(hunt_df))
+                else:
+                    print('rejected para or too much interp')
                 break
     realfish.exporter()
     csv_data(header, bout_descriptor, 'huntingbouts', exp.directory)
@@ -2771,18 +2775,22 @@ def velocity_kernel(myexp, all_or_hb, hd, dim):
         vp, (
             0, max_len_window-len(vp)),
         mode='constant') for vp in vel_profiles]
-    avg_profile = np.sum(padded_profiles, axis=0) / len(padded_profiles)
-    pl.plot(avg_profile)
+    final_vel_profile = np.sum(padded_profiles, axis=0) / len(padded_profiles)
+    pl.plot(final_vel_profile)
     pl.show()
-    return avg_profile
+    if all_or_hb == 'hunts':
+        np.save('hb_velocity_kernel.npy', final_vel_profile)
+    elif all_or_hb == 'all':
+        np.save('velocity_kernel.npy', final_vel_profile)
+    return final_vel_profile
 
 
 def normalize_kernel(kernel, length):
     shortened_kernel = np.array(kernel[0:length])
     sum_kernel = np.sum(shortened_kernel)
     normed_kernel = shortened_kernel / sum_kernel
-    pl.plot(normed_kernel)
-    pl.show()
+#    pl.plot(normed_kernel)
+#    pl.show()
     return normed_kernel
 
     
@@ -3039,7 +3047,7 @@ if __name__ == '__main__':
 
 #    plot_bout_frames(myexp)
                     
-    vel_ends, tvl = find_velocity_ends(myexp, .05)
-    plot_bout_calls(myexp, vel_ends, tvl)
-
+    # vel_ends, tvl = find_velocity_ends(myexp, .05)
+    # plot_bout_calls(myexp, vel_ends, tvl)
+    hunted_para_descriptor(dim, myexp, hd)
 # 
