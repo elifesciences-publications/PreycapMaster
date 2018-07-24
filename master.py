@@ -773,6 +773,7 @@ class Experiment():
         self.barrierlocation = []
         self.bout_frames = []
         self.bout_durations = []
+        self.bout_durations_tail_only = []
         self.rejected_bouts = []
         self.bout_data = []
         self.bout_flags = []
@@ -1158,158 +1159,16 @@ class Experiment():
         ax1.plot(bts, np.zeros(len(bts)), marker='.', color='b')
         ax2.plot(bts, np.zeros(len(bts)), marker='.', color='b')
         ax1.plot(
-            boutstarts, np.zeros(len(boutstarts)), marker='.', color='m')
+            boutstarts, np.zeros(len(boutstarts)), marker='.', color='c')
         ax2.plot(
-            boutstarts, np.zeros(len(boutstarts)), marker='.', color='m')
-        ax1.plot(boutends, np.zeros(len(boutends)), marker='.', color='k')
-        ax2.plot(boutends, np.zeros(len(boutends)), marker='.', color='k')
+            boutstarts, np.zeros(len(boutstarts)), marker='.', color='c')
+        ax1.plot(boutends, np.zeros(len(boutends)), marker='.', color='m')
+        ax2.plot(boutends, np.zeros(len(boutends)), marker='.', color='m')
         ax1.plot(ta_std)
         ax2.plot(tailang)
         pl.show()
 
 
-    def bout_detector_old(self, plotornot, bout_type):
-
-        def boutfilter_recur(boutlist, winlen):
-            for ind, boutwin in enumerate(sliding_window(2, boutlist)):
-                if boutwin[1] - boutwin[0] < winlen:
-                    del boutlist[ind+1]
-                    break
-            if ind+1 < len(boutlist)-1:
-                boutlist = boutfilter_recur(boutlist, winlen)
-            return boutlist
-            
-        # Start orientation_based bout calls.
-        std_threshold = 5
-
-# consecutive splits lists into chunks depending on whether they are contiuously monotonic.
-# e.g. [1,2,3,5,6] => [1,2,3],[5,6]
-        def consecutive(data, stepsize=1):
-            return np.split(data, np.where(np.diff(data) != stepsize)[0]+1)
-        
-        ha_winlength = 20
-        yaw_all = unit_to_angle(
-            filter_uvec(
-                ang_to_unit(self.fishdata.headingangle), 1))
-        ha_windows = sliding_window(ha_winlength,
-                                    yaw_all)
-        kernel = np.concatenate((np.full(ha_winlength / 2, -1),
-                                 np.full(ha_winlength / 2, 1)), axis=0)
-        orientation_track = []
-        for hw in ha_windows:
-            kernel_sum = np.abs(np.sum(np.array(hw) * kernel))
-            orientation_track.append(kernel_sum)
-        orientation_track = np.full(
-            kernel.shape[0] / 2, np.nan).tolist() + orientation_track
-        o_max_inds = scipy.signal.argrelmax(
-            np.array(orientation_track))[0]
-        bouts_orientation = [om
-                             for om in o_max_inds
-                             if orientation_track[om] > 100]
-        pl.plot(bouts_orientation, np.zeros(len(bouts_orientation)),
-                marker='.', ms=15, color='g')
-        pl.plot(yaw_all, 'b')
-        pl.plot(orientation_track, 'r')
-        pl.title('Bouts from Orientation')
-        tailanglesum = [tail[-1] for tail in self.fishdata.tailangle]
-        tailangle_std = []
-        var_inds = []
-        var_win_len = 5
-        for varind, tailwin in enumerate(
-                sliding_window(var_win_len, tailanglesum)):
-            tailangle_std.append(np.abs(np.nanstd(tailwin)))
-        tailangle_std = np.array(tailangle_std)
-        noise = np.nanmedian([tailangle_std[ind]
-                              for ind in scipy.signal.argrelmin(
-                                      tailangle_std, order=10)[0]])
-        print('NOISE')
-        print noise
-        for ind, varwindow in enumerate(tailangle_std):
-            if varwindow > std_threshold*noise:
-                var_inds.append(ind)
-        var_inds = [np.ceil(var_win_len / 2).astype(np.int) + v for v in var_inds]
-        consecutive_slices = consecutive(var_inds)
-# consecutive chunks the variance indices into continuous runs. allows you to keep only
-# the first. 
-# have to be at least 3 consecutive frames of high var windows for a bout (i.e. ~50 ms long)
-        consecutive_thresh = 3
-
-# this function will be used if you want to use 10 frame discrete windows        
-        def assign_fixedwin_bouts(consecutive_slices, consecutive_thresh):
-            consecutive_thresh = self.refract
-            bouts_tail = []
-            for cs in consecutive_slices:
-                if cs.shape[0] > consecutive_thresh:
-                    bouts_in_slice = range(
-                        1 + (cs.shape[0] / self.minboutlength))
-                    for b in bouts_in_slice:
-                        bouts_tail.append(cs[b * self.minboutlength])
-            return bouts_tail
-
-        bouts_tail = [a[0]
-                      for a in consecutive_slices
-                      if a.shape[0] >= consecutive_thresh]
-
-        self.bout_durations = [b.shape[0]
-                               for b in consecutive_slices
-                               if b.shape[0] >= consecutive_thresh]
-        
-        if bout_type == 'tail':
-            self.bout_frames = bouts_tail
-# #            self.bout_frames = boutfilter_recur(
-# #               copy.deepcopy(bouts_tail), self.minboutlength)
-#         elif bout_type == 'orientation':
-#  #           self.bout_frames = boutfilter_recur(
-# #                copy.deepcopy(bouts_orientation))
-#             self.bout_durations = np.full(len(self.bout_frames), np.nan)
-#         elif bout_type == 'combined':
-#             self.bout_frames = boutfilter_recur(
-#                 sorted(
-#                     copy.deepcopy(
-#                         bouts_tail) + copy.deepcopy(bouts_orientation)),
-#                 self.minboutlength)
-#             temp_bd = []
-#             tailcounter = 0
-#             for bf in self.bout_frames:
-#                 if bf in bouts_tail:
-#                     temp_bd.append(self.bout_durations[tailcounter])
-#                     tailcounter += 1
-#                 else:
-#                     temp_bd.append(np.nan)
-#             self.bout_durations = temp_bd
-
-        print("Bouts from Bout Detector")
-        print(len(self.bout_durations))
-
-        if plotornot:
-            fig2 = pl.figure()
-            ax2 = fig2.add_subplot(111)
-            ax2.plot(tailanglesum)
-            ax2.plot(
-                bouts_tail,
-                np.zeros(len(bouts_tail)),
-                marker='.',
-                ms=15,
-                color='g')
-            ax2.plot(
-                bouts_orientation,
-                5*np.ones(len(bouts_orientation)),
-                marker='.',
-                ms=15,
-                color='k')
-            ax2.plot(
-                self.bout_frames,
-                10*np.ones(len(self.bout_frames)),
-                marker='.',
-                ms=15,
-                color='m')
-            ax2.plot(tailangle_std, color='r')
-            pl.show()
-            print('Checking Bout Frames')
-            print(self.bout_frames[-20:])
-            print(len(self.bout_frames))
-
-# Above are all bout related functions. Here are para related functions. 
 
     def para_during_hunt(self, index, movies, hunt_wins):
         cv2.destroyAllWindows()
@@ -1669,7 +1528,7 @@ class Experiment():
                 if not nw_begin and not nw_end and pct_interp <= .1:
                     filt_sb.append(sbout)
         return filt_sb
-                            
+
     def all_spherical_bouts(self):
         # there is no interbout info for the last bout so ignore it.
         spherical_bouts = []
@@ -2299,12 +2158,12 @@ def bouts_during_hunt(hunt_ind, dimred, exp, plotornot):
              np.zeros(len(bouts_tail)),
              marker='.',
              ms=10,
-             color='m')
+             color='c')
     ax2.plot(bouts_tail_end,
              np.zeros(len(bouts_tail_end)),
              marker='.',
              ms=10,
-             color='c')
+             color='m')
     for ind, typ in enumerate(dim.cluster_membership[firstind:secondind+1]):
         ax2.text(bouts_tail[ind], -.5, str(typ))
     pitch_during_hunt = exp.spherical_pitch[start:end]
@@ -2880,6 +2739,144 @@ def fixmappings(exp, dim, hd):
     hunted_para_descriptor(dim, exp, hd)
     para_stimuli(dim, exp, hd)
 
+    
+# before implementing this in full in the bout detector,
+# add these extensions to the current bout_durations as
+# indicated in the main line comments.(i.e. first
+# create a new myexp and then add the bout extension). 
+# then run hunted_para_descriptor which will output
+# a new realfish object for the modeling.
+# 
+
+
+def velocity_kernel(myexp, all_or_hb, hd, dim):
+
+    filtV = gaussian_filter(myexp.fishdata.vectV, 1)
+    vel_profiles = []
+    if all_or_hb == 'all':
+        for bf, bd in zip(myexp.bout_frames, myexp.bout_durations):
+            vel_profiles.append(filtV[bf:bf+bd])
+    elif all_or_hb == 'hunts':
+        h_inds = hd.hunt_ind_list
+        huntbouts = np.concatenate(
+            [range(dim.hunt_wins[h][0], dim.hunt_wins[h][1]+1)
+             for h in h_inds], axis=0)
+        huntframes = [myexp.bout_frames[hb] for hb in huntbouts]
+        bd_hunts = [myexp.bout_durations[hb] for hb in huntbouts]
+        for hf, hd in zip(huntframes, bd_hunts):
+            vel_profiles.append(filtV[hf:hf+hd])
+    max_len_window = np.max([len(vp) for vp in vel_profiles])
+    print max_len_window
+    padded_profiles = [np.pad(
+        vp, (
+            0, max_len_window-len(vp)),
+        mode='constant') for vp in vel_profiles]
+    avg_profile = np.sum(padded_profiles, axis=0) / len(padded_profiles)
+    pl.plot(avg_profile)
+    pl.show()
+    return avg_profile
+
+
+def normalize_kernel(kernel, length):
+    shortened_kernel = np.array(kernel[0:length])
+    sum_kernel = np.sum(shortened_kernel)
+    normed_kernel = shortened_kernel / sum_kernel
+    pl.plot(normed_kernel)
+    pl.show()
+    return normed_kernel
+
+    
+def find_velocity_ends(myexp, v_thresh):
+    bd_plus = []
+    filt_v = gaussian_filter(myexp.fishdata.vectV, 1)
+    interbouts = np.diff(myexp.bout_frames)
+    thresh_vlist = []
+    for bout_ind, (bf, bd) in enumerate(
+            zip(myexp.bout_frames, myexp.bout_durations)):
+        if bout_ind == interbouts.shape[0]:
+            bd_plus.append(bd)
+            break
+        v_win = filt_v[bf:bf+bd]
+        v_max = np.max(v_win)
+        v_argmax = np.argmax(v_win)
+        v_start = filt_v[bf]
+        dv = v_max - v_start
+        thresh_v = (dv * v_thresh) + v_start
+        # i is the distance from bf to the threshV.
+        # if i is less than the interbout,
+        # add i - bd to the prev called bout duration
+        for i, v in enumerate(filt_v[bf:]):
+            # can only go in here if v requirements are satisfied. 
+            if v <= thresh_v and i > v_argmax:
+                candidate_bd_extension = i - bd
+                if candidate_bd_extension <= 0:
+                    bd_plus.append(0)
+                elif i < interbouts[bout_ind]:
+                    bd_plus.append(candidate_bd_extension)
+                else:
+                    bd_plus.append(interbouts[bout_ind] - 1 - bd)
+                thresh_vlist.append(thresh_v)
+                break
+    return bd_plus, thresh_vlist
+
+
+# First you make calls based purely on tail variance.
+# This defines the fact that a movement occurred.
+# Tail movement is far more reliable for a movement
+# b/c velocity of hunt bouts is so slow (w/ rotations)
+# that you would miss them if you thresholded on velocity
+# however, there IS a dynamic to the velocity once you've
+# defined that a movement occurred. call find_velocity_end
+# on the bouts. it will return a series of extensions to the
+# current bout set. each extension must be added to the
+# current bout_durations if and only if the total bout duration
+# is less than the interbout. if it is not, make the bout
+# duration one less than the interbout. 
+
+# BE SURE TO RE-KICK OUT ANY OVERLAP
+def plot_bout_calls(myexp, extension, tvl, *hunt_win):
+
+    if hunt_win != ():
+        start = hunt_win[0][0]
+        end = hunt_win[0][1]
+        bout_frames = np.array(
+            myexp.bout_frames[start:end]) - myexp.bout_frames[start]
+        b_durs = np.array(myexp.bout_durations[start:end])
+        extension = extension[start:end]
+        print("threshold velocity list")
+        print tvl[start:end]
+    else:
+        start = 0
+        end = -1
+        bout_frames = np.array(myexp.bout_frames) - myexp.bout_frames[start]
+        b_durs = np.array(myexp.bout_durations)
+        
+    bdurs = b_durs + extension
+    tailang = [
+        tail[-1] for tail in myexp.fishdata.tailangle[
+            myexp.bout_frames[start]:myexp.bout_frames[end]]]
+#    ta_std = [np.abs(np.nanstd(tw)) for tw in sliding_window(5, tailang)]
+    pl.plot(tailang)
+    pl.plot(gaussian_filter(
+        myexp.fishdata.vectV[
+            myexp.bout_frames[start]:myexp.bout_frames[end]], 1))
+    pl.plot(
+        bout_frames, np.zeros(len(bout_frames)),
+        marker='.', linestyle='None',
+        color='c')
+    pl.plot(
+        [b+d for b, d in zip(
+            bout_frames, bdurs)],
+        np.zeros(len(bout_frames)),
+        marker='.', linestyle='None', color='m')
+    pl.plot(
+        [b+d for b, d in zip(
+            bout_frames, b_durs)],
+        np.zeros(len(bout_frames)),
+        marker='.', linestyle='None', color='k')
+    pl.show()
+
+
 
 if __name__ == '__main__':
 
@@ -2963,8 +2960,9 @@ if __name__ == '__main__':
     drct = os.getcwd() + '/' + fish_id
     new_exp = False
     dimreduce = False
+    skip_import = True
     
-    if new_exp:
+    if new_exp and not skip_import:
         # HERE IF YOU WANT TO CLUSTER MANY FISH IN THE FUTURE, MAKE A DICT OF FISH_IDs AND RUN THROUGH THIS LOOP. MAY WANT TO CLUSTER MORE FISH TO PULL OUT STRIKES VS ABORTS. 
         # if num_fish != 1:
         #     FISH ID DICTIONARY HERE, LOOP THROUGH
@@ -2986,13 +2984,26 @@ if __name__ == '__main__':
         bouts_flags.exporter()
         print("Creating Unit Vectors")
         myexp.create_unit_vectors()
+# HERE IS WHERE YOU WILL REASSIGN THE BOUT DURATIONS
+# BY CALLING FIND_VELOCITY_ENDS AND ADDING ITS RETURN
+# TO MYEXP.BOUT_DURATIONS. FLAG NEW_EXP = TRUE, LEAVE THE DIM
+        vel_extensions, tvl = find_velocity_ends(myexp, .1)
+
+# YOUR MOVEMENT IS COMPLETE IF YOU STOP
+# (i.e. tail beat ends or velocity back to .05)
+# OR IF YOU MAKE A NEW MOVE
+# This accounts for pure rotation where there is no vel bump
+# Also, you can't terminate on velocity b/c the tail may still be
+# rotating the fish. Only terminate on velocity if fish still cruising. 
+        myexp.bout_durations_tail_only = copy.deepcopy(myexp.bout_durations)
+        myexp.bout_durations = np.array(myexp.bout_durations) + vel_extensions
         myexp.all_spherical_bouts()
         myexp.exporter()
 
-    else:
+    elif not new_exp and not skip_import:
         myexp = pickle.load(open(drct + '/master.pkl', 'rb'))
 
-    if dimreduce:
+    if dimreduce and not skip_import:
         dim = DimensionalityReduce(bout_dict,
                                    flag_dict,
                                    all_varbs_dict,
@@ -3000,28 +3011,35 @@ if __name__ == '__main__':
         dim.concatenate_records()
         dim.dim_reduction(2)
         dim.exporter()
-    else:
+    elif not dimreduce and not skip_import:
         dim = pickle.load(open(drct + '/dim_reduce.pkl', 'rb'))
 
-    clear_hunts = raw_input('New hunt windows?: ')
-    if clear_hunts == 'y':
-        dim.clear_huntwins()
-        dim.find_hunts([1], [0])
-        dim.exporter()
-        hd = Hunt_Descriptor(drct)
-    else:
-        import_hd = raw_input('Import Hunt Descriptor?: ')
-        if import_hd == 'y':
-            hd = hd_import(myexp.directory)
-        elif import_hd == 'n':
+    if not skip_import:
+        clear_hunts = raw_input('New hunt windows?: ')
+        if clear_hunts == 'y':
+            dim.clear_huntwins()
+            dim.find_hunts([1], [0])
+            dim.exporter()
             hd = Hunt_Descriptor(drct)
+        else:
+            import_hd = raw_input('Import Hunt Descriptor?: ')
+            if import_hd == 'y':
+                hd = hd_import(myexp.directory)
+            elif import_hd == 'n':
+                hd = Hunt_Descriptor(drct)
+            
+    # sbouts = myexp.all_spherical_bouts()
+    # fsb = myexp.filtered_spherical_bouts(sbouts)
+    # # spherical huntbouts
+    # shbs = myexp.spherical_huntbouts(fsb, hd, dim)
+    # # spherical nonhuntbouts
+    # nhbs = [f for f in fsb if f not in shbs]
+    # np.save('spherical_bouts.npy', fsb)
+    # np.save('spherical_huntbouts.npy', shbs)
 
-    sbouts = myexp.all_spherical_bouts()
-    fsb = myexp.filtered_spherical_bouts(sbouts)
-    # spherical huntbouts
-    shbs = myexp.spherical_huntbouts(fsb, hd, dim)
-    # spherical nonhuntbouts
-    nhbs = [f for f in fsb if f not in shbs]
-    np.save('spherical_bouts.npy', fsb)
-    np.save('spherical_huntbouts.npy', shbs)
+#    plot_bout_frames(myexp)
+                    
+    vel_ends, tvl = find_velocity_ends(myexp, .05)
+    plot_bout_calls(myexp, vel_ends, tvl)
 
+# 

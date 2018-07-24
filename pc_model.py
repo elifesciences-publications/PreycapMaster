@@ -4,6 +4,7 @@ import numpy as np
 import pickle
 from matplotlib.colors import Normalize, ListedColormap
 from matplotlib import pyplot as pl
+from matplotlib import gridspec
 import matplotlib.cm as cm
 import seaborn as sb
 import pandas as pd
@@ -59,12 +60,15 @@ class PreyCap_Simulation:
         self.bout_durations = self.fishmodel.bout_durations
         self.bout_counter = 0
         self.interpolate = True
-        
-        
-    def score_model(self, plot_or_not):
+        self.strikelist = []
+        self.framecounter = 0
+        self.hunt_result = 0
+        self.pcoords = []
+                
+    def score_model(self, plot_or_not, *sim):
         # call this with flag that para is REAL (b/c have real fish record to compare to)
         # if flag is sim, avoid the real parts or ignore them. 
-        num_bouts_in_real = len(self.fishmodel.interbouts)
+
         def yaw_fix(dy_input):
             dyaw = []
             for dy in dy_input:
@@ -77,22 +81,34 @@ class PreyCap_Simulation:
                         dyaw.append(2*np.pi - dy)
             return np.array(dyaw)
 
-        para_vwin = self.fishmodel.rfo.firstbout_para_intwin
-        fish_init_xyz = [self.fish_xyz[0] for i in range(para_vwin)]
-        fish_init_pitch = [self.fish_pitch[0] for i in range(para_vwin)]
-        fish_init_yaw = [self.fish_yaw[0] for i in range(para_vwin)]
-        frames_in_model = len(self.fish_xyz) - para_vwin
-        start = self.realframes_start + para_vwin
-        realxyz = fish_init_xyz + self.fishmodel.rfo.fish_xyz[
-            start:start + frames_in_model]
-        realyaw = fish_init_yaw + self.fishmodel.rfo.yaw_all[
+        if sim == ():
+            m1_numbouts = len(self.fishmodel.interbouts)
+            para_vwin = self.fishmodel.rfo.firstbout_para_intwin
+            fish_init_xyz = [self.fish_xyz[0] for i in range(para_vwin)]
+            fish_init_pitch = [self.fish_pitch[0] for i in range(para_vwin)]
+            fish_init_yaw = [self.fish_yaw[0] for i in range(para_vwin)]
+            frames_in_model = len(self.fish_xyz) - para_vwin
+            start = self.realframes_start + para_vwin
+            m1_xyz = fish_init_xyz + self.fishmodel.rfo.fish_xyz[
+                start:start + frames_in_model]
+            m1_yaw = fish_init_yaw + self.fishmodel.rfo.yaw_all[
+                start:start + frames_in_model].tolist()
+            m1_pitch = fish_init_pitch + self.fishmodel.rfo.pitch_all[
             start:start + frames_in_model].tolist()
-        realpitch = fish_init_pitch + self.fishmodel.rfo.pitch_all[
-            start:start + frames_in_model].tolist()
-        model_xyz = [np.array(xyz) for xyz in self.fish_xyz]
-        mag_diff_xyz = np.array([np.linalg.norm(r-m) for r,m in zip(realxyz, model_xyz)])
-        diff_pitch = np.around(realpitch, 3) - np.around(np.array(self.fish_pitch), 3)
-        dy_raw = np.around(realyaw, 3) - np.around(np.array(self.fish_yaw), 3)
+        else:
+            sim = sim[0]
+            m1_numbouts = sim.bout_counter
+            m1_yaw = np.array(sim.fish_yaw)
+            m1_pitch = np.array(sim.fish_pitch)
+            print('pitch vs xyz len')
+            print(m1_pitch.shape)
+            m1_xyz = [np.array(xyz) for xyz in sim.fish_xyz]
+            print(len(m1_xyz))
+        m2_xyz = [np.array(xyz) for xyz in self.fish_xyz]
+        m2_numbouts = self.bout_counter
+        mag_diff_xyz = np.array([np.linalg.norm(r-m) for r,m in zip(m1_xyz, m2_xyz)])
+        diff_pitch = [b-a for a, b in zip(np.around(m1_pitch, 3), np.around(np.array(self.fish_pitch), 3))]
+        dy_raw = [b-a for a, b in zip(np.around(m1_yaw, 3), np.around(np.array(self.fish_yaw), 3))]
         diff_yaw = yaw_fix(dy_raw)
         if np.sum(mag_diff_xyz) != 0:
             norm_md = mag_diff_xyz / np.std(mag_diff_xyz)
@@ -107,57 +123,113 @@ class PreyCap_Simulation:
         else:
             norm_yaw = diff_yaw
         
-
         score = np.sum(norm_md + np.abs(norm_pitch) + np.abs(norm_yaw))
-
-        total_xyz_travel_real =  np.sum(np.array([np.linalg.norm(v2-v1) for v1,v2 in sliding_window(2, realxyz)]))
-        pitchtotal_real = np.sum(np.abs(np.diff(realpitch)))
-        yawtotal_real = np.sum(np.abs(yaw_fix(np.diff(realyaw))))
-        total_xyz_travel_mod =  np.sum(np.array([np.linalg.norm(v2-v1) for v1,v2 in sliding_window(2, model_xyz)]))
-        pitchtotal_mod = np.sum(np.abs(np.diff(self.fish_pitch)))
-        yawtotal_mod = np.sum(np.abs(yaw_fix(np.diff(self.fish_yaw))))
+        total_xyz_travel_m1 =  np.sum(np.array([np.linalg.norm(v2-v1) for v1,v2 in sliding_window(2, m1_xyz)]))
+        pitchtotal_m1 = np.sum(np.abs(np.diff(m1_pitch)))
+        yawtotal_m1 = np.sum(np.abs(yaw_fix(np.diff(m1_yaw))))
+        total_xyz_travel_m2 =  np.sum(np.array([np.linalg.norm(v2-v1) for v1,v2 in sliding_window(2, m2_xyz)]))
+        pitchtotal_m2 = np.sum(np.abs(np.diff(self.fish_pitch)))
+        yawtotal_m2 = np.sum(np.abs(yaw_fix(np.diff(self.fish_yaw))))
                                
-        
         # MAKE SURE YOU IMPLEMENT MAX AND MIN ALT IN MODEL.
         # CAN ALSO MAKE YAW A MOD NP.PI
         if plot_or_not:
-            rx = [r[0] for r in realxyz]
-            ry = [r[1] for r in realxyz]
-            rz = [r[2] for r in realxyz]
-            mx = [m[0] for m in model_xyz]
-            my = [m[1] for m in model_xyz]
-            mz = [m[2] for m in model_xyz]
+            # zip keeps the scales the same
+            rx = [r[0] for r, m in zip(m1_xyz, m2_xyz)]
+            ry = [r[1] for r, m in zip(m1_xyz, m2_xyz)]
+            rz = [r[2] for r, m in zip(m1_xyz, m2_xyz)]
+            mx = [m[0] for r, m in zip(m1_xyz, m2_xyz)]
+            my = [m[1] for r, m in zip(m1_xyz, m2_xyz)]
+            mz = [m[2] for r, m in zip(m1_xyz, m2_xyz)]
             cmap1 = pl.get_cmap('seismic')
             norm1 = Normalize(vmin=0, vmax=len(rx))
             scalarMap1 = cm.ScalarMappable(norm=norm1, cmap=cmap1)
             rgba_vals1 = scalarMap1.to_rgba(range(len(rx)))
-            cmap2 = pl.get_cmap('gnuplot')
-            norm2 = Normalize(vmin=0, vmax=len(rx))
+            cmap2 = pl.get_cmap('seismic')
+            norm2 = Normalize(vmin=0, vmax=len(mx))
             scalarMap2 = cm.ScalarMappable(norm=norm2, cmap=cmap2)
-            rgba_vals2 = scalarMap2.to_rgba(range(len(rx)))
-            fig, (ax1, ax2, ax3) = pl.subplots(1, 3, figsize=(6, 6))
-            ax1.plot(rx, ry, '.5', linewidth=.5)
-            ax1.plot(mx, my, '.5', linewidth=.5)
-            ax2.plot(rx, rz, '.5', linewidth=.5)
-            ax2.plot(mx, mz, '.5', linewidth=.5)
-            ax3.plot(realyaw, realpitch, '.5', linewidth=.5)
-            ax3.plot(self.fish_yaw, self.fish_pitch, '.5', linewidth=.5)
+            rgba_vals2 = scalarMap2.to_rgba(range(len(mx)))
+            bout_times = self.interbouts[self.interbouts < len(rx)]
+            bout_ends = self.bout_durations + self.interbouts
+            bout_ends = bout_ends[bout_ends < len(rx)]
+            
+
+            
+            
+            fig = pl.figure(figsize=(6,6))
+            gs = gridspec.GridSpec(4, 4)
+            ax1 = fig.add_subplot(gs[0:2,0:2])
+            ax2 = fig.add_subplot(gs[2:, 0:2])
+            ax3 = fig.add_subplot(gs[2:, 2:])
+            ax4 = fig.add_subplot(gs[0:2,2:])
+            ax1.plot(rx, 'r', linewidth=1)
+            ax1.plot(mx, 'r', alpha=.5, linewidth=1)
+            ax1.plot(ry, 'g', linewidth=1) 
+            ax1.plot(my, 'g', alpha =.5, linewidth=1)
+            ax1.plot(rz, 'b', linewidth=1) 
+            ax1.plot(mz, 'b', alpha=.5, linewidth=1)
+            ax1.plot(bout_times, [rx[bt] for bt in bout_times], 'c', marker='.', linestyle='None')
+            ax1.plot(bout_times, [ry[bt] for bt in bout_times], 'c', marker='.', linestyle='None')
+            ax1.plot(bout_times, [rz[bt] for bt in bout_times], 'c', marker='.', linestyle='None')
+            ax1.plot(bout_times, [rx[bt] for bt in bout_times], 'c', marker='.', linestyle='None')
+            ax1.plot(bout_times, [ry[bt] for bt in bout_times], 'c', marker='.', linestyle='None')
+            ax1.plot(bout_times, [rz[bt] for bt in bout_times], 'c', marker='.', linestyle='None')
+            ax1.plot(bout_ends, [rx[bt] for bt in bout_ends], 'm', marker='.', linestyle='None')
+            ax1.plot(bout_ends, [ry[bt] for bt in bout_ends], 'm', marker='.', linestyle='None')
+            ax1.plot(bout_ends, [rz[bt] for bt in bout_ends], 'm', marker='.', linestyle='None')
+            ax1.plot(bout_ends, [rx[bt] for bt in bout_ends], 'm', marker='.', linestyle='None')
+            ax1.plot(bout_ends, [ry[bt] for bt in bout_ends], 'm', marker='.', linestyle='None')
+            ax1.plot(bout_ends, [rz[bt] for bt in bout_ends], 'm', marker='.', linestyle='None')
+
+
+            
+            ax1.set_title('XYZ vs T')
+
+            ax4.plot(m1_yaw, 'r', linewidth=1)
+            ax4.plot(self.fish_yaw, 'r', linewidth=1, alpha=.5)
+            ax4.plot(m1_pitch, 'y', linewidth=1)
+            ax4.plot(self.fish_pitch, 'y', linewidth=1, alpha=.5)
+            ax4.plot(bout_times, [self.fish_yaw for bt in bout_times], 'c', marker='.', linestyle='None')
+            ax4.plot(bout_times, [self.fish_pitch for bt in bout_times], 'c', marker='.', linestyle='None')
+            ax4.plot(bout_ends, [self.fish_yaw for bt in bout_ends], 'm', marker='.', linestyle='None')
+            ax4.plot(bout_ends, [self.fish_pitch for bt in bout_ends], 'm', marker='.', linestyle='None')
+
+            ax4.set_title('Yaw (Red), Pitch (Yellow)')
+
+            ax2.plot(rx, ry, '.5', linewidth=.5)
+            ax2.plot(mx, my, '.5', linewidth=.5)
+            ax3.plot(rx, rz, '.5', linewidth=.5)
+            ax3.plot(mx, mz, '.5', linewidth=.5)
 
             for i in range(len(rx)):
-                ax1.plot(rx[i], ry[i], color=rgba_vals1[i], marker='.')
-                ax1.plot(mx[i], my[i], color=rgba_vals2[i], marker='.')
-                ax2.plot(rx[i], rz[i], color=rgba_vals1[i], marker='.')
-                ax2.plot(mx[i], mz[i], color=rgba_vals2[i], marker='.')
-            ax1.axis('square')
-            ax2.axis('square')
-            ax3.axis('square')
+                ax2.plot(rx[i], ry[i], color=rgba_vals1[i], marker='.')
+                ax3.plot(rx[i], rz[i], color=rgba_vals1[i], marker='.')
+            for j in range(len(mx)):
+                ax2.plot(mx[j], my[j], color=rgba_vals2[j], marker='^', ms=3)
+                ax3.plot(mx[j], mz[j], color=rgba_vals2[j], marker='^', ms=3)
+
+                
+            ax2.set_title('XY')
+            ax3.set_title('XZ')
             pl.tight_layout()
-            pl.savefig('score.pdf')
+            pl.savefig('xyz.pdf')                        
+            pl.cla()
+#            ax1.set_title('XY')
+
+ #           ax1.axis('square')
+#            ax2.axis('square')
+#            ax3.axis('square')
+ #           ax4.axis('square')
+
+
+
+
+
             # score should also yield total distance traveled in the hunt,
             # also must normalize for large yaw shifts due to circularity of the measure. 
             # i.e. if diff > pi, fix. 
             
-        return score, total_xyz_travel_real, total_xyz_travel_mod, num_bouts_in_real, self.bout_counter
+        return score, total_xyz_travel_m1, total_xyz_travel_m2, m1_numbouts, m2_numbouts
         
     def create_para_trajectory(self):
 
@@ -252,15 +324,9 @@ class PreyCap_Simulation:
                 print("hunt epoch complete w/out strike")
                 hunt_result = 2
                 break
-
-            # could add in a 4th condition where para has left field of view. simply abs(para_az) > pi 
             
             if self.fishmodel.linear_predict_para or self.fishmodel.boutbound_prediction:
                 if self.fishmodel.boutbound_prediction:
-                    # if framecounter not greater than future_frame, don't update model_para_xyz.
-                    # PROBLEM IS FIRST BOUT HAPPENS BEFORE FUTURE FRAME. fut frame is 10, bout is at 5.
-                    # i think the right answer is you change future_frame like below, but don't make the
-                    # model updates based on the conditional. 
                     if framecounter >= future_frame:
                         future_frame = framecounter + self.fishmodel.predict_forward_frames
                     if not self.fishmodel.linear_predict_para:
@@ -277,6 +343,7 @@ class PreyCap_Simulation:
 
             else:
                 self.model_para_xyz = [px[framecounter], py[framecounter], pz[framecounter]]
+
             self.fishmodel.current_target_xyz = self.model_para_xyz
             
             para_spherical = p_map_to_fish(fish_basis[1],
@@ -285,8 +352,7 @@ class PreyCap_Simulation:
                                            fish_basis[2],
                                            self.model_para_xyz, 
                                            0)
-            # If project 10 frames forward with known XYZ, futureframe = framecoutner + 10
-            # model_para_xyz = [px[futureframe], py[futureframe], pz[futureframe]]
+
             p_az_hist.append(para_spherical[0])
             p_alt_hist.append(para_spherical[1])
             p_dist_hist.append(para_spherical[2])
@@ -341,7 +407,14 @@ class PreyCap_Simulation:
                     break
                 else:
                     last_finite_pvarbs = copy.deepcopy(para_varbs)
-                
+
+                fish_bout = self.fishmodel.model(para_varbs)
+                dx, dy, dz = sphericalbout_to_xyz(fish_bout[0],
+                                                  fish_bout[1],
+                                                  fish_bout[2],
+                                                  fish_basis[1],
+                                                  fish_basis[3],
+                                                  fish_basis[2])
                 if self.interpolate:
                     x_prog = np.linspace(
                         self.fish_xyz[-1][0],
@@ -364,8 +437,10 @@ class PreyCap_Simulation:
                         self.fish_pitch[-1] + fish_bout[3],
                         self.bout_durations[self.bout_counter]).tolist()
                     self.fish_xyz += zip(x_prog, y_prog, z_prog)
-                    self.fish_pitch += pitch_prog
-                    self.fish_yaw += yaw_prog
+                    # assures fish can't frontflip or backflip over. 
+                    self.fish_pitch += np.clip(pitch_prog, -np.pi, np.pi).tolist()
+                    # assures yaw coords stay 0 to 2pi w no negatives or > 2pi
+                    self.fish_yaw += np.mod(yaw_prog, 2*np.pi).tolist()
                     for x, y, z, p, yw in zip(x_prog[1:],
                                               y_prog[1:],
                                               z_prog[1:], pitch_prog[1:], yaw_prog[1:]):
@@ -377,8 +452,8 @@ class PreyCap_Simulation:
                 else:
                     new_xyz = self.fish_xyz[-1] + np.array([dx, dy, dz])
                     self.fish_xyz.append(new_xyz)
-                    self.fish_pitch.append(self.fish_pitch[-1] + fish_bout[3])
-                    self.fish_yaw.append(self.fish_yaw[-1] + fish_bout[4])
+                    self.fish_pitch.append(np.clip(self.fish_pitch[-1] + fish_bout[3], -np.pi, np.pi))
+                    self.fish_yaw.append(np.mod(self.fish_yaw[-1] + fish_bout[4], 2*np.pi))
                     framecounter += 1
                 endtime_last_bout = framecounter                    
                 self.bout_counter += 1
@@ -386,6 +461,7 @@ class PreyCap_Simulation:
             else:
                 if (self.fishmodel.modchoice == 'Real Coords') and (
                         framecounter >= self.fishmodel.rfo.firstbout_para_intwin):
+                    # add 1 b/c of pre-population in model. worked all this out on paper
                     self.fish_xyz.append(self.fishmodel.rfo.fish_xyz[framecounter + self.realframes_start + 1])
                     self.fish_pitch.append(self.fishmodel.rfo.pitch_all[framecounter + self.realframes_start + 1])
                     self.fish_yaw.append(self.fishmodel.rfo.yaw_all[framecounter + self.realframes_start + 1])
@@ -395,7 +471,7 @@ class PreyCap_Simulation:
                             break
                         else:
                             last_finite_pvarbs = copy.deepcopy(para_varbs)
-                        endtime_last_bout = framecounter + self.bout_durations[self.bout_counter]                            
+                        endtime_last_bout = framecounter + self.bout_durations[self.bout_counter]              
                         self.bout_counter += 1
                 else:    
                     self.fish_xyz.append(self.fish_xyz[-1])
@@ -404,13 +480,13 @@ class PreyCap_Simulation:
                 framecounter += 1
         if hunt_result == 3:
             para_varbs = last_finite_pvarbs
-        np.save('para_simulation.npy', [px[0:framecounter], py[0:framecounter], pz[0:framecounter]])
-        np.save('origin_model.npy', self.fish_xyz[:-1])
-        np.save('uf_model.npy', self.fish_bases[:-1])                
+        self.pcoords = [px[0:framecounter], py[0:framecounter], pz[0:framecounter]]
         if hunt_result == 1:
-            np.save('strikelist.npy', np.zeros(framecounter-1).tolist() + [1])                    
+            self.strikelist = np.zeros(framecounter-1).tolist() + [1]
         else:
-            np.save('strikelist.npy', np.zeros(framecounter))
+            self.strikelist = np.zeros(framecounter)
+        self.framecounter = framecounter
+        self.hunt_result = hunt_result
         return self.bout_counter, para_varbs, num_frames_out_of_view, hunt_result
 
     
@@ -740,14 +816,34 @@ def realhunt_allframes(rfo, hunt_id):
     np.save('ufish_origin.npy', rfo.fish_xyz[frames[0]:frames[1]])
     np.save('3D_paracoords.npy', para_xyz)
 
+def make_vr_movies(sim1, sim2):
+    hunt_id = sim1.fishmodel.rfo.hunt_ids[sim1.fishmodel.hunt_ind]
+    realhunt_allframes(sim1.fishmodel.rfo, hunt_id)
+    np.save('para_simulation1.npy', sim1.pcoords)
+    np.save('origin_model1.npy', sim1.fish_xyz[:-1])
+    np.save('uf_model1.npy', sim1.fish_bases[:-1])                
+    np.save('strikelist1.npy', sim1.strikelist)
+    np.save('para_simulation2.npy', sim2.pcoords)
+    np.save('origin_model2.npy', sim2.fish_xyz[:-1])
+    np.save('uf_model2.npy', sim2.fish_bases[:-1])                
+    np.save('strikelist2.npy', sim2.strikelist)
+
+def score_and_view(simlist, ind1, ind2):
+    sim1 = simlist[ind1]
+    sim2 = simlist[ind2]
+    plot_or_not = True
+    sim1.score_model(plot_or_not, sim2)
+    make_vr_movies(sim1, sim2)
+    
 def model_wrapper(rfo, strike_params, para_model, model_params, *hunt_id):
     print("Executing Models")
+    sim_list = []
     bout_container = [[] for i in range(len(model_params))]
     prev_interbouts = []
     prev_bout_durations = []
     sequence_length = 10000
     p_xyz = []
-    pause_wrapper = True
+    pause_wrapper = False
     # this will iterate through hunt_ids and through types of Fishmodel.
     # function takes a real_fish_object and creates a Simulation for each hunt id and each model.
     # have to have the Sim output a -1 or something if the fish never catches the para
@@ -812,6 +908,7 @@ def model_wrapper(rfo, strike_params, para_model, model_params, *hunt_id):
             prev_interbouts = copy.deepcopy(sim.fishmodel.interbouts)
             prev_boutdurations = copy.deepcopy(sim.fishmodel.bout_durations)                
             bout_container[mi].append(bouts_and_p_params)
+            sim_list.append(sim)
             if pause_wrapper:            
                 r = raw_input('Press Enter to Continue')
 
@@ -819,10 +916,10 @@ def model_wrapper(rfo, strike_params, para_model, model_params, *hunt_id):
 # Note that bout container contains 3 elements. The number of bouts
 # executed by the model, the coordinates of the para before the last bout
 # and the result of the hunt.
-    if hunt_id != ():
-        return sim, bout_container
-    else:
-        return bout_container
+
+    return sim_list, bout_container
+    
+    
     
 
     # this will take the paramodel object
@@ -870,19 +967,24 @@ if __name__ == "__main__":
                 {"Model Type": "Regression", "Real or Sim": "Sim", "Spherical Bouts": spherical_huntbouts, "Extrapolate Para": 20}, 
                 {"Model Type": "Regression", "Real or Sim": "Sim", "Spherical Bouts": spherical_huntbouts, "Extrapolate Para": 50}]
 
-    modlist3 = [{"Model Type": "Real", "Real or Sim": "Real"},
+    modlist3 = [{"Model Type": "Real Coords", "Real or Sim": "Real"},
+                {"Model Type": "Real Bouts", "Real or Sim": "Real"},
                 {"Model Type": "Regression", "Real or Sim": "Real"},
                 {"Model Type": "Regression", "Real or Sim": "Real", "Extrapolate Para": 20}, 
                 {"Model Type": "Regression", "Real or Sim": "Real", "Extrapolate Para": 50}]
 
-    modlist4 = [{"Model Type": "Real Coords", "Real or Sim": "Real"}]
+    modlist4 = [{"Model Type": "Real Coords", "Real or Sim": "Real"},
+                {"Model Type": "Real Bouts", "Real or Sim": "Real"}]
+
     
-#    bpm = model_wrapper(real_fish_object, strike_params, para_model, modlist4)
+    simlist, bpm = model_wrapper(real_fish_object, strike_params, para_model, modlist4)
 
-    for i in real_fish_object.hunt_ids:
-        sim, bpm = view_and_sim_hunt(real_fish_object, strike_params, para_model, modlist4, i)
-        print(sim.score_model(True))
+    # for i in real_fish_object.hunt_ids:
+    #     simlist, bpm = view_and_sim_hunt(real_fish_object, strike_params, para_model, modlist4, i)
+    #     print(sim.score_model(True))
 
+    
+    score_and_view(simlist, 16, 17)
     total_bouts = [np.sum([b[0] for b in bp]) for bp in bpm]
     result_counts = [Counter([b[-1] for b in bp]) for bp in bpm]
     
