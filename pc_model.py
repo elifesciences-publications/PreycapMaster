@@ -148,6 +148,8 @@ class PreyCap_Simulation:
             bout_ends = self.bout_durations + self.interbouts
             bout_ends = bout_ends[bout_ends < len(rx)]
             fig = pl.figure(figsize=(6,6))
+            fig.suptitle(
+                'Transparent and Triangles = Model 1, Solid and Circles = Model 2')
             gs = gridspec.GridSpec(4, 4)
             ax1 = fig.add_subplot(gs[0:2,0:2])
             ax2 = fig.add_subplot(gs[2:, 0:2])
@@ -162,24 +164,19 @@ class PreyCap_Simulation:
             ax1.plot(bout_times, [rx[bt] for bt in bout_times], 'c', marker='.', linestyle='None')
             ax1.plot(bout_times, [ry[bt] for bt in bout_times], 'c', marker='.', linestyle='None')
             ax1.plot(bout_times, [rz[bt] for bt in bout_times], 'c', marker='.', linestyle='None')
-            ax1.plot(bout_times, [rx[bt] for bt in bout_times], 'c', marker='.', linestyle='None')
-            ax1.plot(bout_times, [ry[bt] for bt in bout_times], 'c', marker='.', linestyle='None')
-            ax1.plot(bout_times, [rz[bt] for bt in bout_times], 'c', marker='.', linestyle='None')
-            ax1.plot(bout_ends, [rx[bt] for bt in bout_ends], 'm', marker='.', linestyle='None')
-            ax1.plot(bout_ends, [ry[bt] for bt in bout_ends], 'm', marker='.', linestyle='None')
-            ax1.plot(bout_ends, [rz[bt] for bt in bout_ends], 'm', marker='.', linestyle='None')
             ax1.plot(bout_ends, [rx[bt] for bt in bout_ends], 'm', marker='.', linestyle='None')
             ax1.plot(bout_ends, [ry[bt] for bt in bout_ends], 'm', marker='.', linestyle='None')
             ax1.plot(bout_ends, [rz[bt] for bt in bout_ends], 'm', marker='.', linestyle='None')
             ax1.set_title('XYZ vs T')
+
             ax4.plot(m1_yaw, 'r', linewidth=1)
             ax4.plot(self.fish_yaw, 'r', linewidth=1, alpha=.5)
             ax4.plot(m1_pitch, 'y', linewidth=1)
             ax4.plot(self.fish_pitch, 'y', linewidth=1, alpha=.5)
-            ax4.plot(bout_times, [self.fish_yaw for bt in bout_times], 'c', marker='.', linestyle='None')
-            ax4.plot(bout_times, [self.fish_pitch for bt in bout_times], 'c', marker='.', linestyle='None')
-            ax4.plot(bout_ends, [self.fish_yaw for bt in bout_ends], 'm', marker='.', linestyle='None')
-            ax4.plot(bout_ends, [self.fish_pitch for bt in bout_ends], 'm', marker='.', linestyle='None')
+            ax4.plot(bout_times, [self.fish_yaw[bt] for bt in bout_times], 'c', marker='.', linestyle='None')
+            ax4.plot(bout_times, [self.fish_pitch[bt] for bt in bout_times], 'c', marker='.', linestyle='None')
+            ax4.plot(bout_ends, [self.fish_yaw[bt] for bt in bout_ends], 'm', marker='.', linestyle='None')
+            ax4.plot(bout_ends, [self.fish_pitch[bt] for bt in bout_ends], 'm', marker='.', linestyle='None')
             ax4.set_title('Yaw (Red), Pitch (Yellow)')
             ax2.plot(rx, ry, '.5', linewidth=.5)
             ax2.plot(mx, my, '.5', linewidth=.5)
@@ -197,22 +194,10 @@ class PreyCap_Simulation:
             ax2.set_title('XY')
             ax3.set_title('XZ')
             pl.tight_layout()
-            pl.savefig('xyz.pdf')                        
-            pl.cla()
-#            ax1.set_title('XY')
-
- #           ax1.axis('square')
-#            ax2.axis('square')
-#            ax3.axis('square')
- #           ax4.axis('square')
-
-
-
-
-
-            # score should also yield total distance traveled in the hunt,
-            # also must normalize for large yaw shifts due to circularity of the measure. 
-            # i.e. if diff > pi, fix. 
+            pl.savefig('mod_comparision.pdf')
+            # pl.savefig('xyz_' + self.fishmodel.modchoice + '_' + str(
+            #     self.fishmodel.hunt_ind) + '.pdf')                        
+            pl.close()
             
         return score, total_xyz_travel_m1, total_xyz_travel_m2, m1_numbouts, m2_numbouts
         
@@ -580,7 +565,7 @@ class FishModel:
             self.bout_durations.append(filt_bdur[r])
 
     def strike(self, p):
-        num_stds = 1.5
+        num_stds = 1
         in_az_win = (p["Para Az"] < self.strike_means[0] + num_stds * self.strike_std[0] and
                      p["Para Az"] > self.strike_means[0] - num_stds * self.strike_std[0])
         in_alt_win = (p["Para Alt"] < self.strike_means[1] + num_stds * self.strike_std[1] and
@@ -624,12 +609,12 @@ class FishModel:
 
         def score_para(p_results):
             # first ask if any para are IN strike zone
-            strikes = np.array([self.strike(p) for p in p_results])
-            if strikes.any():
-                strike_args = np.argwhere(strikes)
-                rand_strike = np.random.randint(strike_args.shape[0])
-                bout_choice = strike_args[rand_strike][0]
-                return bout_choice
+            # strikes = np.array([self.strike(p) for p in p_results])
+            # if strikes.any():
+            #     strike_args = np.argwhere(strikes)
+            #     rand_strike = np.random.randint(strike_args.shape[0])
+            #     bout_choice = strike_args[rand_strike][0]
+            #     return bout_choice
             az = np.array([p['Para Az'] for p in p_results]) - self.strike_means[0]
             alt = np.array([p['Para Alt'] for p in p_results]) - self.strike_means[1]
             dist = np.array([p['Para Dist'] for p in p_results]) - self.strike_means[2]
@@ -845,6 +830,14 @@ def make_vr_movies(sim1, sim2):
     np.save('uf_model2.npy', sim2.fish_bases[:-1])                
     np.save('strikelist2.npy', sim2.strikelist)
 
+
+def single_hunt_results(rfo, bpm, hunt_id, modlist):
+    h_ind = np.where(np.array(rfo.hunt_ids) == hunt_id)[0][0]
+    results = [bp[h_ind][-1] for bp in bpm]
+    results_pretty = [m for m in zip(modlist, results)]
+    return results_pretty
+
+
 def score_and_view(simlist, ind1, ind2):
     sim1 = simlist[ind1]
     sim2 = simlist[ind2]
@@ -991,7 +984,11 @@ if __name__ == "__main__":
                 {"Model Type": "Regression", "Real or Sim": "Real", "Extrapolate Para": 50}]
 
     modlist4 = [{"Model Type": "Real Coords", "Real or Sim": "Real"},
-                {"Model Type": "Real Bouts", "Real or Sim": "Real"}]
+                {"Model Type": "Real Bouts", "Real or Sim": "Real"},
+                {"Model Type": "Regression", "Real or Sim": "Real"},
+                {"Model Type": "Regression", "Real or Sim": "Real", "Extrapolate Para": 15},
+                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": spherical_bouts},
+                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": spherical_bouts, "Extrapolate Para": 15}]
 
     
     simlist, bpm = model_wrapper(real_fish_object, strike_params, para_model, modlist4)
@@ -1001,10 +998,20 @@ if __name__ == "__main__":
     #     print(sim.score_model(True))
 
     
-    score_and_view(simlist, 16, 17)
+#    score_and_view(simlist, 16, 17)
     total_bouts = [np.sum([b[0] for b in bp]) for bp in bpm]
-    result_counts = [Counter([b[-1] for b in bp]) for bp in bpm]
+    result_counts_per_model = [Counter([b[-1] for b in bp]) for bp in bpm]
+    results_per_hunt = single_hunt_results(real_fish_object, bpm, 6, modlist4)
+
+    print result_counts_per_model
     
+    # for i in range(len(real_fish_object.hunt_ids) * 2):
+    #     if i % 2 == 0:
+    #         score_and_view(simlist, i, i+1)
+
+
+    
+        
 
 # Things to do.
 

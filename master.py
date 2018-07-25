@@ -1178,7 +1178,7 @@ class Experiment():
         init_frame = self.bout_frames[hunt_wins[index][0]]
         abort_frame = self.bout_frames[hunt_wins[index][1]]
         integ_window = self.integration_window
-        post_frames = self.integration_window
+        post_frames = self.bout_durations[hunt_wins[index][1]]
         window = [init_frame - self.para_continuity_window - integ_window,
                   abort_frame + post_frames]
         if window[0] < 0:
@@ -2287,10 +2287,15 @@ def hunted_para_descriptor(dim, exp, hd):
                 np.diff(filt_alt)[norm_frame-framewin:norm_frame])
             para_ddist = np.nanmedian(
                 np.diff(filt_dist)[norm_frame-framewin:norm_frame])
-            postbout_az = filt_az[norm_frame+bout_dur]
-            postbout_alt = filt_alt[norm_frame+bout_dur]
-            postbout_dist = filt_dist[norm_frame+bout_dur]
-            
+            # this exception is no longer required as I built the last bout duration into the para_during_hunt function
+            try:
+                postbout_az = filt_az[norm_frame+bout_dur]
+                postbout_alt = filt_alt[norm_frame+bout_dur]
+                postbout_dist = filt_dist[norm_frame+bout_dur]
+            except IndexError:
+                postbout_az = filt_az[-1]
+                postbout_alt = filt_alt[-1]
+                postbout_dist = filt_dist[-1]
             if br[1] < 0:
                 if br[1] == -100:
                     if ind == len(hunt_bouts) - 1:
@@ -2340,7 +2345,10 @@ def hunted_para_descriptor(dim, exp, hd):
                 prcnt_para_interp = np.sum(para_interp_list)
                 pararec_present_at_outset = np.isfinite(
                     bout_descriptor[bdesc_index][7:10]).all()
-                if para_velocity > 1.5 and pararec_present_at_outset and (
+                # if para_velocity > 1.5 and pararec_present_at_outset and (
+                #         percent_nans < 1.0/3).all() and (
+                #         prcnt_para_interp < 1.0 / 3):
+                if pararec_present_at_outset and (
                         percent_nans < 1.0/3).all() and (
                         prcnt_para_interp < 1.0 / 3):
                     realfish.hunt_ids.append(hi)
@@ -2966,88 +2974,91 @@ if __name__ == '__main__':
 
     fish_id = '042318_6'
     drct = os.getcwd() + '/' + fish_id
-    new_exp = False
+    new_exp = True
     dimreduce = False
-    skip_import = True
-    
-    if new_exp and not skip_import:
-        # HERE IF YOU WANT TO CLUSTER MANY FISH IN THE FUTURE, MAKE A DICT OF FISH_IDs AND RUN THROUGH THIS LOOP. MAY WANT TO CLUSTER MORE FISH TO PULL OUT STRIKES VS ABORTS. 
-        # if num_fish != 1:
-        #     FISH ID DICTIONARY HERE, LOOP THROUGH
-        #         myexp = Experiment(10, all_varbs_dict, flag_dict, drct)
-        #         myexp.bout_detector(True, 'tail')
-        #         myexp.bout_nanfilt_and_arrange(False)
-        #         bouts_flags = BoutsAndFlags(fish_id,
-        #                                     myexp.bout_data, myexp.bout_flags)
-        #         bouts_flags.exporter()
-#        else:
-        
-        myexp = Experiment(20, 3, all_varbs_dict, flag_dict, drct)
-#        myexp.bout_detector(True, 'combined')
-#        myexp.bout_detector(True, 'tail')
-        myexp.bout_detector()
-        myexp.bout_nanfilt_and_arrange(False)
-        bouts_flags = BoutsAndFlags(drct,
-                                    myexp.bout_data, myexp.bout_flags)
-        bouts_flags.exporter()
-        print("Creating Unit Vectors")
-        myexp.create_unit_vectors()
-# HERE IS WHERE YOU WILL REASSIGN THE BOUT DURATIONS
-# BY CALLING FIND_VELOCITY_ENDS AND ADDING ITS RETURN
-# TO MYEXP.BOUT_DURATIONS. FLAG NEW_EXP = TRUE, LEAVE THE DIM
-        vel_extensions, tvl = find_velocity_ends(myexp, .1)
-
-# YOUR MOVEMENT IS COMPLETE IF YOU STOP
-# (i.e. tail beat ends or velocity back to .05)
-# OR IF YOU MAKE A NEW MOVE
-# This accounts for pure rotation where there is no vel bump
-# Also, you can't terminate on velocity b/c the tail may still be
-# rotating the fish. Only terminate on velocity if fish still cruising. 
-        myexp.bout_durations_tail_only = copy.deepcopy(myexp.bout_durations)
-        myexp.bout_durations = np.array(myexp.bout_durations) + vel_extensions
-        myexp.all_spherical_bouts()
-        myexp.exporter()
-
-    elif not new_exp and not skip_import:
-        myexp = pickle.load(open(drct + '/master.pkl', 'rb'))
-
-    if dimreduce and not skip_import:
-        dim = DimensionalityReduce(bout_dict,
-                                   flag_dict,
-                                   all_varbs_dict,
-                                   drct, {})
-        dim.concatenate_records()
-        dim.dim_reduction(2)
-        dim.exporter()
-    elif not dimreduce and not skip_import:
-        dim = pickle.load(open(drct + '/dim_reduce.pkl', 'rb'))
+    skip_import = False
+    add_vel_ends = True
 
     if not skip_import:
-        clear_hunts = raw_input('New hunt windows?: ')
-        if clear_hunts == 'y':
-            dim.clear_huntwins()
-            dim.find_hunts([1], [0])
+        if new_exp:
+            # HERE IF YOU WANT TO CLUSTER MANY FISH IN THE FUTURE, MAKE A DICT OF FISH_IDs AND RUN THROUGH THIS LOOP. MAY WANT TO CLUSTER MORE FISH TO PULL OUT STRIKES VS ABORTS. 
+            # if num_fish != 1:
+            #     FISH ID DICTIONARY HERE, LOOP THROUGH
+            #         myexp = Experiment(10, all_varbs_dict, flag_dict, drct)
+            #         myexp.bout_detector(True, 'tail')
+            #         myexp.bout_nanfilt_and_arrange(False)
+            #         bouts_flags = BoutsAndFlags(fish_id,
+            #                                     myexp.bout_data, myexp.bout_flags)
+            #         bouts_flags.exporter()
+    #        else:
+
+            myexp = Experiment(20, 3, all_varbs_dict, flag_dict, drct)
+    #        myexp.bout_detector(True, 'combined')
+    #        myexp.bout_detector(True, 'tail')
+            myexp.bout_detector()
+            myexp.bout_nanfilt_and_arrange(False)
+            bouts_flags = BoutsAndFlags(drct,
+                                        myexp.bout_data, myexp.bout_flags)
+            bouts_flags.exporter()
+            print("Creating Unit Vectors")
+            myexp.create_unit_vectors()
+            if add_vel_ends:
+                vel_extensions, tvl = find_velocity_ends(myexp, .05)
+                myexp.bout_durations_tail_only = copy.deepcopy(
+                    myexp.bout_durations)
+                myexp.bout_durations = np.array(
+                    myexp.bout_durations) + vel_extensions
+
+
+    #         # Note that .05 is slightly further than .1. It's basically the same with some
+    #         # subtle extensions during huntbouts. 
+
+    # # YOUR MOVEMENT IS COMPLETE IF YOU STOP
+    # # (i.e. tail beat ends or velocity back to .05)
+    # # OR IF YOU MAKE A NEW MOVE
+    # # This accounts for pure rotation where there is no vel bump
+    # # Also, you can't terminate on velocity b/c the tail may still be
+    # # rotating the fish. Only terminate on velocity if fish still cruising. 
+            myexp.all_spherical_bouts()
+            myexp.exporter()
+
+        else:
+            myexp = pickle.load(open(drct + '/master.pkl', 'rb'))
+
+        if dimreduce:
+            dim = DimensionalityReduce(bout_dict,
+                                       flag_dict,
+                                       all_varbs_dict,
+                                       drct, {})
+            dim.concatenate_records()
+            dim.dim_reduction(2)
             dim.exporter()
             hd = Hunt_Descriptor(drct)
         else:
-            import_hd = raw_input('Import Hunt Descriptor?: ')
-            if import_hd == 'y':
-                hd = hd_import(myexp.directory)
-            elif import_hd == 'n':
-                hd = Hunt_Descriptor(drct)
-            
-    # sbouts = myexp.all_spherical_bouts()
-    # fsb = myexp.filtered_spherical_bouts(sbouts)
-    # # spherical huntbouts
-    # shbs = myexp.spherical_huntbouts(fsb, hd, dim)
-    # # spherical nonhuntbouts
-    # nhbs = [f for f in fsb if f not in shbs]
-    # np.save('spherical_bouts.npy', fsb)
-    # np.save('spherical_huntbouts.npy', shbs)
+            dim = pickle.load(open(drct + '/dim_reduce.pkl', 'rb'))
+            hd = hd_import(myexp.directory)
 
-#    plot_bout_frames(myexp)
-                    
+    sbouts = myexp.all_spherical_bouts()
+    fsb = myexp.filtered_spherical_bouts(sbouts)
+    # spherical huntbouts
+    shbs = myexp.spherical_huntbouts(fsb, hd, dim)
+    # spherical nonhuntbouts
+    nhbs = [f for f in fsb if f not in shbs]
+    np.save('spherical_bouts.npy', fsb)
+    np.save('spherical_huntbouts.npy', shbs)
+
+
+
+
+# IF YOU WANT TO MESS WITH THIS, NOW YOU HAVE TO CALL IT ON MYEXP.BOUTS BY TAIL
+# CURRENTLY, MYEXP BOUTS ARE ALL VEL DRIVEN.
+
+# LOOK AT THIS THOUGH -- WILL TELL YOU DIFF BETWEEN .05 and .1
+# myexp IS LOCKED IN AT .1.
+# STILL GETTING A SLIGHT UNDERESTIMATE AT .1
+
     # vel_ends, tvl = find_velocity_ends(myexp, .05)
     # plot_bout_calls(myexp, vel_ends, tvl)
+    velocity_kernel(myexp, 'hunts', hd, dim)
     hunted_para_descriptor(dim, myexp, hd)
 # 
