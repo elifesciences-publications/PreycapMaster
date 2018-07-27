@@ -1529,7 +1529,7 @@ class Experiment():
                     filt_sb.append(sbout)
         return filt_sb
 
-    def all_spherical_bouts(self):
+    def all_spherical_bouts(self, plot_or_not):
         # there is no interbout info for the last bout so ignore it.
         spherical_bouts = []
         empty_bouts = (self.bout_az == [])
@@ -1551,46 +1551,47 @@ class Experiment():
                                     'Delta Pitch': s_bout[3],
                                     'Delta Yaw': -1*s_bout[4],
                                     'Bout Frame': b_frame})
-        b_dict = {'Bout Az': self.bout_az,
-                  'Bout Alt': self.bout_alt,
-                  'Bout Dist': self.bout_dist,
-                  'Interbout': np.diff(self.bout_frames),
-                  'Bout Duration': self.bout_durations,
-                  'Delta Pitch': self.bout_dpitch,
-                  'Delta Yaw': self.bout_dyaw}
+        if plot_or_not:
+            b_dict = {'Bout Az': self.bout_az,
+                      'Bout Alt': self.bout_alt,
+                      'Bout Dist': self.bout_dist,
+                      'Interbout': np.diff(self.bout_frames),
+                      'Bout Duration': self.bout_durations,
+                      'Delta Pitch': self.bout_dpitch,
+                      'Delta Yaw': self.bout_dyaw}
 
-        fig, axes = pl.subplots(1, len(spherical_bouts[0]),
-                                sharex=False,
-                                sharey=False,
-                                figsize=(8, 8))
-        for ind, (title, entry) in enumerate(b_dict.iteritems()):
-            sb.distplot(entry, ax=axes[ind])
-            axes[ind].set_title(title)
-        graph_3D = pl.figure(figsize=(10, 10))
-        ax3d = graph_3D.add_subplot(111, projection='3d')
-        ax3d.set_title('3D Para Record')
-        ax3d.set_xlim([-np.pi, np.pi])
-        ax3d.set_ylim([-np.pi, np.pi])
-        ax3d.set_zlim([0, 500])
-        ax3d.set_xlabel('Bout Az')
-        ax3d.set_ylabel('Bout Alt')
-        ax3d.set_zlabel('Bout Dist')
-        cmap = pl.get_cmap('seismic')
-#    yaw_max = np.max(np.abs(delta_yaw))
-#    norm = Normalize(-yaw_max, yaw_max)
-        norm = Normalize(vmin=-1, vmax=1)
-        scalarMap = cm.ScalarMappable(norm=norm, cmap=cmap)
-        rgba_vals = scalarMap.to_rgba(self.bout_dyaw)
-        for i in range(len(self.bout_az) - 1):
-            ax3d.plot([self.bout_az[i]],
-                      [self.bout_alt[i]],
-                      [self.bout_dist[i]],
-                      color=rgba_vals[i],
-                      marker='.',
-                      ms=10*self.bout_dpitch[i])
-        scalarMap.set_array(self.bout_dyaw)
-        graph_3D.colorbar(scalarMap)
-        pl.show()
+            fig, axes = pl.subplots(1, len(spherical_bouts[0]),
+                                    sharex=False,
+                                    sharey=False,
+                                    figsize=(8, 8))
+            for ind, (title, entry) in enumerate(b_dict.iteritems()):
+                sb.distplot(entry, ax=axes[ind])
+                axes[ind].set_title(title)
+            graph_3D = pl.figure(figsize=(10, 10))
+            ax3d = graph_3D.add_subplot(111, projection='3d')
+            ax3d.set_title('3D Para Record')
+            ax3d.set_xlim([-np.pi, np.pi])
+            ax3d.set_ylim([-np.pi, np.pi])
+            ax3d.set_zlim([0, 500])
+            ax3d.set_xlabel('Bout Az')
+            ax3d.set_ylabel('Bout Alt')
+            ax3d.set_zlabel('Bout Dist')
+            cmap = pl.get_cmap('seismic')
+    #    yaw_max = np.max(np.abs(delta_yaw))
+    #    norm = Normalize(-yaw_max, yaw_max)
+            norm = Normalize(vmin=-1, vmax=1)
+            scalarMap = cm.ScalarMappable(norm=norm, cmap=cmap)
+            rgba_vals = scalarMap.to_rgba(self.bout_dyaw)
+            for i in range(len(self.bout_az) - 1):
+                ax3d.plot([self.bout_az[i]],
+                          [self.bout_alt[i]],
+                          [self.bout_dist[i]],
+                          color=rgba_vals[i],
+                          marker='.',
+                          ms=10*self.bout_dpitch[i])
+            scalarMap.set_array(self.bout_dyaw)
+            graph_3D.colorbar(scalarMap)
+            pl.show()
         return spherical_bouts
 
 
@@ -2137,6 +2138,7 @@ def bouts_during_hunt(hunt_ind, dimred, exp, plotornot):
     print exp.bout_durations[firstind:secondind]
     print('Nans in Bouts')
     print [d[9] for d in dim.all_flags[firstind:secondind+1]]
+    filtV = gaussian_filter(exp.fishdata.vectV, 0)
     start = exp.bout_frames[firstind]-integ_win
     end = exp.bout_frames[secondind]+integ_win
     # gives last bout 500ms to occur
@@ -2150,6 +2152,8 @@ def bouts_during_hunt(hunt_ind, dimred, exp, plotornot):
     ax1.plot(filt_phir, color='g')
     ax1.plot(filt_phil, color='r')
     ax2.plot([t[-1] for t in exp.fishdata.tailangle[start:end]])
+    vel_during_hunt = filtV[start:end]
+    ax2.plot(vel_during_hunt)
     bouts_tail = [exp.bout_frames[i]-start for i in indrange]
     bouts_tail_end = [
         exp.bout_frames[i]-start + exp.bout_durations[i] for i in indrange]
@@ -2169,6 +2173,7 @@ def bouts_during_hunt(hunt_ind, dimred, exp, plotornot):
     pitch_during_hunt = exp.spherical_pitch[start:end]
     yaw_during_hunt = exp.spherical_yaw[start:end]
     z_during_hunt = exp.fishdata.z[start:end]
+
     ax3.plot(yaw_during_hunt, color='m')
     ax3.plot(pitch_during_hunt, color='k')
     ax4.plot(z_during_hunt, color='b')
@@ -2363,10 +2368,18 @@ def hunted_para_descriptor(dim, exp, hd):
                 else:
                     print('rejected para or too much interp')
                 break
+    sbouts = exp.all_spherical_bouts(False)
+    fsb = exp.filtered_spherical_bouts(sbouts)
+    shbs = exp.spherical_huntbouts(fsb, hd, dim)
+    nhbs = [f for f in fsb if f not in shbs]
+    realfish.all_spherical_bouts = fsb
+    realfish.all_spherical_huntbouts = shbs
     realfish.exporter()
+    velocity_kernel(exp, 'hunts', hd, dim)
     csv_data(header, bout_descriptor, 'huntingbouts', exp.directory)
-                                    
-                                                               
+    return realfish
+
+
 def para_stimuli(dim, exp, hd):
 
     include_kde = False
@@ -2763,7 +2776,7 @@ def fixmappings(exp, dim, hd):
 
 def velocity_kernel(myexp, all_or_hb, hd, dim):
 
-    filtV = gaussian_filter(myexp.fishdata.vectV, 1)
+    filtV = gaussian_filter(myexp.fishdata.vectV, 0)
     vel_profiles = []
     if all_or_hb == 'all':
         for bf, bd in zip(myexp.bout_frames, myexp.bout_durations):
@@ -2802,9 +2815,9 @@ def normalize_kernel(kernel, length):
     return normed_kernel
 
     
-def find_velocity_ends(myexp, v_thresh):
+def find_velocity_ends(myexp, v_thresh, b_or_bplus1):
     bd_plus = []
-    filt_v = gaussian_filter(myexp.fishdata.vectV, 1)
+    filt_v = gaussian_filter(myexp.fishdata.vectV, 0)
     interbouts = np.diff(myexp.bout_frames)
     thresh_vlist = []
     for bout_ind, (bf, bd) in enumerate(
@@ -2816,14 +2829,19 @@ def find_velocity_ends(myexp, v_thresh):
         v_max = np.max(v_win)
         v_argmax = np.argmax(v_win)
         v_start = filt_v[bf]
-        dv = v_max - v_start
-        thresh_v = (dv * v_thresh) + v_start
+        v_start_boutplus1 = filt_v[myexp.bout_frames[bout_ind+1]]
+        if b_or_bplus1 == 0:
+            dv = v_max - v_start
+            thresh_v = (dv * v_thresh) + v_start
+        elif b_or_bplus1 == 1:
+            dv = v_max - v_start_boutplus1
+            thresh_v = (dv * v_thresh) + v_start_boutplus1
         # i is the distance from bf to the threshV.
         # if i is less than the interbout,
         # add i - bd to the prev called bout duration
         for i, v in enumerate(filt_v[bf:]):
             # can only go in here if v requirements are satisfied. 
-            if v <= thresh_v and i > v_argmax:
+            if v < thresh_v and i > v_argmax:
                 candidate_bd_extension = i - bd
                 if candidate_bd_extension <= 0:
                     bd_plus.append(0)
@@ -3003,7 +3021,7 @@ if __name__ == '__main__':
             print("Creating Unit Vectors")
             myexp.create_unit_vectors()
             if add_vel_ends:
-                vel_extensions, tvl = find_velocity_ends(myexp, .05)
+                vel_extensions, tvl = find_velocity_ends(myexp, .1, 0)
                 myexp.bout_durations_tail_only = copy.deepcopy(
                     myexp.bout_durations)
                 myexp.bout_durations = np.array(
@@ -3019,7 +3037,7 @@ if __name__ == '__main__':
     # # This accounts for pure rotation where there is no vel bump
     # # Also, you can't terminate on velocity b/c the tail may still be
     # # rotating the fish. Only terminate on velocity if fish still cruising. 
-            myexp.all_spherical_bouts()
+            myexp.all_spherical_bouts(False)
             myexp.exporter()
 
         else:
@@ -3038,27 +3056,19 @@ if __name__ == '__main__':
             dim = pickle.load(open(drct + '/dim_reduce.pkl', 'rb'))
             hd = hd_import(myexp.directory)
 
-    sbouts = myexp.all_spherical_bouts()
-    fsb = myexp.filtered_spherical_bouts(sbouts)
-    # spherical huntbouts
-    shbs = myexp.spherical_huntbouts(fsb, hd, dim)
-    # spherical nonhuntbouts
-    nhbs = [f for f in fsb if f not in shbs]
-    np.save('spherical_bouts.npy', fsb)
-    np.save('spherical_huntbouts.npy', shbs)
+#     sbouts = myexp.all_spherical_bouts()
 
 
 
 
-# IF YOU WANT TO MESS WITH THIS, NOW YOU HAVE TO CALL IT ON MYEXP.BOUTS BY TAIL
-# CURRENTLY, MYEXP BOUTS ARE ALL VEL DRIVEN.
+# # IF YOU WANT TO MESS WITH THIS, NOW YOU HAVE TO CALL IT ON MYEXP.BOUTS BY TAIL
+# # CURRENTLY, MYEXP BOUTS ARE ALL VEL DRIVEN.
 
-# LOOK AT THIS THOUGH -- WILL TELL YOU DIFF BETWEEN .05 and .1
-# myexp IS LOCKED IN AT .1.
-# STILL GETTING A SLIGHT UNDERESTIMATE AT .1
+# # LOOK AT THIS THOUGH -- WILL TELL YOU DIFF BETWEEN .05 and .1
+# # myexp IS LOCKED IN AT .1.
+# # STILL GETTING A SLIGHT UNDERESTIMATE AT .1
 
-    # vel_ends, tvl = find_velocity_ends(myexp, .05)
-    # plot_bout_calls(myexp, vel_ends, tvl)
-    velocity_kernel(myexp, 'hunts', hd, dim)
-    hunted_para_descriptor(dim, myexp, hd)
-# 
+#    vel_ends, tvl = find_velocity_ends(myexp, .1)
+ #   plot_bout_calls(myexp, vel_ends, tvl)
+
+    fivecut = hunted_para_descriptor(dim, myexp, hd)

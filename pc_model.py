@@ -19,6 +19,7 @@ from iventure.utils_bql import subsample_table_columns
 from collections import deque, Counter
 from master import fishxyz_to_unitvecs, sphericalbout_to_xyz, p_map_to_fish, RealFishControl, normalize_kernel
 from toolz.itertoolz import sliding_window, partition
+from scipy.ndimage import gaussian_filter
 
 # Next steps: make sure bayesDB runs look like real bouts. see what regression does too. 
 
@@ -28,6 +29,7 @@ class PreyCap_Simulation:
         self.fishmodel = fishmodel
         self.paramodel = paramodel
         self.velocity_kernel = np.load('hb_velocity_kernel.npy')
+#        self.velocity_kernel = gaussian_filter(self.velocity_kernel, 1)
         self.sim_length = simlen
         self.para_states = []
         self.model_para_xyz = []
@@ -194,9 +196,9 @@ class PreyCap_Simulation:
             ax2.set_title('XY')
             ax3.set_title('XZ')
             pl.tight_layout()
-            pl.savefig('mod_comparision.pdf')
-            # pl.savefig('xyz_' + self.fishmodel.modchoice + '_' + str(
-            #     self.fishmodel.hunt_ind) + '.pdf')                        
+#            pl.savefig('mod_comparision.pdf')
+            pl.savefig('xyz_' + self.fishmodel.modchoice + '_' + str(
+                self.fishmodel.hunt_ind) + '.pdf')                        
             pl.close()
             
         return score, total_xyz_travel_m1, total_xyz_travel_m2, m1_numbouts, m2_numbouts
@@ -499,7 +501,10 @@ class FishModel:
         self.hunt_ind = hunt_ind
         self.modchoice = model_param["Model Type"]
         if spherical_bouts != ():
-            self.spherical_bouts = spherical_bouts[0]
+            if spherical_bouts[0] == 'All':
+                self.spherical_bouts = rfo.all_spherical_bouts
+            elif spherical_bouts[0] == 'Hunt':
+                self.spherical_bouts = rfo.all_spherical_huntbouts
         self.bdb_file = bl.bayesdb_open('bdb_hunts_inverted.bdb')
         if self.modchoice == "Real Bouts":
             self.model = (lambda pv: self.real_fish_bouts(pv))
@@ -565,7 +570,7 @@ class FishModel:
             self.bout_durations.append(filt_bdur[r])
 
     def strike(self, p):
-        num_stds = 1
+        num_stds = 1.5
         in_az_win = (p["Para Az"] < self.strike_means[0] + num_stds * self.strike_std[0] and
                      p["Para Az"] > self.strike_means[0] - num_stds * self.strike_std[0])
         in_alt_win = (p["Para Alt"] < self.strike_means[1] + num_stds * self.strike_std[1] and
@@ -871,7 +876,7 @@ def model_wrapper(rfo, strike_params, para_model, model_params, *hunt_id):
         for mi, model_run in enumerate(model_params):
             print("Running " + model_run["Model Type"] + " on hunt " + str(hid))
             try:
-                fish = FishModel(model_run, strike_params, rfo, h_ind, model_run["Spherical Bouts"])
+                fish = FishModel(model_run, strike_params, rfo, h_ind, model_run["Spherical Bouts"]))
             except KeyError:
                 fish = FishModel(model_run, strike_params, rfo, h_ind)
             try:
@@ -939,20 +944,33 @@ if __name__ == "__main__":
     csv_file = 'huntbouts_rad.csv'
     hb = pd.read_csv(csv_file)
     fish_id = '042318_6'
-    real_fish_object = pd.read_pickle(
-        os.getcwd() + '/' + fish_id + '/RealHuntData_' + fish_id + '.pkl')
+    nocut = pd.read_pickle(
+        os.getcwd() + '/' + fish_id + '/RealHuntData_' + fish_id + '_nocut.pkl')
+    fivecut =  pd.read_pickle(
+         os.getcwd() + '/' + fish_id + '/RealHuntData_' + fish_id + '_fivecut.pkl')
     para_model = pickle.load(open(os.getcwd() + '/pmm.pkl', 'rb'))
     np.random.seed()
     sequence_length = 10000
     strike_params = characterize_strikes(hb)
+    # str_refractory_list = [b["Interbouts"][-1] - b["Bout Durations"][-2]
+    #                        for b in [real_fish_object.model_input(i)
+    #                                  for i in range(len(real_fish_object.hunt_ids))]]
     str_refractory_list = [b["Interbouts"][-1] - b["Bout Durations"][-2]
-                           for b in [real_fish_object.model_input(i)
-                                     for i in range(len(real_fish_object.hunt_ids))]]
-    str_refractory = np.ceil(np.percentile(str_refractory_list, 20)).astype(np.int)
+                           for b in [fivecut.model_input(i)
+                                     for i in range(len(fivecut.hunt_ids))]]
+    # str_refractory_list = [b["Interbouts"][-1] - b["Bout Durations"][-2]
+    #                        for b in [fivecut.model_input(i)
+    #                                  for i in range(len(fivecut.hunt_ids))]]
+
+# THIS IS IMPORTANT -- MAKE SURE YOU BAKE IN A REFRACTORY PERIOD B/C THIS CHANGES WITH HUNT
+    
+    # str_refractory = np.ceil(np.percentile(str_refractory_list, 20)).astype(np.int)
+    str_refractory = 0
     strike_params.append(str_refractory)
-    spherical_bouts = np.load('spherical_bouts.npy').tolist()
-    spherical_huntbouts = np.load('spherical_huntbouts.npy').tolist()
-    spherical_nonhunt_bouts = [b for b in spherical_bouts if b not in spherical_huntbouts]
+
+
+
+
     
 
     # Dict fields are  "Model Type" : Real, Regression, Bayes, Ideal, Random. This is the fish model
@@ -965,17 +983,9 @@ if __name__ == "__main__":
     
     modlist = [{"Model Type": "Regression", "Real or Sim": "Real"},
                {"Model Type": "Regression", "Real or Sim": "Real", "Extrapolate Para": 10},
-               {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": spherical_bouts},
-               {"Model Type": "Regression", "Real or Sim": "Real", "Willie Mays": 10},
-               {"Model Type": "Regression", "Real or Sim": "Real", "Extrapolate Para": 10, "Willie Mays": 10},
-               {"Model Type": "Random", "Real or Sim": "Real", "Spherical Bouts": spherical_bouts},
-               {"Model Type": "Regression", "Real or Sim": "Sim", "Spherical Bouts": spherical_huntbouts},
-               {"Model Type": "Regression", "Real or Sim": "Sim", "Spherical Bouts": spherical_huntbouts},
-               {"Model Type": "Regression", "Real or Sim": "Sim", "Spherical Bouts": spherical_huntbouts, "Extrapolate Para": 50}]
+               {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All"},
+               {"Model Type": "Regression", "Real or Sim": "Real", "Willie Mays": 10}]
 
-    modlist2 = [{"Model Type": "Regression", "Real or Sim": "Sim", "Spherical Bouts": spherical_huntbouts},
-                {"Model Type": "Regression", "Real or Sim": "Sim", "Spherical Bouts": spherical_huntbouts, "Extrapolate Para": 20}, 
-                {"Model Type": "Regression", "Real or Sim": "Sim", "Spherical Bouts": spherical_huntbouts, "Extrapolate Para": 50}]
 
     modlist3 = [{"Model Type": "Real Coords", "Real or Sim": "Real"},
                 {"Model Type": "Real Bouts", "Real or Sim": "Real"},
@@ -987,11 +997,20 @@ if __name__ == "__main__":
                 {"Model Type": "Real Bouts", "Real or Sim": "Real"},
                 {"Model Type": "Regression", "Real or Sim": "Real"},
                 {"Model Type": "Regression", "Real or Sim": "Real", "Extrapolate Para": 15},
-                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": spherical_bouts},
-                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": spherical_bouts, "Extrapolate Para": 15}]
+                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All"}
+                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All", "Extrapolate Para": 20}]
 
+
+    # modlist4 = [{"Model Type": "Real Coords", "Real or Sim": "Real"},
+    #             {"Model Type": "Real Bouts", "Real or Sim": "Real"}]
+
+
+
+
+    fivecut.huntbout_durations = nocut.huntbout_durations
     
-    simlist, bpm = model_wrapper(real_fish_object, strike_params, para_model, modlist4)
+#    simlist, bpm = model_wrapper(real_fish_object, strike_params, para_model, modlist4)
+    simlist, bpm = model_wrapper(fivecut, strike_params, para_model, modlist4)
 
     # for i in real_fish_object.hunt_ids:
     #     simlist, bpm = view_and_sim_hunt(real_fish_object, strike_params, para_model, modlist4, i)
@@ -1009,7 +1028,8 @@ if __name__ == "__main__":
     #     if i % 2 == 0:
     #         score_and_view(simlist, i, i+1)
 
-
+#    score_and_view(simlist, 2, 3)
+    
     
         
 

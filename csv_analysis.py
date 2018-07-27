@@ -147,10 +147,10 @@ def concatenate_all_csv(fish_list, file_name, invert):
                 firstfile = False
             for row in range(num_entries):
                 row_dict = data.iloc[row]
-                row_dict["Bout Delta Yaw"] = -1 * np.radians(
-                    row_dict["Bout Delta Yaw"])
-                row_dict["Bout Delta Pitch"] = np.radians(
-                    row_dict["Bout Delta Pitch"])
+                # row_dict["Bout Delta Yaw"] = -1 * np.radians(
+                #     row_dict["Bout Delta Yaw"])
+                # row_dict["Bout Delta Pitch"] = np.radians(
+                #     row_dict["Bout Delta Pitch"])
                 if invert:
                     row_dict = bout_inversion(row_dict)
                 output_data.writerow(row_dict.values)
@@ -483,13 +483,18 @@ if __name__ == "__main__":
 #csv_file = 'huntingbouts_all.csv'
 #csv_file = 'stimuli_all.csv'
 #csv_file = 'huntbouts1_2s.csv'
+ 
     fish_id = '042318_6'
     drct = os.getcwd() + '/' + fish_id + '/'
 #csv_file = drct + 'huntbouts_inverted.csv'
-    csv_file = drct + 'huntbouts_filtmore.csv'
+#    csv_file = drct + 'huntbouts_filtmore.csv'
 #csv_file = '~/bayesDB/huntbouts_inverted.csv'
+    csv_file = drct + 'huntingbouts_filt10_velover1.csv'
     data = pd.read_csv(csv_file)
-    bdsim = BayesDB_Simulator(fish_id, 'bdb_hunts_filt.bdb')
+    invert_all_bouts(data, drct)
+
+#    bdsim = BayesDB_Simulator(fish_id, 'bdb_hunts_filt.bdb')
+    
 
     
 #pred_wrapper(data, [[0, .1], [.1, .2], [.3, .4], [.4, .5]], [1,2], 'alt')
