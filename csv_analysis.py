@@ -188,25 +188,37 @@ def generate_random_data(raw_data, invert):
 def invert_all_bouts(raw_data, drct):
     new_df = pd.DataFrame(columns=raw_data.columns.tolist())
     for i in range(raw_data.shape[0]):
-        row_dict = data.loc[i]
+        row_dict = raw_data.loc[i]
         inverted_row = bout_inversion(row_dict)
         row_values = inverted_row.values
         if not np.isfinite(row_values).all():
             continue
         new_df.loc[i] = row_values
-    new_df.to_csv(drct + 'huntbouts_inverted.csv')
+    new_df.to_csv(drct + 'huntbouts_inverted_pre.csv')
+    inv_file = drct + 'huntbouts_inverted_pre.csv'
+    output_file = drct + 'huntbouts_inverted.csv'
+#    column_indices = range(1, len(raw_data.columns.tolist()))
+    with open(inv_file, 'rb') as source:
+        reader = csv.reader(source)
+        with open(output_file, 'wb') as result:
+            wtr = csv.writer(result)
+            for row in reader:
+                wtr.writerow(row[1:])
+                
+                
     
-        
 def bout_inversion(row):
     inverted_row = copy.deepcopy(row)
     if row["Para Az"] < 0:
         inverted_row["Para Az"] *= -1
         inverted_row["Para Az Velocity"] *= -1
+        inverted_row["Postbout Para Az"] *= -1
         inverted_row["Bout Az"] *= -1
         inverted_row["Bout Delta Yaw"] *= -1
     if row["Para Alt"] < 0:
         inverted_row["Para Alt"] *= -1
         inverted_row["Para Alt Velocity"] *= -1
+        inverted_row["Postbout Para Alt"] *= -1
         inverted_row["Bout Alt"] *= -1
         inverted_row["Bout Delta Pitch"] *= -1
     return inverted_row
@@ -303,7 +315,6 @@ def value_over_hunt(data, valstring, actions, f_or_r, absval):
         
 
 def prediction_conditionals(pred):
-    counts = [len(x) for x in pred]
     lead_lead_intersect = np.intersect1d(pred[0], pred[2])
     lag_lag_intersect = np.intersect1d(pred[1], pred[3])
     leadaz_lagalt = np.intersect1d(pred[0], pred[3])
@@ -324,11 +335,13 @@ def prediction_conditionals(pred):
     pl.show()
 
 
-def pred_wrapper(data, limits, condition, az_or_alt):
+def pred_wrapper(data, limits, skip_bout_numbers,
+                 condition, az_or_alt):
     ratio_list = []
     total_bouts = []
     for lim in limits:
-        pred = prediction_calculator(data, lim, condition, az_or_alt)
+        pred = prediction_calculator(
+            data, lim, skip_bout_numbers, condition, az_or_alt)
         prediction_conditionals(pred)
         if az_or_alt == 'az':
             ratio_list.append(len(pred[0]) / float(len(pred[1])))
@@ -338,24 +351,30 @@ def pred_wrapper(data, limits, condition, az_or_alt):
             total_bouts.append(len(pred[2]) + len(pred[3]))
     sb.barplot(range(len(ratio_list)), ratio_list, color='g')
     pl.show()
-    return total_bouts
+    bout_assignments = pred[-1]
+    return total_bouts, bout_assignments
 
 
-def prediction_calculator(data, limit, condition, az_or_alt):
+def prediction_calculator(data, limit, skip_bout_numbers, condition, az_or_alt):
     leading_az = []
     lagging_az = []
     leading_alt = []
     lagging_alt = []
+    bout_assignment = []
     for i in range(len(data["Para Az"])):
         if az_or_alt == 'az':
             if not (limit[0] <= np.abs(data["Para Az"][i]) < limit[1]):
+                bout_assignment.append(0)
                 continue
         if az_or_alt == 'alt':
             if not (limit[0] <= np.abs(data["Para Alt"][i]) < limit[1]):
+                bout_assignment.append(0)
                 continue
         if data["Strike Or Abort"][i] not in condition:
+            bout_assignment.append(0)
             continue
-        if data["Bout Number"][i] < 1:
+        if data["Bout Number"][i] in skip_bout_numbers:
+            bout_assignment.append(0)
             continue
         if not np.isfinite([data["Para Az Velocity"][i],
                             data["Para Alt Velocity"][i],
@@ -363,6 +382,7 @@ def prediction_calculator(data, limit, condition, az_or_alt):
                             data["Para Alt"][i],
                             data["Postbout Para Az"][i],
                             data["Postbout Para Alt"][i]]).all():
+            bout_assignment.append(0)
             continue
         az_sign_same = False
         alt_sign_same = False
@@ -374,16 +394,31 @@ def prediction_calculator(data, limit, condition, az_or_alt):
         if az_sign_same and np.sign(
                 data["Para Az"][i]) == np.sign(data["Postbout Para Az"][i]):
             lagging_az.append(i)
+            if az_or_alt == 'az':
+                bout_assignment.append(0)
         else:
             leading_az.append(i)
+            if az_or_alt == 'az' and az_sign_same:
+                bout_assignment.append(2)
+            if az_or_alt == 'az' and not az_sign_same:
+                bout_assignment.append(1)
         if alt_sign_same and np.sign(
                 data["Para Alt"][i]) == np.sign(data["Postbout Para Alt"][i]):
             lagging_alt.append(i)
+            if az_or_alt == 'alt':
+                bout_assignment.append(0)
         else:
             leading_alt.append(i)
-    sb.barplot(range(4), [len(leading_az), len(lagging_az), len(leading_alt), len(lagging_alt)])
+            if az_or_alt == 'alt' and alt_sign_same:
+                bout_assignment.append(2)
+            if az_or_alt == 'alt' and not alt_sign_same:
+                bout_assignment.append(1)
+            
+    sb.barplot(range(4),
+               [len(leading_az),
+                len(lagging_az), len(leading_alt), len(lagging_alt)])
     pl.show()
-    return leading_az, lagging_az, leading_alt, lagging_alt
+    return leading_az, lagging_az, leading_alt, lagging_alt, bout_assignment
 
 
 def twod_scatter(data, var1, var2):
@@ -520,4 +555,5 @@ if __name__ == "__main__":
 
 # try seaborn pairplot across the entire dataframe. 
 # randomize paramecium motion and see if it still correlates. 
+
 

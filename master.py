@@ -12,6 +12,7 @@ import numpy as np
 import pickle
 import math
 from scipy.ndimage.filters import gaussian_filter
+from scipy.interpolate import interp1d
 from collections import Counter
 import scipy.signal
 from toolz.itertoolz import sliding_window, partition
@@ -752,7 +753,7 @@ class Experiment():
         self.upar = []
         self.spherical_pitch = []
         self.spherical_yaw = []
-        self.spherical_dyaw = []
+#        self.spherical_dyaw = []
         self.invert = True
         self.refract = refractory_period
         self.bout_dict = bout_dict
@@ -1411,8 +1412,6 @@ class Experiment():
         yaw_all = unit_to_angle(
             filter_uvec(
                 ang_to_unit(self.fishdata.headingangle), 1))
-        dyaw_degrees = calculate_delta_yaw(yaw_all)
-        dyaw_rad = np.radians(dyaw_degrees)
         yaw_rad = np.radians(yaw_all)
         x_all = gaussian_filter(self.fishdata.x, filter_sd)
         y_all = gaussian_filter(self.fishdata.y, filter_sd)
@@ -1436,7 +1435,7 @@ class Experiment():
         self.ufish_origin = ufish_origin
         self.spherical_pitch = pitch_all
         self.spherical_yaw = yaw_rad
-        self.spherical_dyaw = dyaw_rad
+#        self.spherical_dyaw = dyaw_rad
 # this will yield a vector normal to the shearing plane of the fish.
 
     def map_bout_to_heading(self, bout_id):
@@ -1445,8 +1444,8 @@ class Experiment():
         bd = self.bout_durations[bout_id]
         delta_pitch = self.spherical_pitch[
                 bf+bd] - self.spherical_pitch[bf]
-        delta_yaw = np.sum(
-                self.spherical_dyaw[bf:bf+bd])
+        delta_yaw = calculate_delta_yaw_rad(
+            self.spherical_yaw[bf], self.spherical_yaw[bf+bd])
         ufish = self.ufish[bf]
         upar = self.upar[bf]
         uperp = self.uperp[bf]
@@ -2139,8 +2138,16 @@ def bouts_during_hunt(hunt_ind, dimred, exp, plotornot):
     print('Nans in Bouts')
     print [d[9] for d in dim.all_flags[firstind:secondind+1]]
     filtV = gaussian_filter(exp.fishdata.vectV, 0)
+    # yaw_all_filt = unit_to_angle(
+    #     filter_uvec(
+    #             ang_to_unit(exp.fishdata.headingangle), 1))
+    # yaw_all = unit_to_angle(
+    #     filter_uvec(
+    #             ang_to_unit(exp.fishdata.headingangle), 0))
+
     start = exp.bout_frames[firstind]-integ_win
     end = exp.bout_frames[secondind]+integ_win
+    framerange = range(start, end)
     # gives last bout 500ms to occur
     fig, ((ax1, ax2),
           (ax3, ax4)) = pl.subplots(
@@ -2149,34 +2156,35 @@ def bouts_during_hunt(hunt_ind, dimred, exp, plotornot):
               figsize=(6, 6))
     filt_phir = gaussian_filter(exp.fishdata.phiright, 2)[start:end]
     filt_phil = gaussian_filter(exp.fishdata.phileft, 2)[start:end]
-    ax1.plot(filt_phir, color='g')
-    ax1.plot(filt_phil, color='r')
-    ax2.plot([t[-1] for t in exp.fishdata.tailangle[start:end]])
+    ax1.plot(framerange, filt_phir, color='g')
+    ax1.plot(framerange, filt_phil, color='r')
+    ax3.plot(framerange, [t[-1] for t in exp.fishdata.tailangle[start:end]])
     vel_during_hunt = filtV[start:end]
-    ax2.plot(vel_during_hunt)
-    bouts_tail = [exp.bout_frames[i]-start for i in indrange]
+    ax3.plot(framerange, vel_during_hunt)
+    bouts_tail = [exp.bout_frames[i] for i in indrange]
     bouts_tail_end = [
-        exp.bout_frames[i]-start + exp.bout_durations[i] for i in indrange]
+        exp.bout_frames[i] + exp.bout_durations[i] for i in indrange]
     print len(bouts_tail)
-    ax2.plot(bouts_tail,
+    ax3.plot(bouts_tail,
              np.zeros(len(bouts_tail)),
              marker='.',
              ms=10,
              color='c')
-    ax2.plot(bouts_tail_end,
+    ax3.plot(bouts_tail_end,
              np.zeros(len(bouts_tail_end)),
              marker='.',
              ms=10,
              color='m')
     for ind, typ in enumerate(dim.cluster_membership[firstind:secondind+1]):
-        ax2.text(bouts_tail[ind], -.5, str(typ))
+        ax3.text(bouts_tail[ind], -.5, str(typ))
     pitch_during_hunt = exp.spherical_pitch[start:end]
     yaw_during_hunt = exp.spherical_yaw[start:end]
+#    yaw_filt_during_hunt = yaw_all_filt[start:end]
     z_during_hunt = exp.fishdata.z[start:end]
-
-    ax3.plot(yaw_during_hunt, color='m')
-    ax3.plot(pitch_during_hunt, color='k')
-    ax4.plot(z_during_hunt, color='b')
+    ax2.plot(framerange, yaw_during_hunt, color='m')
+    ax2.plot(framerange, pitch_during_hunt, color='k')
+    ax4.plot(framerange, z_during_hunt, color='b')
+    pl.tight_layout()
     if plotornot == 0:
         pl.clf()
         pl.close()
@@ -2218,18 +2226,20 @@ def hunted_para_descriptor(dim, exp, hd):
             hd.para_id_list, hd.actions, hd.boutrange, hd.interp_windows):
         print('Hunt ID')
         print hi
-        para3D = np.load(
+        para_xyz = np.load(
             exp.directory + "/para3D" + str(hi).zfill(
                 2) + ".npy")[
                     hp*3:hp*3 + 3][
                         :, cont_win+int_win-realfish.firstbout_para_intwin:]
-
         penv = ParaEnv(hi, exp.directory)
         penv.find_paravectors(False, hp)
         avg_vel = np.nanmean(penv.velocity_mags[0][
             exp.para_continuity_window / penv.vector_spacing:])
         hunt_df = pd.DataFrame(columns=df_labels)
         poi_wrth = create_poirec(hi, 3, exp.directory, hp)
+
+# THIS IS WRONG! YOU ARE GOING TO THE NORM_FRAME. POI_WRTH has
+# cont_win + int_win 
         dist = [pr[4] for pr in poi_wrth]
         az = [pr[6] for pr in poi_wrth]
         alt = [pr[7] for pr in poi_wrth]
@@ -2260,8 +2270,9 @@ def hunted_para_descriptor(dim, exp, hd):
         hunt_bout_durations = [exp.bout_durations[i] for i in hunt_bouts]
         percent_nans = np.array([na / float(bd) for na, bd
                                  in zip(nans_in_bouts, hunt_bout_durations)])
-        norm_bf = [hbf - hunt_bout_frames[0] for hbf in hunt_bout_frames]
-        norm_bf = map(lambda(x): x+int_win, norm_bf)
+        norm_bf_raw = [hbf - hunt_bout_frames[0] for hbf in hunt_bout_frames]
+        # int win is added because createpoirec cointains it. have to go beyond        # it to get relevant para coords. 
+        norm_bf = map(lambda(x): x+int_win, norm_bf_raw)
         framewin = exp.refract
         # these are normed to the hunting bout so that first bout is 0.
         endhunt = False
@@ -2271,6 +2282,14 @@ def hunted_para_descriptor(dim, exp, hd):
                 bout += br[0]
                 print('altered index')
                 print ind
+
+    # want to use ind to index hunt_bout_frames
+    # getyourself the uf, upar, uperp using these
+    # for pxyz, use para3D_xyz[norm_bf_raw[ind + realfish.firstbout_para_intwin - 3, -2, -1, 0]
+
+#                    azimuth, altitude, dist, nb_wrt_heading, ang3d = p_map_to_fish(
+
+    
             norm_frame = norm_bf[ind]
             bout_dur = exp.bout_durations[bout]
             inferred_coordinate = 0
@@ -2286,12 +2305,37 @@ def hunted_para_descriptor(dim, exp, hd):
             para_az = filt_az[norm_frame]
             para_alt = filt_alt[norm_frame]
             para_dist = filt_dist[norm_frame]
-            para_daz = np.nanmedian(
-                np.diff(filt_az)[norm_frame-framewin:norm_frame])
-            para_dalt = np.nanmedian(
-                np.diff(filt_alt)[norm_frame-framewin:norm_frame])
-            para_ddist = np.nanmedian(
-                np.diff(filt_dist)[norm_frame-framewin:norm_frame])
+#            para_dist = dist[norm_frame]
+            # para_daz = np.nanmedian(
+            #     np.diff(filt_az)[norm_frame-framewin:norm_frame])
+            # para_dalt = np.nanmedian(
+            #     np.diff(filt_alt)[norm_frame-framewin:norm_frame])
+            # para_ddist = np.nanmedian(
+            #     np.diff(filt_dist)[norm_frame-framewin:norm_frame])
+            pxyz_temp = para_xyz[:, norm_bf_raw[
+                    ind]:norm_bf_raw[ind]+realfish.firstbout_para_intwin].T
+            uf = exp.ufish[hunt_bout_frames[ind]]
+            ufish_origin = exp.ufish_origin[hunt_bout_frames[ind]]
+            upar = exp.upar[hunt_bout_frames[ind]]
+            uperp = exp.uperp[hunt_bout_frames[ind]]
+            pmap_returns = []
+            for p_xyz in pxyz_temp:
+                pmap_returns.append(p_map_to_fish(uf,
+                                                  ufish_origin,
+                                                  uperp, upar, p_xyz, 0))
+            para_daz = np.median(np.diff([x[0] for x in pmap_returns])) / .015
+            para_dalt = np.median(np.diff([x[1] for x in pmap_returns])) / .015
+            para_ddist = np.median(np.diff([x[2] for x in pmap_returns])) / .015
+                        
+#    uf = exp.ufish[hunt_bout_frames[ind]]
+#    etc with uperp, origin, upar
+#    assign_to_az, alt, dist lists
+#     for xyz in pxyz_temp:
+#        p_map_to_fish(uf,
+#                      uf_origin, u_prp, u_paral, p_xyz, p_index,0):
+
+
+            
             # this exception is no longer required as I built the last bout duration into the para_during_hunt function
             try:
                 postbout_az = filt_az[norm_frame+bout_dur]
@@ -2350,10 +2394,8 @@ def hunted_para_descriptor(dim, exp, hd):
                 prcnt_para_interp = np.sum(para_interp_list)
                 pararec_present_at_outset = np.isfinite(
                     bout_descriptor[bdesc_index][7:10]).all()
-                # if para_velocity > 1.5 and pararec_present_at_outset and (
-                #         percent_nans < 1.0/3).all() and (
-                #         prcnt_para_interp < 1.0 / 3):
-                if pararec_present_at_outset and (
+                # anything less than 1.5 is stationary
+                if para_velocity > 1.5 and pararec_present_at_outset and (
                         percent_nans < 1.0/3).all() and (
                         prcnt_para_interp < 1.0 / 3):
                     realfish.hunt_ids.append(hi)
@@ -2363,7 +2405,7 @@ def hunted_para_descriptor(dim, exp, hd):
                         [0] + np.diff(hunt_bout_frames).tolist())
                     realfish.huntbout_durations.append(hunt_bout_durations)
                     realfish.hunt_results.append(ac)
-                    realfish.para_xyz_per_hunt.append(para3D)
+                    realfish.para_xyz_per_hunt.append(para_xyz)
                     realfish.hunt_dataframes.append(copy.deepcopy(hunt_df))
                 else:
                     print('rejected para or too much interp')
@@ -2374,8 +2416,9 @@ def hunted_para_descriptor(dim, exp, hd):
     nhbs = [f for f in fsb if f not in shbs]
     realfish.all_spherical_bouts = fsb
     realfish.all_spherical_huntbouts = shbs
-    realfish.exporter()
     velocity_kernel(exp, 'hunts', hd, dim)
+    yaw_kernel(exp, 'hunts', hd, dim)
+    realfish.exporter()
     csv_data(header, bout_descriptor, 'huntingbouts', exp.directory)
     return realfish
 
@@ -2713,6 +2756,16 @@ def monotonic_max(winsize, array_in, maxthresh):
     return np.array(mmax)
 
 
+def calculate_delta_yaw_rad(yaw_init, yaw_end):
+    if np.abs(yaw_end-yaw_init) < np.pi:
+        diff = yaw_end - yaw_init
+    elif yaw_end-yaw_init <= - np.pi:
+        diff = yaw_end + (2*np.pi-yaw_init)
+    elif yaw_end-yaw_init >= np.pi:
+        diff = -(2*np.pi-yaw_end)+yaw_init
+    return diff
+
+
 def calculate_delta_yaw(raw_yaw):
     delta_yaw = [0]
     for h in sliding_window(2, raw_yaw):
@@ -2773,6 +2826,48 @@ def fixmappings(exp, dim, hd):
 # a new realfish object for the modeling.
 # 
 
+def yaw_kernel(myexp, all_or_hb, hd, dim):
+    yaw_profiles = []
+    yaw = myexp.spherical_yaw
+    bd = 7
+    if all_or_hb == 'all':
+        for bf in myexp.bout_frames:
+            ydiff = np.abs(yaw[bf+bd] - yaw[bf])
+            if .1 < ydiff or ydiff > .5:
+                continue
+            norm_yaw = (np.array(yaw[bf:bf+bd]) - yaw[bf]) 
+            if norm_yaw[5] < 0:
+                norm_yaw *= -1
+            yaw_profiles.append(norm_yaw)
+    elif all_or_hb == 'hunts':
+        h_inds = hd.hunt_ind_list
+        huntbouts = np.concatenate(
+            [range(dim.hunt_wins[h][0], dim.hunt_wins[h][1]+1)
+             for h in h_inds], axis=0)
+        huntframes = [myexp.bout_frames[hb] for hb in huntbouts]
+        for hf in huntframes:
+            ydiff = np.abs(yaw[hf+bd] - yaw[hf])
+            if .05 < ydiff or ydiff > .3:
+                continue
+            norm_yaw = (np.array(yaw[hf:hf+bd]) - yaw[hf]) 
+            if norm_yaw[5] < 0:
+                norm_yaw *= -1
+            yaw_profiles.append(norm_yaw)
+    final_yaw_profile = np.sum(yaw_profiles, axis=0) / len(yaw_profiles)
+    # pl.plot(final_yaw_profile)
+    # pl.show()
+    if all_or_hb == 'hunts':
+        np.save('hb_yaw_kernel.npy', np.diff(final_yaw_profile))
+    elif all_or_hb == 'all':
+        np.save('yaw_kernel.npy', np.diff(final_yaw_profile))
+    return np.diff(final_yaw_profile)
+
+    # if all_or_hb == 'hunts':
+    #     np.save('hb_velocity_kernel.npy', final_vel_profile)
+    # elif all_or_hb == 'all':
+    #     np.save('velocity_kernel.npy', final_vel_profile)
+    # return final_vel_profile
+    
 
 def velocity_kernel(myexp, all_or_hb, hd, dim):
 
@@ -2797,8 +2892,8 @@ def velocity_kernel(myexp, all_or_hb, hd, dim):
             0, max_len_window-len(vp)),
         mode='constant') for vp in vel_profiles]
     final_vel_profile = np.sum(padded_profiles, axis=0) / len(padded_profiles)
-    pl.plot(final_vel_profile)
-    pl.show()
+#    pl.plot(final_vel_profile)
+#    pl.show()
     if all_or_hb == 'hunts':
         np.save('hb_velocity_kernel.npy', final_vel_profile)
     elif all_or_hb == 'all':
@@ -2814,7 +2909,21 @@ def normalize_kernel(kernel, length):
 #    pl.show()
     return normed_kernel
 
-    
+
+def normalize_kernel_interp(kernel, length):
+    l_ratio = float(length) / kernel.shape[0]
+    cand = np.arange(0, l_ratio*kernel.shape[0], l_ratio)
+    if cand.shape[0] > kernel.shape[0]:
+        interp_range = cand[0:-1]
+    else:
+        interp_range = cand
+    interp_func = interp1d(
+        interp_range, kernel, 'linear', fill_value='extrapolate')
+    new_kernel = np.array(
+        [interp_func(i) for i in range(length)])
+    normed_kernel = new_kernel / np.sum(new_kernel)
+    return normed_kernel
+
 def find_velocity_ends(myexp, v_thresh, b_or_bplus1):
     bd_plus = []
     filt_v = gaussian_filter(myexp.fishdata.vectV, 0)
@@ -2992,10 +3101,10 @@ if __name__ == '__main__':
 
     fish_id = '042318_6'
     drct = os.getcwd() + '/' + fish_id
-    new_exp = True
+    new_exp = False
     dimreduce = False
-    skip_import = False
-    add_vel_ends = True
+    skip_import = True
+    add_vel_ends = False
 
     if not skip_import:
         if new_exp:
@@ -3021,7 +3130,7 @@ if __name__ == '__main__':
             print("Creating Unit Vectors")
             myexp.create_unit_vectors()
             if add_vel_ends:
-                vel_extensions, tvl = find_velocity_ends(myexp, .1, 0)
+                vel_extensions, tvl = find_velocity_ends(myexp, .05, 1)
                 myexp.bout_durations_tail_only = copy.deepcopy(
                     myexp.bout_durations)
                 myexp.bout_durations = np.array(
@@ -3071,4 +3180,7 @@ if __name__ == '__main__':
 #    vel_ends, tvl = find_velocity_ends(myexp, .1)
  #   plot_bout_calls(myexp, vel_ends, tvl)
 
-    fivecut = hunted_para_descriptor(dim, myexp, hd)
+    rf = hunted_para_descriptor(dim, myexp, hd)
+    # k = yaw_kernel(myexp, 'hunts', hd, dim)[:-1]
+    # v = velocity_kernel(myexp, 'hunts', hd, dim)
+

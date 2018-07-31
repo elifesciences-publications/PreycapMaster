@@ -17,7 +17,7 @@ import bayeslite as bl
 from iventure.utils_bql import query
 from iventure.utils_bql import subsample_table_columns
 from collections import deque, Counter
-from master import fishxyz_to_unitvecs, sphericalbout_to_xyz, p_map_to_fish, RealFishControl, normalize_kernel
+from master import fishxyz_to_unitvecs, sphericalbout_to_xyz, p_map_to_fish, RealFishControl, normalize_kernel, normalize_kernel_interp
 from toolz.itertoolz import sliding_window, partition
 from scipy.ndimage import gaussian_filter
 
@@ -29,6 +29,7 @@ class PreyCap_Simulation:
         self.fishmodel = fishmodel
         self.paramodel = paramodel
         self.velocity_kernel = np.load('hb_velocity_kernel.npy')
+        self.yaw_kernel = np.load('hb_yaw_kernel.npy')[0:-1]
 #        self.velocity_kernel = gaussian_filter(self.velocity_kernel, 1)
         self.sim_length = simlen
         self.para_states = []
@@ -197,6 +198,7 @@ class PreyCap_Simulation:
             ax3.set_title('XZ')
             pl.tight_layout()
 #            pl.savefig('mod_comparision.pdf')
+            pl.subplots_adjust(top=.9, wspace=.8)
             pl.savefig('xyz_' + self.fishmodel.modchoice + '_' + str(
                 self.fishmodel.hunt_ind) + '.pdf')                        
             pl.close()
@@ -258,11 +260,7 @@ class PreyCap_Simulation:
         future_frame = 5
         # spacing is an integer describing the sampling of vectors by the para. i.e.       # draws a new accel vector every 'spacing' frames
         spacing = np.load('spacing.npy')
-        vel_history = 6
         # fish_basis is origin, x, y, z unit vecs
-        p_az_hist = deque(maxlen=vel_history)
-        p_alt_hist = deque(maxlen=vel_history)
-        p_dist_hist = deque(maxlen=vel_history)
         if self.simulate_para:
             px = np.interp(
                 np.linspace(0,
@@ -308,7 +306,8 @@ class PreyCap_Simulation:
                             self.model_para_xyz = [px[-1], py[-1], pz[-1]]
                     else:
                         self.model_para_xyz = project_para([px, py, pz],
-                                            5, self.fishmodel.predict_forward_frames, framecounter)
+                                                           self.fishmodel.firstbout_para_intwin,
+                                                           self.fishmodel.predict_forward_frames, framecounter)
                 else:
                     self.model_para_xyz = project_para([px, py, pz],
                                                        5, self.fishmodel.predict_forward_frames, framecounter)
@@ -325,15 +324,12 @@ class PreyCap_Simulation:
                                            self.model_para_xyz, 
                                            0)
 
-            p_az_hist.append(para_spherical[0])
-            p_alt_hist.append(para_spherical[1])
-            p_dist_hist.append(para_spherical[2])
             para_varbs = {"Para Az": para_spherical[0],
                           "Para Alt": para_spherical[1],
                           "Para Dist": para_spherical[2],
-                          "Para Az Velocity": np.mean(np.diff(p_az_hist)),
-                          "Para Alt Velocity": np.mean(np.diff(p_alt_hist)),
-                          "Para Dist Velocity": np.mean(np.diff(p_dist_hist))}
+                          "Para Az Velocity": 0,
+                          "Para Alt Velocity": 0, 
+                          "Para Dist Velocity": 0}
 
 # can get more fancy with this function -- could have an entire object
 # that counts interesting facets of the hunt. e.g. how many frames
@@ -379,7 +375,15 @@ class PreyCap_Simulation:
                     break
                 else:
                     last_finite_pvarbs = copy.deepcopy(para_varbs)
-
+                pxyz_temp = [[px[i], py[i], pz[i]] for i in range(framecounter-self.rfo.firstbout_para_intwin, framecounter)]
+                pmap_returns = []
+                for p_xyz in pxyz_temp:
+                    pmap_returns.append(p_map_to_fish(fish_basis[1],
+                                                      fish_basis[0],
+                                                      fish_basis[3], fish_basis[2], p_xyz, 0))
+                para_varbs["Para Az Velocity"] = np.median(np.diff([x[0] for x in pmap_returns])) / .015
+                para_varbs["Para Alt Velocity"] = np.median(np.diff([x[1] for x in pmap_returns])) / .015
+                para_varbs["Para Dist Velocity"] = np.median(np.diff([x[2] for x in pmap_returns])) / .015
                 fish_bout = self.fishmodel.model(para_varbs)
                 dx, dy, dz = sphericalbout_to_xyz(fish_bout[0],
                                                   fish_bout[1],
@@ -387,37 +391,39 @@ class PreyCap_Simulation:
                                                   fish_basis[1],
                                                   fish_basis[3],
                                                   fish_basis[2])
+                
                 if self.interpolate != 'none':
                     if self.interpolate == 'kernel':
-                        kernel = normalize_kernel(self.velocity_kernel,
-                                                  self.bout_durations[self.bout_counter])
-                        x_prog = (np.cumsum(dx * kernel) + self.fish_xyz[-1][0]).tolist()
-                        y_prog = (np.cumsum(dy * kernel) + self.fish_xyz[-1][1]).tolist()
-                        z_prog = (np.cumsum(dz * kernel) + self.fish_xyz[-1][2]).tolist()
+                        vkernel = normalize_kernel(self.velocity_kernel,
+                                                   self.bout_durations[self.bout_counter])
+
+                        ykernel = normalize_kernel_interp(self.yaw_kernel,
+                                                          self.bout_durations[self.bout_counter])
+
+                        # if self.bout_durations[self.bout_counter] <= len(self.yaw_kernel):
+                        #     ykernel = normalize_kernel(self.yaw_kernel,
+                        #                                self.bout_durations[self.bout_counter])
+                        # else:
+                        #     ykernel_prenorm = self.yaw_kernel.tolist() + [
+                        #         0 for i in range(self.bout_durations[self.bout_counter] - len(self.yaw_kernel))]
+                        #     ykernel = normalize_kernel(ykernel_prenorm, self.bout_durations[self.bout_counter])
+                            
+                        x_prog = (np.cumsum(dx * vkernel) + self.fish_xyz[-1][0]).tolist()
+                        y_prog = (np.cumsum(dy * vkernel) + self.fish_xyz[-1][1]).tolist()
+                        z_prog = (np.cumsum(dz * vkernel) + self.fish_xyz[-1][2]).tolist()
                         yp_interp_win = np.min([5, self.bout_durations[self.bout_counter]])
                         remainder = self.bout_durations[self.bout_counter] - yp_interp_win
-                        yaw_prog = np.linspace(
+                        yaw_prog_int = np.linspace(
                             self.fish_yaw[-1],
                             self.fish_yaw[-1] + fish_bout[4],
                             yp_interp_win).tolist()
-                        pitch_prog = np.linspace(
-                            self.fish_pitch[-1],
-                            self.fish_pitch[-1] + fish_bout[3], yp_interp_win).tolist()
-                        yaw_prog += [yaw_prog[-1] for i in range(remainder)]
-                        pitch_prog += [pitch_prog[-1] for i in range(remainder)]
-                        print("YAW LENGTH")
-                        print len(yaw_prog)
-                        print("XYZ LENGTH")
-                        print len(x_prog)
-                        print("kernel length")
-                        print len(kernel)
-                        print("Bout duration")
-                        print self.bout_durations[self.bout_counter]
-                        print("remainder")
-                        print remainder
-                        print("yp interp win")
-                        print yp_interp_win
-
+                        # pitch_prog = np.linspace(
+                        #     self.fish_pitch[-1],
+                        #     self.fish_pitch[-1] + fish_bout[3], yp_interp_win).tolist()
+                        # yaw_prog = yaw_prog_int + [yaw_prog_int[-1] for i in range(remainder)]
+                        # pitch_prog += [pitch_prog[-1] for i in range(remainder)]
+                        yaw_prog = (np.cumsum(fish_bout[4] * ykernel) + self.fish_yaw[-1]).tolist()
+                        pitch_prog = (np.cumsum(fish_bout[3] * vkernel) + self.fish_pitch[-1]).tolist()                        
                         
                     elif self.interpolate == 'linear':
                         x_prog = np.linspace(
@@ -876,7 +882,7 @@ def model_wrapper(rfo, strike_params, para_model, model_params, *hunt_id):
         for mi, model_run in enumerate(model_params):
             print("Running " + model_run["Model Type"] + " on hunt " + str(hid))
             try:
-                fish = FishModel(model_run, strike_params, rfo, h_ind, model_run["Spherical Bouts"]))
+                fish = FishModel(model_run, strike_params, rfo, h_ind, model_run["Spherical Bouts"])
             except KeyError:
                 fish = FishModel(model_run, strike_params, rfo, h_ind)
             try:
@@ -944,10 +950,13 @@ if __name__ == "__main__":
     csv_file = 'huntbouts_rad.csv'
     hb = pd.read_csv(csv_file)
     fish_id = '042318_6'
-    nocut = pd.read_pickle(
-        os.getcwd() + '/' + fish_id + '/RealHuntData_' + fish_id + '_nocut.pkl')
-    fivecut =  pd.read_pickle(
-         os.getcwd() + '/' + fish_id + '/RealHuntData_' + fish_id + '_fivecut.pkl')
+    rfo = pd.read_pickle(
+        os.getcwd() + '/' + fish_id + '/RealHuntData_' + fish_id + '.pkl')
+
+    # nocut = pd.read_pickle(
+    #     os.getcwd() + '/' + fish_id + '/RealHuntData_' + fish_id + '_nocut.pkl')
+    # fivecut =  pd.read_pickle(
+    #      os.getcwd() + '/' + fish_id + '/RealHuntData_' + fish_id + '_fivecut.pkl')
     para_model = pickle.load(open(os.getcwd() + '/pmm.pkl', 'rb'))
     np.random.seed()
     sequence_length = 10000
@@ -956,8 +965,8 @@ if __name__ == "__main__":
     #                        for b in [real_fish_object.model_input(i)
     #                                  for i in range(len(real_fish_object.hunt_ids))]]
     str_refractory_list = [b["Interbouts"][-1] - b["Bout Durations"][-2]
-                           for b in [fivecut.model_input(i)
-                                     for i in range(len(fivecut.hunt_ids))]]
+                           for b in [rfo.model_input(i)
+                                     for i in range(len(rfo.hunt_ids))]]
     # str_refractory_list = [b["Interbouts"][-1] - b["Bout Durations"][-2]
     #                        for b in [fivecut.model_input(i)
     #                                  for i in range(len(fivecut.hunt_ids))]]
@@ -993,24 +1002,24 @@ if __name__ == "__main__":
                 {"Model Type": "Regression", "Real or Sim": "Real", "Extrapolate Para": 20}, 
                 {"Model Type": "Regression", "Real or Sim": "Real", "Extrapolate Para": 50}]
 
-    modlist4 = [{"Model Type": "Real Coords", "Real or Sim": "Real"},
-                {"Model Type": "Real Bouts", "Real or Sim": "Real"},
-                {"Model Type": "Regression", "Real or Sim": "Real"},
-                {"Model Type": "Regression", "Real or Sim": "Real", "Extrapolate Para": 15},
-                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All"}
-                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All", "Extrapolate Para": 20}]
-
-
     # modlist4 = [{"Model Type": "Real Coords", "Real or Sim": "Real"},
-    #             {"Model Type": "Real Bouts", "Real or Sim": "Real"}]
+    #             {"Model Type": "Real Bouts", "Real or Sim": "Real"},
+    #             {"Model Type": "Regression", "Real or Sim": "Real"},
+    #             {"Model Type": "Regression", "Real or Sim": "Real", "Extrapolate Para": 15},
+    #             {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All"},
+    #             {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All", "Extrapolate Para": 20}]
+
+
+    modlist4 = [{"Model Type": "Real Coords", "Real or Sim": "Real"},
+                {"Model Type": "Real Bouts", "Real or Sim": "Real"}]
 
 
 
 
-    fivecut.huntbout_durations = nocut.huntbout_durations
+#    fivecut.huntbout_durations = nocut.huntbout_durations
     
 #    simlist, bpm = model_wrapper(real_fish_object, strike_params, para_model, modlist4)
-    simlist, bpm = model_wrapper(fivecut, strike_params, para_model, modlist4)
+    simlist, bpm = model_wrapper(rfo, strike_params, para_model, modlist4)
 
     # for i in real_fish_object.hunt_ids:
     #     simlist, bpm = view_and_sim_hunt(real_fish_object, strike_params, para_model, modlist4, i)
@@ -1020,13 +1029,13 @@ if __name__ == "__main__":
 #    score_and_view(simlist, 16, 17)
     total_bouts = [np.sum([b[0] for b in bp]) for bp in bpm]
     result_counts_per_model = [Counter([b[-1] for b in bp]) for bp in bpm]
-    results_per_hunt = single_hunt_results(real_fish_object, bpm, 6, modlist4)
+    results_per_hunt = single_hunt_results(rfo, bpm, 6, modlist4)
 
     print result_counts_per_model
     
-    # for i in range(len(real_fish_object.hunt_ids) * 2):
-    #     if i % 2 == 0:
-    #         score_and_view(simlist, i, i+1)
+    for i in range(len(rfo.hunt_ids) * 2):
+        if i % 2 == 0:
+            score_and_view(simlist, i, i+1)
 
 #    score_and_view(simlist, 2, 3)
     
