@@ -6,6 +6,7 @@ import datetime as dt
 from matplotlib.colors import Normalize, ListedColormap
 from matplotlib import pyplot as pl
 from matplotlib import gridspec
+import statsmodels.api as sm
 import matplotlib.cm as cm
 import seaborn as sb
 import pandas as pd
@@ -830,6 +831,20 @@ def characterize_strikes(hb_data):
     std = np.std(strike_characteristics, axis=0)
     return [avg_strike_position, std]
 
+def make_multiple_regression_model(hunt_db, vel_or_position):
+    if vel_or_position == 'velocity':
+        para_features = ["Para Az",
+                         "Para Az Velocity",
+                         "Para Alt",
+                         "Para Alt Velocity", "Para Dist", "Para Dist Velocity"]
+    elif vel_or_position == 'position':
+        para_features = ["Para Az",
+                         "Para Alt", "Para Dist"]
+    bout_features = ["Bout Az", "Bout Alt", "Bout Dist", "Bout Delta Yaw", "Bout Delta Pitch"]
+    mult_reg_mods = map(lambda bf: sm.OLS(bf, para_features), bout_features)
+    reg_lambdas = [lambda pfeatures: mlm.predict(pfeatures) for mrm in mult_reg_mods]
+    # this returns a list of functions that take all para features and return each element of a bout
+    return mult_reg_mods, reg_lambdas
 
 def view_and_sim_hunt(rfo, strike_params, para_model, model_params, hunt_id):
     realhunt_allframes(rfo, hunt_id)

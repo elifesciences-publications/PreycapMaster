@@ -5,8 +5,6 @@ import numpy as np
 import math
 from toolz.itertoolz import sliding_window
 from collections import Counter
-from matplotlib import use
-use('Qt4Agg')
 import matplotlib.pylab as pl
 import mpl_toolkits.mplot3d.axes3d as p3
 import seaborn as sb
@@ -114,10 +112,10 @@ class ParaMarkovModel:
             gen_states.append(int(state))
         return para_x, para_y, para_z, gen_states, vmax
 
-    def para_state_predictor(self, hunt_index, para_id, plotornot):
+    def para_state_predictor(self, hunt_index, para_id, plotornot, directory):
         print("Executing Prediction")
         p_3d = np.load(
-            os.getcwd() + '/Fish01/para3D' + str(
+            directory + '/para3D' + str(
                 hunt_index).zfill(2) + '.npy')
         vec_address = [ind for ind, ad in enumerate(self.vec_addresses)
                        if ad.tolist() == [hunt_index, para_id]][0]
@@ -126,12 +124,14 @@ class ParaMarkovModel:
             self.non_nan_velocity_indices[
                 vec_address][0] * self.spacing,
             self.non_nan_velocity_indices[vec_address][-1] * self.spacing]
-        para_x = p_3d[para_id*3][p_bounds[0]:p_bounds[1]][::self.spacing]
-        para_y = p_3d[(para_id*3) + 1][p_bounds[0]:p_bounds[1]][::self.spacing]
-        para_z = p_3d[(para_id*3) + 2][p_bounds[0]:p_bounds[1]][::self.spacing]
+        print p_bounds[0], p_bounds[1]
+        para_x = p_3d[para_id*3][p_bounds[0]:p_bounds[1]]
+        print len(para_x)
+        para_y = p_3d[(para_id*3) + 1][p_bounds[0]:p_bounds[1]]
+        para_z = p_3d[(para_id*3) + 2][p_bounds[0]:p_bounds[1]]
         if plotornot:
             stateplot_3d(para_x, para_y, para_z, states)
-        return states
+#        return states
 
     
 def magvector(vector):
@@ -140,6 +140,9 @@ def magvector(vector):
 
 
 def stateplot_3d(para_x, para_y, para_z, states):
+    states = np.concatenate([[x, x, x] for x in states])
+    print "Length of Para Record"
+    print len(para_x)
     fig = pl.figure(figsize=(12, 8))
     p_xy_ax = fig.add_subplot(131)
     p_xy_ax.set_title('XY COORDS')
@@ -156,7 +159,6 @@ def stateplot_3d(para_x, para_y, para_z, states):
     state_ax.set_xlim([0, len(para_x)])
     state_ax.set_title('PARA STATE')
     state_ax.set_aspect('auto', 'box-forced')
-    
     def updater(num, plotlist):
         if num < 1:
             return plotlist
@@ -169,7 +171,6 @@ def stateplot_3d(para_x, para_y, para_z, states):
         plotlist[1].set_data(px, pz)
         plotlist[2].set_data(state_x, state_y)
         return plotlist
-        
     p_xy_plot, = p_xy_ax.plot([], [], marker='.', ms=10)
     p_xz_plot, = p_xz_ax.plot([], [], marker='.', ms=10)
     state_plot, = state_ax.plot([], [], linewidth=1.0)
@@ -179,7 +180,7 @@ def stateplot_3d(para_x, para_y, para_z, states):
         updater,
         len(para_x),
         fargs=[p_list],
-        interval=1,
+        interval=3,
         repeat=True,
         blit=False)
 #        line_ani.save('test.mp4')
@@ -192,8 +193,9 @@ def stateplot_3d(para_x, para_y, para_z, states):
 
 if __name__ == '__main__':
 
+    directory = os.getcwd() + '/042318_6'
+    save_model = False
     np.random.seed()
-    save_model = True
     v = np.load('input.npy')
     va = np.load('vec_address.npy')
     spacing = np.load('spacing.npy')
@@ -202,7 +204,8 @@ if __name__ == '__main__':
     pmm.fit_hmm()
     if save_model:
         pmm.exporter()
-
+    pmm.para_state_predictor(6, 6, 2, directory)
+        
     # np.random.seed()
     # random_vec = v[int(np.random.random() * v.shape[0])][0]
     # print np.random.random()

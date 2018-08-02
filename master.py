@@ -1169,8 +1169,6 @@ class Experiment():
         ax2.plot(tailang)
         pl.show()
 
-
-
     def para_during_hunt(self, index, movies, hunt_wins):
         cv2.destroyAllWindows()
         showstats = False
@@ -1658,7 +1656,6 @@ class Experiment():
                 nb_wrt_heading.append(azimuth)
                 nb_wrt_heading.append(altitude)
                 temp_plist_h.append(nb_wrt_heading)
-                
             para_wrt_heading.append(temp_plist_h)
             wrth_xy.append(temp_xypara)
 
@@ -1890,13 +1887,14 @@ def pvec_wrapper(exp, hd):
         print h
         while True:
             try:
-                v, no_nan_inds, spacing = para_vec_plot(exp, h, p_id, 0)
-                nonan_indices.append(no_nan_inds)
+                v, no_nan_inds, spacing = para_vec_explorer(exp, h, p_id, 0)
             except IndexError:
                 p_id = 0
                 break
-            vec_address.append([h, p_id])
-            vecs.append(v)
+            if v != []:
+                nonan_indices.append(no_nan_inds)
+                vec_address.append([h, p_id])
+                vecs.append(v)
             p_id += 1
 #    all_l, all_v = concat_vecs(vecs)
     np.save('vec_address.npy', vec_address)
@@ -1906,7 +1904,7 @@ def pvec_wrapper(exp, hd):
     return vecs, vec_address
         
 
-def para_vec_plot(exp, h_id, p_id, animate):
+def para_vec_explorer(exp, h_id, p_id, animate):
     penv = ParaEnv(h_id, exp.directory)
     penv.find_paravectors(False)
     pvec = []
@@ -1915,16 +1913,17 @@ def para_vec_plot(exp, h_id, p_id, animate):
     # what you might have to do here is define non-nan bounds. only
     #incorporate non-nan stretches. pomegranate doesn't take nans.
     p_index = 0
-    for dot, vec, vel in zip(
-            penv.dotprod[p_id],
-            penv.paravectors[p_id][0][1:],
-            penv.velocity_mags[p_id][1:]):
-            if np.isfinite(vec).all():
-                pvec.append(vec)
-                non_nan_indices.append(p_index)
-                dp.append(dot)
-            p_index += 1
-    
+    avg_vel = np.nanmean(penv.velocity_mags[p_id][1:]) / penv.vector_spacing
+    if avg_vel > 1:
+        for dot, vec, vel in zip(
+                penv.dotprod[p_id],
+                penv.paravectors[p_id][0][1:],
+                penv.velocity_mags[p_id][1:]):
+                if np.isfinite(vec).all():
+                    pvec.append(vec)
+                    non_nan_indices.append(p_index)
+                    dp.append(dot)
+                p_index += 1
     if animate < 1:
         return pvec, non_nan_indices, penv.vector_spacing
     graph_3D = pl.figure(figsize=(16, 8))
@@ -1998,10 +1997,6 @@ def para_vec_plot(exp, h_id, p_id, animate):
 #        line_ani.save('test.mp4')
         pl.show()
     return pvec, non_nan_indices, penv.vector_spacing
-
-        
-
-
     
 def para_state_plot(hd, exp):
     hunt_inds = hd.hunt_ind_list
@@ -2207,7 +2202,7 @@ def hunted_para_descriptor(dim, exp, hd):
               'Para Dist',
               'Para Az Velocity',
               'Para Alt Velocity',
-              'Para Dist velocity',
+              'Para Dist Velocity',
               'Postbout Para Az',
               'Postbout Para Alt',
               'Postbout Para Dist',
@@ -2798,26 +2793,6 @@ def nearwall(x_init, y_init, z_init, ha_init, pitch_init, wall_thresh):
     else:
         return False
 
-
-def fixmappings(exp, dim, hd):
-    for hunt_id in hd.hunt_ind_list:
-        init_frame = exp.bout_frames[dim.hunt_wins[hunt_id][0]]
-        abort_frame = exp.bout_frames[dim.hunt_wins[hunt_id][1]]
-        integ_window = exp.integration_window
-        post_frames = exp.integration_window
-        window = [init_frame - integ_window,
-                  abort_frame + post_frames]
-        exp.paradata = ParaMaster(window[0], window[1], exp.directory)
-        exp.paradata.para3Dcoords = np.load(myexp.directory +
-                                            '/para3D' +
-                                            str(hunt_id).zfill(2) + '.npy')
-        exp.framewindow = window
-        exp.map_bouts_to_heading(hunt_id, dim.hunt_wins)
-        exp.map_para_to_heading(hunt_id)
-    hunted_para_descriptor(dim, exp, hd)
-    para_stimuli(dim, exp, hd)
-
-    
 # before implementing this in full in the bout detector,
 # add these extensions to the current bout_durations as
 # indicated in the main line comments.(i.e. first
@@ -3169,7 +3144,6 @@ if __name__ == '__main__':
 
 
 
-
 # # IF YOU WANT TO MESS WITH THIS, NOW YOU HAVE TO CALL IT ON MYEXP.BOUTS BY TAIL
 # # CURRENTLY, MYEXP BOUTS ARE ALL VEL DRIVEN.
 
@@ -3180,7 +3154,8 @@ if __name__ == '__main__':
 #    vel_ends, tvl = find_velocity_ends(myexp, .1)
  #   plot_bout_calls(myexp, vel_ends, tvl)
 
-    rf = hunted_para_descriptor(dim, myexp, hd)
+#    rf = hunted_para_descriptor(dim, myexp, hd)
     # k = yaw_kernel(myexp, 'hunts', hd, dim)[:-1]
     # v = velocity_kernel(myexp, 'hunts', hd, dim)
 
+    vecs, vec_addresses = pvec_wrapper(myexp, hd)
