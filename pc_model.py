@@ -225,13 +225,13 @@ class PreyCap_Simulation:
         if self.simulate_para:
             p_start_position = np.array([
                 self.para_xyz[0][0], self.para_xyz[1][0], self.para_xyz[2][0]])
-            p_position_5 = np.array([
-                self.para_xyz[0][5], self.para_xyz[1][5], self.para_xyz[2][5]])
-            start_vector = p_position_5 - p_start_position
+            p_position_3 = np.array([
+                self.para_xyz[0][3], self.para_xyz[1][3], self.para_xyz[2][3]])
+            start_vector = p_position_3 - p_start_position
             para_initial_conditions = [p_start_position, start_vector]
-            px, py, pz, states, vmax = self.paramodel.generate_para(
+            px, py, pz, states, vmax = self.paramodel.generate_model_para(
                 para_initial_conditions[1],
-                para_initial_conditions[0], self.sim_length)
+                para_initial_conditions[0], self.sim_length, False)
             # resets para_xyz for generative model
             self.para_xyz = [np.array(px), np.array(py), np.array(pz)]
             self.para_states = states
@@ -321,7 +321,7 @@ class PreyCap_Simulation:
                                                            self.fishmodel.predict_forward_frames, framecounter)
                 else:
                     self.model_para_xyz = project_para([px, py, pz],
-                                                       5, self.fishmodel.predict_forward_frames, framecounter)
+                                                       self.fishmodel.firstbout_para_intwin, self.fishmodel.predict_forward_frames, framecounter)
 
             else:
                 self.model_para_xyz = [px[framecounter], py[framecounter], pz[framecounter]]
@@ -402,9 +402,9 @@ class PreyCap_Simulation:
                     pmap_returns.append(p_map_to_fish(fish_basis[1],
                                                       fish_basis[0],
                                                       fish_basis[3], fish_basis[2], p_xyz, 0))
-                para_varbs["Para Az Velocity"] = np.median(np.diff([x[0] for x in pmap_returns])) / .015
-                para_varbs["Para Alt Velocity"] = np.median(np.diff([x[1] for x in pmap_returns])) / .015
-                para_varbs["Para Dist Velocity"] = np.median(np.diff([x[2] for x in pmap_returns])) / .015
+                para_varbs["Para Az Velocity"] = np.mean(gaussian_filter(np.diff([x[0] for x in pmap_returns]), 1)) / .015
+                para_varbs["Para Alt Velocity"] = np.mean(gaussian_filter(np.diff([x[1] for x in pmap_returns]), 1)) / .015
+                para_varbs["Para Dist Velocity"] = np.mean(gaussian_filter(np.diff([x[2] for x in pmap_returns]), 1)) / .015
                 fish_bout = self.fishmodel.model(para_varbs)
                 dx, dy, dz = sphericalbout_to_xyz(fish_bout[0],
                                                   fish_bout[1],
@@ -561,7 +561,9 @@ class FishModel:
             self.model = (lambda pv: self.real_fish_bouts(pv))
         elif self.modchoice == "Real Coords":
             self.model = (lambda pv: self.real_fish_coords(pv))            
-        elif self.modchoice == "Regression":
+        elif self.modchoice in ["Independent Regression",
+                                "Multiple Regression Velocity",
+                                "Multiple Regression Position"]:
             self.model = (lambda pv: self.regression_model(pv))
         elif self.modchoice == "Bayes":
             self.model = (lambda pv: self.bdb_model(pv))
@@ -715,21 +717,36 @@ class FishModel:
                                best_bout['Bout Alt'],
                                best_bout['Bout Dist'], best_bout['Delta Pitch'], -1*best_bout['Delta Yaw']])
         return bout_array
-    
+
     def regression_model(self, para_varbs):
-        bout_az = (para_varbs['Para Az'] * 1.36) + .02
-        bout_yaw = -1 * ((.46 * para_varbs['Para Az']) - .02)
-        bout_alt = (1.5 * para_varbs['Para Alt']) + -.37
-        bout_pitch = (.27 * para_varbs['Para Alt']) - .04
-        bout_dist = (.09 * para_varbs['Para Dist']) + 29
-        bout_array = np.array([bout_az,
-                               bout_alt,
-                               bout_dist, bout_pitch, bout_yaw])
-        noise_array = np.ones(5)
-        # noise_array = np.array(
-        # [(np.random.random() * .4) + .8 for i in bout_array])
-        bout = bout_array * noise_array
-        return bout
+        if self.modchoice == "Multiple Regression Velocity":
+            p_input = [para_varbs["Para Az"],
+                       para_varbs["Para Alt"],
+                       para_varbs["Para Dist"],
+                       para_varbs["Para Az Velocity"], 
+                       para_varbs["Para Alt Velocity"],
+                       para_varbs["Para Dist Velocity"]]
+        elif self.modchoice == "Multiple Regression Position":
+            p_input = [para_varbs["Para Az"], para_varbs["Para Alt"], para_varbs["Para Dist"]]
+        elif self.modchoice == "Indpendent Linear Regression":
+            p_input = [para_varbs["Para Az"], para_varbs["Para Alt"], para_varbs["Para Dist"],
+                       para_varbs["Para Alt"], para_varbs["Para Az"]]
+        return np.array(self.regmod(p_input))
+
+    # def regression_model(self, para_varbs):
+    #     bout_az = (para_varbs['Para Az'] * 1.36) + .02
+    #     bout_yaw = -1 * ((.46 * para_varbs['Para Az']) - .02)
+    #     bout_alt = (1.5 * para_varbs['Para Alt']) + -.37
+    #     bout_pitch = (.27 * para_varbs['Para Alt']) - .04
+    #     bout_dist = (.09 * para_varbs['Para Dist']) + 29
+    #     bout_array = np.array([bout_az,
+    #                            bout_alt,
+    #                            bout_dist, bout_pitch, bout_yaw])
+    #     noise_array = np.ones(5)
+    #     # noise_array = np.array(
+    #     # [(np.random.random() * .4) + .8 for i in bout_array])
+    #     bout = bout_array * noise_array
+    #     return bout
 
     def bdb_model(self, para_varbs):
         invert = True
@@ -831,17 +848,27 @@ def characterize_strikes(hb_data):
     std = np.std(strike_characteristics, axis=0)
     return [avg_strike_position, std]
 
+def make_independent_regression_model(hunt_db, a):
+
+    mod_list = [sm.OLS(hunt_db["Bout Az"], hunt_db["Para Az"]),
+                sm.OLS(hunt_db["Bout Alt"], hunt_db["Para Alt"]),
+                sm.OLS(hunt_db["Bout Dist"], hunt_db["Para Dist"]),
+                sm.OLS(hunt_db["Bout Delta Pitch"], hunt_db["Para Alt"]),
+                sm.OLS(hunt_db["Bout Delta Yaw"], hunt_db["Para Az"])]
+    reg_lambdas = [lambda pfeature: lm.predict(pfeature) for lm in mod_list] 
+    return reg_lambdas
+
 def make_multiple_regression_model(hunt_db, vel_or_position):
     if vel_or_position == 'velocity':
         para_features = ["Para Az",
-                         "Para Az Velocity",
                          "Para Alt",
-                         "Para Alt Velocity", "Para Dist", "Para Dist Velocity"]
+                         "Para Dist", 
+                         "Para Az Velocity", "Para Alt Velocity", "Para Dist Velocity"]
     elif vel_or_position == 'position':
         para_features = ["Para Az",
                          "Para Alt", "Para Dist"]
-    bout_features = ["Bout Az", "Bout Alt", "Bout Dist", "Bout Delta Yaw", "Bout Delta Pitch"]
-    mult_reg_mods = map(lambda bf: sm.OLS(bf, para_features), bout_features)
+    bout_features = ["Bout Az", "Bout Alt", "Bout Dist", "Bout Delta Pitch", "Bout Delta Yaw"]
+    mult_reg_mods = map(lambda bf: sm.OLS(hunt_db[bf], hunt_db[para_features]), bout_features)
     reg_lambdas = [lambda pfeatures: mlm.predict(pfeatures) for mrm in mult_reg_mods]
     # this returns a list of functions that take all para features and return each element of a bout
     return mult_reg_mods, reg_lambdas
@@ -904,7 +931,7 @@ def score_similarity_and_view(simlist, ind1, ind2):
     sim1.score_model_similarity(plot_or_not, sim2)
     make_vr_movies(sim1, sim2)
     
-def model_wrapper(rfo, strike_params, para_model, model_params, *hunt_id):
+def model_wrapper(rfo, strike_params, para_model, model_params, hunt_db, *hunt_id):
     print("Executing Models")
     sim_list = []
     prev_interbouts = []
@@ -942,6 +969,15 @@ def model_wrapper(rfo, strike_params, para_model, model_params, *hunt_id):
                     fish.boutbound_prediction = True
                     fish.predict_forward_frames = model_run["Willie Mays"]
             except KeyError: pass
+
+            if model_run["Model Type"] == "Independent Regression":
+                fish.regmod = make_independent_regression_model(hunt_db)
+            elif model_run["Model Type"] == "Multiple Regression Velocity":
+                fish.regmod = make_multiple_regression_model(hunt_db, 'velocity')
+            elif model_run["Model Type"] == "Multiple Regression Position":
+                fish.regmod = make_multiple_regression_model(hunt_db, 'position')
+            else:
+                fish.regmod = []
             
             if model_run["Real or Sim"] == "Real":
                 sim = PreyCap_Simulation(

@@ -9,7 +9,7 @@ import matplotlib.pylab as pl
 import mpl_toolkits.mplot3d.axes3d as p3
 import seaborn as sb
 import matplotlib.animation as anim
-
+from scipy.ndimage import gaussian_filter, uniform_filter1d
 
 class ParaMarkovModel:
     def __init__(self, velocities, vec_addresses, spacing, nn):
@@ -61,8 +61,20 @@ class ParaMarkovModel:
         model.bake()
         model.fit(self.accels_filt)
         self.model = model
-    
-    def generate_para(self, start_vector, start_position, lensim):
+        
+    def generate_model_para(self,
+                            start_vector,
+                            start_position, lensim,
+                            vmax, plot_or_not, *states):
+
+        mean_vec_s0 = np.array(self.model.states[0].distribution.parameters[0])
+        cov_mat_s0 = np.array(self.model.states[0].distribution.parameters[1])
+        mean_vec_s1 = np.array(self.model.states[1].distribution.parameters[0])
+        cov_mat_s1 = np.array(self.model.states[1].distribution.parameters[1])
+
+        def sample_from_state_distribution(mv, cm):
+            acc_vector = np.random.multivariate_normal(mv, cm)
+            return acc_vector
 
         def draw_vmax():
             five_sec_filter = 300 / self.spacing
@@ -79,14 +91,11 @@ class ParaMarkovModel:
                 return True
             else:
                 return False
-            
+
+        if math.isnan(vmax):
+            vmax = draw_vmax()
+            print("Max Velocity: " + str(vmax))
         self.len_simulation = lensim
-        # vmax = np.mean(
-        #     np.concatenate(self.velocity_mags)) + 2 * np.std(
-        #         np.concatenate(self.velocity_mags))
-        vmax = draw_vmax()
-        print("Max Velocity")
-        print(vmax)
         gen_samples = self.model.sample(self.len_simulation, True)
         gen_states = []
         para_x = [start_position[0]]
@@ -103,16 +112,29 @@ class ParaMarkovModel:
             para_x.append(px)
             para_y.append(py)
             para_z.append(pz)
-            noise = gen_samples[0][i]
-            state = gen_samples[1][i+1].name
+            if states == ():
+                noise = gen_samples[0][i]
+                state = gen_samples[1][i+1].name
+            else:
+                state = states[i]
+                if state == 0:
+                    noise = sample_from_state_distribution(
+                        mean_vec_s0, cov_mat_s0)
+                elif state == 1:
+                    noise = sample_from_state_distribution(
+                        mean_vec_s1, cov_mat_s1)
             current_vel_vector += noise
             mag_current = magvector(current_vel_vector)
             if mag_current > vmax:
                 current_vel_vector *= vmax / mag_current
             gen_states.append(int(state))
+
+        if plot_or_not:
+            stateplot_3d(para_x, para_y, para_z, gen_states)
         return para_x, para_y, para_z, gen_states, vmax
 
-    def para_state_predictor(self, hunt_index, para_id, plotornot, directory):
+    def para_state_predictor(self, plotornot, directory, h_and_p):
+        hunt_index, para_id = h_and_p
         print("Executing Prediction")
         p_3d = np.load(
             directory + '/para3D' + str(
@@ -131,7 +153,7 @@ class ParaMarkovModel:
         para_z = p_3d[(para_id*3) + 2][p_bounds[0]:p_bounds[1]]
         if plotornot:
             stateplot_3d(para_x, para_y, para_z, states)
-#        return states
+        return states
 
     
 def magvector(vector):
@@ -186,7 +208,12 @@ def stateplot_3d(para_x, para_y, para_z, states):
 #        line_ani.save('test.mp4')
     pl.show()
 
-
+    
+def smooth_states(len_filter, states):
+    u_filter = 1.0 / len_filter * np.ones(len_filter)
+    smoothed_states = [np.sum(u_filter * np.array(
+        state_win)) for state_win in sliding_window(len_filter, states)]
+    return smoothed_states
 
 
     #here you will have animations of the para of interest in xy, xz, and xyz, side by side with the state call from the model. model.predict(vecs[hunt_index]) is your posterior on the states given the training data. 
@@ -194,60 +221,20 @@ def stateplot_3d(para_x, para_y, para_z, states):
 if __name__ == '__main__':
 
     directory = os.getcwd() + '/042318_6'
-    save_model = False
-    np.random.seed()
+    # save_model = False
+    # np.random.seed()
+    # # Vec Addresses are hunt and para within the hunt.
+    # # Vecs are velocity vectors in 3 frame windows
+    # # 
+    
     v = np.load('input.npy')
     va = np.load('vec_address.npy')
-    spacing = np.load('spacing.npy')
-    non_nans = np.load('no_nan_inds.npy')
-    pmm = ParaMarkovModel(v, va, spacing, non_nans)
-    pmm.fit_hmm()
-    if save_model:
-        pmm.exporter()
-    pmm.para_state_predictor(6, 6, 2, directory)
-        
-    # np.random.seed()
-    # random_vec = v[int(np.random.random() * v.shape[0])][0]
-    # print np.random.random()
-    # random_pos = [944, 944, 944]
-    # px, py, pz, states = pmm.generate_para(random_vec, random_pos)
-    # stateplot_3d(px, py, pz, states)
-    # predicted_states = pmm.para_state_predictor(115, 5, True)
-
-
-
-
-
-    
-
-   
-
-# SD limit is critical. High sd diff vectors are required for making the paramecium tumble. However, there is a set of vectors that are unreasonably high (probably from mistakes in tracking). If you set this at 20, para look like para and enter tumbling states with a frequency that I believe. However, there is no empirical reason for choosing 20. What this is is a decaying exponential of diff mags that probably have outliers. Using SD is incorrect b/c the dist is not gaussian. What you want is an outlier filter for an exponentially decaying diff mag distribution. I only went with 20 because this looked like the true tail of the distribution. 
-
-# NO MATTER WHAT THIS LIMIT PARA STILL GOES OUT OF CONTROL WITH VELOCITY AFTER INITIAL PROMISING BEHAVIOR!
-# WHat restricting the sd_limit does definitely do is allow the model to simulate small amplitude vectors, which it DOES, but still goes out of controL!
-
-
-
-
-# all_xdiffs = np.concatenate([np.array(vd)[:,0] for vd in vdiffs])
-# all_ydiffs = np.concatenate([np.array(vd)[:,1] for vd in vdiffs])
-# all_zdiffs = np.concatenate([np.array(vd)[:,2] for vd in vdiffs])
-
-
-
-
-
-
-
-
-#state is going to be 3 times shorter than the xyz coords it describes.
-# could also use sliding_Window instead and have a value for each xyzcoord.
-# this seems like a good idea. use sliding window of size 5. cut off the last 5 coords of para xyz. also make sure that the nan stretches only happen at the end and beginnign of the para records. can then simply filter pxyz for nans, and do that when making the vectors as well. if you are going to model the noise, you have to take 6 off the para xyz recs. can take it off the beginning as well so that each vector is a velocity pointing to where the para will be in 5 frames. 
-
-
-
-# KEY POINT. Para are probably not just drawing noise to the previous vector on each event. If they were, they'd get stuck in the maxima that are generated now. What happens is one in every 200 draws or so, the noise is large amplitude. When you add large amplitude noise to the velocity vector, the vector gets big. When this happens, you're in a feedback loop where the velocity oscilates around a central value for every vector BUT the bump. Can either add a damping factor or model the magnitude of each vector. 
-
-
-# you can draw the magnitude difference on each as well. if you sample magnitude differences and model them, you can get a transition of velocity states too. 
+    # spacing = np.load('spacing.npy')
+    # non_nans = np.load('no_nan_inds.npy')
+    # pmm = ParaMarkovModel(v, va, spacing, non_nans)
+    para_model = pickle.load(open(os.getcwd() + '/pmm.pkl', 'rb'))
+#     pmm.fit_hmm()
+#     if save_model:
+#         pmm.exporter()
+# #    pmm.para_state_predictor(6, 6, 2, directory)
+#     pmm.para_state_predictor(2, directory, va[0])

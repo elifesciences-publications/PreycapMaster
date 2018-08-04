@@ -1913,8 +1913,11 @@ def para_vec_explorer(exp, h_id, p_id, animate):
     # what you might have to do here is define non-nan bounds. only
     #incorporate non-nan stretches. pomegranate doesn't take nans.
     p_index = 0
-    avg_vel = np.nanmean(penv.velocity_mags[p_id][1:]) / penv.vector_spacing
-    if avg_vel > 1:
+    filt_velocity_mags = gaussian_filter(
+        penv.velocity_mags[p_id][1:], 1) / penv.vector_spacing
+#    avg_vel = np.nanmean(filt_velocity_mags)
+    top_percentile_vel = np.nanpercentile(filt_velocity_mags, 90)
+    if top_percentile_vel > 1.25:
         for dot, vec, vel in zip(
                 penv.dotprod[p_id],
                 penv.paravectors[p_id][0][1:],
@@ -2318,9 +2321,15 @@ def hunted_para_descriptor(dim, exp, hd):
                 pmap_returns.append(p_map_to_fish(uf,
                                                   ufish_origin,
                                                   uperp, upar, p_xyz, 0))
-            para_daz = np.median(np.diff([x[0] for x in pmap_returns])) / .015
-            para_dalt = np.median(np.diff([x[1] for x in pmap_returns])) / .015
-            para_ddist = np.median(np.diff([x[2] for x in pmap_returns])) / .015
+            para_daz = np.mean(
+                gaussian_filter(
+                    np.diff([x[0] for x in pmap_returns]), 1)) / .015
+            para_dalt = np.mean(
+                gaussian_filter(
+                    np.diff([x[1] for x in pmap_returns]), 1)) / .015
+            para_ddist = np.mean(
+                gaussian_filter(
+                    np.diff([x[2] for x in pmap_returns]), 1)) / .015
                         
 #    uf = exp.ufish[hunt_bout_frames[ind]]
 #    etc with uperp, origin, upar
