@@ -14,6 +14,8 @@ import os
 import math
 from toolz.itertoolz import partition
 from para_hmm_final import ParaMarkovModel
+import collections
+import functools
 import pomegranate
 import bayeslite as bl
 from iventure.utils_bql import query
@@ -229,10 +231,15 @@ class PreyCap_Simulation:
                 self.para_xyz[0][3], self.para_xyz[1][3], self.para_xyz[2][3]])
             start_vector = p_position_3 - p_start_position
             para_initial_conditions = [p_start_position, start_vector]
-            px, py, pz, states, vmax = self.paramodel.generate_model_para(
-                para_initial_conditions[1],
-                para_initial_conditions[0], self.sim_length, False)
+            if self.para_states == []:
+                px, py, pz, states, vmax = self.paramodel.generate_model_para(
+                    para_initial_conditions[1],
+                    para_initial_conditions[0], self.sim_length, False)
             # resets para_xyz for generative model
+            else:
+                px, py, pz, states, vmax = self.paramodel.generate_model_para(
+                    para_initial_conditions[1],
+                    para_initial_conditions[0], self.sim_length, False, self.para_states)
             self.para_xyz = [np.array(px), np.array(py), np.array(pz)]
             self.para_states = states
 
@@ -848,8 +855,36 @@ def characterize_strikes(hb_data):
     std = np.std(strike_characteristics, axis=0)
     return [avg_strike_position, std]
 
-def make_independent_regression_model(hunt_db, a):
 
+class Memoize:
+    def __init__(self, f):
+        self.f = f
+        self.memo = {}
+    def __call__(self, *args):
+        if not args in self.memo:
+            self.memo[args] = self.f(*args)
+        return self.memo[args]
+
+class memoized(object):
+    def __init__(self, func):
+        self.func = func
+        self.cache = {}
+    def __call__(self, *args):
+        if not isinstance(args, collections.Hashable):
+            return self.func(*args)
+        if args in self.cache:
+            return self.cache[args]
+        else:
+            value = self.func(*args)
+            self.cache[args] = value
+            return value
+    def __repr__(self):
+        return self.func.__doc__
+    def __get__(self, obj, objtype):
+        return functools.partial(self.__call__, obj)
+
+def make_independent_regression_model(hunt_db):
+    print('Building Independent Reg Model')
     mod_list = [sm.OLS(hunt_db["Bout Az"], hunt_db["Para Az"]),
                 sm.OLS(hunt_db["Bout Alt"], hunt_db["Para Alt"]),
                 sm.OLS(hunt_db["Bout Dist"], hunt_db["Para Dist"]),
@@ -859,6 +894,7 @@ def make_independent_regression_model(hunt_db, a):
     return reg_lambdas
 
 def make_multiple_regression_model(hunt_db, vel_or_position):
+    print('Building Multiple Reg Model')
     if vel_or_position == 'velocity':
         para_features = ["Para Az",
                          "Para Alt",
@@ -872,6 +908,7 @@ def make_multiple_regression_model(hunt_db, vel_or_position):
     reg_lambdas = [lambda pfeatures: mlm.predict(pfeatures) for mrm in mult_reg_mods]
     # this returns a list of functions that take all para features and return each element of a bout
     return mult_reg_mods, reg_lambdas
+
 
 def view_and_sim_hunt(rfo, strike_params, para_model, model_params, hunt_id):
     realhunt_allframes(rfo, hunt_id)
@@ -971,11 +1008,11 @@ def model_wrapper(rfo, strike_params, para_model, model_params, hunt_db, *hunt_i
             except KeyError: pass
 
             if model_run["Model Type"] == "Independent Regression":
-                fish.regmod = make_independent_regression_model(hunt_db)
+                fish.regmod = independent_regression_model
             elif model_run["Model Type"] == "Multiple Regression Velocity":
-                fish.regmod = make_multiple_regression_model(hunt_db, 'velocity')
+                fish.regmod = multiple_regression_model_velocity
             elif model_run["Model Type"] == "Multiple Regression Position":
-                fish.regmod = make_multiple_regression_model(hunt_db, 'position')
+                fish.regmod = multiple_regression_model_position
             else:
                 fish.regmod = []
             
@@ -985,7 +1022,8 @@ def model_wrapper(rfo, strike_params, para_model, model_params, hunt_db, *hunt_i
                     para_model,
                     sequence_length,
                     False)
-            elif model_run["Real or Sim"] == "Sim":
+            # else accounts for Sim entry or entry of para states    
+            else:
                 # this allows same para sim to be run on all models for each hunt
                 # if you want to run multiple sims per hunt, just submit the same dictionary
                 # list with no real hunts in it.           
@@ -995,6 +1033,8 @@ def model_wrapper(rfo, strike_params, para_model, model_params, hunt_db, *hunt_i
                         para_model,
                         sequence_length,
                         True)
+                    if type(model_run["Real or Sim"]) == list:
+                        sim.para_states = model_run["Real or Sim"]
                     sim_created = True 
                     
                 else:
@@ -1015,6 +1055,7 @@ def model_wrapper(rfo, strike_params, para_model, model_params, hunt_db, *hunt_i
             if pause_wrapper:            
                 r = raw_input('Press Enter to Continue')
     return sim_list
+
     
 def yaw_fix(dy_input):
     dyaw = []
@@ -1068,7 +1109,10 @@ if __name__ == "__main__":
     fish_id = '042318_6'
     rfo = pd.read_pickle(
         os.getcwd() + '/' + fish_id + '/RealHuntData_' + fish_id + '.pkl')
-
+    independent_regression_model = make_independent_regression_model(hb)
+    multiple_regression_model_velocity = make_multiple_regression_model(hb, 'velocity')
+    multiple_regression_model_position = make_multiple_regression_model(hb, 'position')
+    
     # nocut = pd.read_pickle(
     #     os.getcwd() + '/' + fish_id + '/RealHuntData_' + fish_id + '_nocut.pkl')
     # fivecut =  pd.read_pickle(
@@ -1105,10 +1149,10 @@ if __name__ == "__main__":
     # modlist4 = [{"Model Type": "Real Coords", "Real or Sim": "Real"},
     #             {"Model Type": "Real Bouts", "Real or Sim": "Real"}, ]
 
-    simlist = model_wrapper(rfo, strike_params, para_model, modlist4)
-    ms = score_summary(simlist, modlist4, 0)
-    sq = score_query("Result", ms, lambda x: Counter(x))
-    print sq
+    # simlist = model_wrapper(rfo, strike_params, para_model, modlist4)
+    # ms = score_summary(simlist, modlist4, 0)
+    # sq = score_query("Result", ms, lambda x: Counter(x))
+    # print sq
 
 
     
