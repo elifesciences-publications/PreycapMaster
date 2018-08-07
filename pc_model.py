@@ -234,12 +234,12 @@ class PreyCap_Simulation:
             if self.para_states == []:
                 px, py, pz, states, vmax = self.paramodel.generate_model_para(
                     para_initial_conditions[1],
-                    para_initial_conditions[0], self.sim_length, False)
+                    para_initial_conditions[0], self.sim_length, , -1, False)
             # resets para_xyz for generative model
             else:
                 px, py, pz, states, vmax = self.paramodel.generate_model_para(
                     para_initial_conditions[1],
-                    para_initial_conditions[0], self.sim_length, False, self.para_states)
+                    para_initial_conditions[0], self.sim_length, -1, False, self.para_states)
             self.para_xyz = [np.array(px), np.array(py), np.array(pz)]
             self.para_states = states
 
@@ -738,7 +738,10 @@ class FishModel:
         elif self.modchoice == "Indpendent Linear Regression":
             p_input = [para_varbs["Para Az"], para_varbs["Para Alt"], para_varbs["Para Dist"],
                        para_varbs["Para Alt"], para_varbs["Para Az"]]
-        return np.array(self.regmod(p_input))
+        bout = self.regmod(p_input)
+        # invert bout delta yaw
+        bout[-1] *= -1
+        return np.array(bout)
 
     # def regression_model(self, para_varbs):
     #     bout_az = (para_varbs['Para Az'] * 1.36) + .02
@@ -855,16 +858,8 @@ def characterize_strikes(hb_data):
     std = np.std(strike_characteristics, axis=0)
     return [avg_strike_position, std]
 
-
-class Memoize:
-    def __init__(self, f):
-        self.f = f
-        self.memo = {}
-    def __call__(self, *args):
-        if not args in self.memo:
-            self.memo[args] = self.f(*args)
-        return self.memo[args]
-
+# This is a decorator that you can put in front of a function
+# with @. Doesn't work on dicts or pandas dfs b/c not hashable. 
 class memoized(object):
     def __init__(self, func):
         self.func = func
@@ -1110,8 +1105,8 @@ if __name__ == "__main__":
     rfo = pd.read_pickle(
         os.getcwd() + '/' + fish_id + '/RealHuntData_' + fish_id + '.pkl')
     independent_regression_model = make_independent_regression_model(hb)
-    multiple_regression_model_velocity = make_multiple_regression_model(hb, 'velocity')
-    multiple_regression_model_position = make_multiple_regression_model(hb, 'position')
+    mod_params_v, multiple_regression_model_velocity = make_multiple_regression_model(hb, 'velocity')
+    mod_params_p, multiple_regression_model_position = make_multiple_regression_model(hb, 'position')
     
     # nocut = pd.read_pickle(
     #     os.getcwd() + '/' + fish_id + '/RealHuntData_' + fish_id + '_nocut.pkl')

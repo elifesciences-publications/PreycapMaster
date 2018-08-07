@@ -144,14 +144,10 @@ class Hunt_Descriptor:
         iw = copy.deepcopy(exp.paradata.interp_indices)
         unique_wins = [k for k, a in itertools.groupby(iw)]
         inferred_windows_poi = [np.array(win[1]) - cont_win
-                                for win in unique_wins if win[0] == [poi]]
+                                for win in unique_wins if win[0] == poi]
         if inferred_windows_poi != []:
             inferred_windows_poi = np.concatenate(inferred_windows_poi)
-            if type(inferred_windows_poi[0]) == np.int64:
-                inferred_window_ranges_poi = [range(
-                    inferred_windows_poi[0], inferred_windows_poi[1])]
-            else:
-                inferred_window_ranges_poi = [
+            inferred_window_ranges_poi = [
                     range(win[0], win[1]) for win in inferred_windows_poi]
         self.interp_windows.append(inferred_window_ranges_poi)
 
@@ -162,7 +158,7 @@ class Hunt_Descriptor:
         print self.boutrange
 
     def remove_entry(self, h_id):
-        ind = np.where(np.array(self.hunt_ind_list == h_id))[0][0]
+        ind = np.where(np.array(self.hunt_ind_list) == h_id)[0][0]
         del self.hunt_ind_list[ind]
         del self.para_id_list[ind]
         del self.actions[ind]
@@ -188,7 +184,7 @@ class Hunt_Descriptor:
 # 	   Reorientation and abort = 7,
 #       3) Range of bouts within hunt. Enter as tuple
 #       4) enter myexp
-#       5) enter True if you assigned max Z, false otherwise
+
 
         
 # for each para env, you will get a coordinate matrix that is scalexscalexscale, representing
@@ -550,7 +546,8 @@ class DimensionalityReduce():
                                self.cluster_membership)):
             if win[0] in self.hunt_cluster:
                 self.hunt_wins.append([ind, ind + start_bouts_per_hunt])
-
+        self.exporter()
+                
     def extend_hunt_window(self, exp, numbouts):
         self.hunt_wins[exp.current_hunt_ind][1] += numbouts
         self.exporter()
@@ -558,6 +555,7 @@ class DimensionalityReduce():
     def reset_hunt_window(self, exp):
         orig = self.hunt_wins[exp.current_hunt_ind][0]
         self.hunt_wins[exp.current_hunt_ind] = [orig, orig+10]
+        self.exporter()
 
 # one bug is deconverge_cluster should be cleared when find_hunts is called        
     def cap_hunt_window(self, exp):
@@ -1033,12 +1031,16 @@ class Experiment():
         self.bout_data = all_bout_data
         self.bout_durations = filtered_bout_durations
         self.bout_frames = filtered_bout_frames
+        if self.bout_frames[0] < 0:
+            self.bout_data = self.bout_data[1:]
+            self.bout_durations = self.bout_durations[1:]
+            self.bout_frames = self.bout_frames[1:]
         self.rejected_bouts = rejected_bouts
         print len(self.bout_data)
 # Now create flags for each bout.
 #bout_number is the id of the bout, bout_frame is which frame it occurs in in the ir only movies. 
 
-        for bout_number, bout_frame in enumerate(filtered_bout_frames):
+        for bout_number, bout_frame in enumerate(self.bout_frames):
             bout = [bout_frame, bout_frame + self.bout_durations[bout_number]]
             flags = []
             num_nans = np.sum(self.nans_in_original[bout[0]:bout[1]])
@@ -1175,11 +1177,11 @@ class Experiment():
         pl.ioff()
         directory = self.directory + '/'
         init_frame = self.bout_frames[hunt_wins[index][0]]
-        abort_frame = self.bout_frames[hunt_wins[index][1]]
+        end_frame = self.bout_frames[hunt_wins[index][1]]
         integ_window = self.integration_window
-        post_frames = self.bout_durations[hunt_wins[index][1]]
+        post_frames = self.bout_durations[hunt_wins[index][1]] + 1
         window = [init_frame - self.para_continuity_window - integ_window,
-                  abort_frame + post_frames]
+                  end_frame + post_frames]
         if window[0] < 0:
             return False
         self.paradata = return_paramaster_object(window[0],
@@ -1897,12 +1899,12 @@ def pvec_wrapper(exp, hd):
                 vecs.append(v)
             p_id += 1
 #    all_l, all_v = concat_vecs(vecs)
-    np.save('vec_address.npy', vec_address)
-    np.save('input.npy', vecs)
-    np.save('no_nan_inds.npy', nonan_indices)
-    np.save('spacing.npy', spacing)
+    np.save(exp.directory + '/para_vec_address.npy', vec_address)
+    np.save(exp.directory + '/para_velocity_input.npy', vecs)
+    np.save(exp.directory + '/no_nan_inds.npy', nonan_indices)
+    np.save(exp.directory + '/spacing.npy', spacing)
     return vecs, vec_address
-        
+
 
 def para_vec_explorer(exp, h_id, p_id, animate):
     penv = ParaEnv(h_id, exp.directory)
@@ -2057,6 +2059,34 @@ def csv_data(headers, datavals, file_id, directory):
             output_data.writerow(dt)
 
 
+# CALL THESE TWO FUNCTIONS AT THE END.             
+
+def grab_all_spherical_bouts(fish_directories):
+    sb_count_per_fish = []
+    shb_count_per_fish = []
+    all_spherical_bouts = []
+    all_spherical_huntbouts = []
+    for drct in fish_directories:
+        try:
+            rfo = pd.read_pickle(
+                os.getcwd() + '/' + drct + '/RealHuntData_' + drct + '.pkl')
+        except IOError:
+            sb_count_per_fish.append(0)
+            shb_count_per_fish.append(0)
+            continue
+        
+        all_spherical_bouts += rfo.all_spherical_bouts
+        all_spherical_huntbouts += rfo.all_spherical_huntbouts
+        sb_count_per_fish.append(len(rfo.all_spherical_bouts))
+        shb_count_per_fish.append(len(rfo.all_spherical_huntbouts))
+    spherical_bout_dict = {"Spherical Bouts": all_spherical_bouts,
+                           "Spherical HBs": all_spherical_huntbouts,
+                           "SB Count": sb_count_per_fish,
+                           "SHB Count": shb_count_per_fish,
+                           "Fish": fish_directories}
+    return spherical_bout_dict
+
+            
 def all_data_to_csv(directories):
     with open(
             '/Users/nightcrawler2/PreycapMaster/all_huntbouts.csv',
@@ -2271,7 +2301,6 @@ def hunted_para_descriptor(dim, exp, hd):
         norm_bf_raw = [hbf - hunt_bout_frames[0] for hbf in hunt_bout_frames]
         # int win is added because createpoirec cointains it. have to go beyond        # it to get relevant para coords. 
         norm_bf = map(lambda(x): x+int_win, norm_bf_raw)
-        framewin = exp.refract
         # these are normed to the hunting bout so that first bout is 0.
         endhunt = False
         for ind, bout in enumerate(hunt_bouts):
@@ -2294,7 +2323,7 @@ def hunted_para_descriptor(dim, exp, hd):
             for infwin in iws:
                 if np.intersect1d(
                         range(
-                            norm_frame-framewin,
+                            norm_frame-realfish.firstbout_para_intwin,
                             norm_frame),
                         infwin).any():
                     inferred_coordinate = 1
@@ -2303,13 +2332,6 @@ def hunted_para_descriptor(dim, exp, hd):
             para_az = filt_az[norm_frame]
             para_alt = filt_alt[norm_frame]
             para_dist = filt_dist[norm_frame]
-#            para_dist = dist[norm_frame]
-            # para_daz = np.nanmedian(
-            #     np.diff(filt_az)[norm_frame-framewin:norm_frame])
-            # para_dalt = np.nanmedian(
-            #     np.diff(filt_alt)[norm_frame-framewin:norm_frame])
-            # para_ddist = np.nanmedian(
-            #     np.diff(filt_dist)[norm_frame-framewin:norm_frame])
             pxyz_temp = para_xyz[:, norm_bf_raw[
                     ind]:norm_bf_raw[ind]+realfish.firstbout_para_intwin].T
             uf = exp.ufish[hunt_bout_frames[ind]]
@@ -2321,43 +2343,28 @@ def hunted_para_descriptor(dim, exp, hd):
                 pmap_returns.append(p_map_to_fish(uf,
                                                   ufish_origin,
                                                   uperp, upar, p_xyz, 0))
-            para_daz = np.mean(
+            para_daz = np.nanmean(
                 gaussian_filter(
                     np.diff([x[0] for x in pmap_returns]), 1)) / .015
-            para_dalt = np.mean(
+            para_dalt = np.nanmean(
                 gaussian_filter(
                     np.diff([x[1] for x in pmap_returns]), 1)) / .015
-            para_ddist = np.mean(
+            para_ddist = np.nanmean(
                 gaussian_filter(
                     np.diff([x[2] for x in pmap_returns]), 1)) / .015
-                        
-#    uf = exp.ufish[hunt_bout_frames[ind]]
-#    etc with uperp, origin, upar
-#    assign_to_az, alt, dist lists
-#     for xyz in pxyz_temp:
-#        p_map_to_fish(uf,
-#                      uf_origin, u_prp, u_paral, p_xyz, p_index,0):
-
-
-            
             # this exception is no longer required as I built the last bout duration into the para_during_hunt function
-            try:
-                postbout_az = filt_az[norm_frame+bout_dur]
-                postbout_alt = filt_alt[norm_frame+bout_dur]
-                postbout_dist = filt_dist[norm_frame+bout_dur]
-            except IndexError:
-                postbout_az = filt_az[-1]
-                postbout_alt = filt_alt[-1]
-                postbout_dist = filt_dist[-1]
+#            try:
+            postbout_az = filt_az[norm_frame+bout_dur]
+            postbout_alt = filt_alt[norm_frame+bout_dur]
+            postbout_dist = filt_dist[norm_frame+bout_dur]
+        # except IndexError:
+            #     postbout_az = filt_az[-1]
+            #     postbout_alt = filt_alt[-1]
+            #     postbout_dist = filt_dist[-1]
             if br[1] < 0:
-                if br[1] == -100:
-                    if ind == len(hunt_bouts) - 1:
-                        endhunt = True
-                        last_bout = br[1]
-                elif ind == len(hunt_bouts) + br[1]:
+                if ind == len(hunt_bouts) + br[1]:
                     endhunt = True
                     last_bout = br[1]
-
             else:
                 if ind == br[1]:
                     endhunt = True
@@ -2417,11 +2424,11 @@ def hunted_para_descriptor(dim, exp, hd):
     sbouts = exp.all_spherical_bouts(False)
     fsb = exp.filtered_spherical_bouts(sbouts)
     shbs = exp.spherical_huntbouts(fsb, hd, dim)
-    nhbs = [f for f in fsb if f not in shbs]
+    # nhbs = [f for f in fsb if f not in shbs]
     realfish.all_spherical_bouts = fsb
     realfish.all_spherical_huntbouts = shbs
-    velocity_kernel(exp, 'hunts', hd, dim)
-    yaw_kernel(exp, 'hunts', hd, dim)
+#    velocity_kernel(exp, 'hunts', hd, dim)
+#    yaw_kernel(exp, 'hunts', hd, dim)
     realfish.exporter()
     csv_data(header, bout_descriptor, 'huntingbouts', exp.directory)
     return realfish
@@ -3030,7 +3037,7 @@ if __name__ == '__main__':
         '14': 'Interbout_Back'}
 
 # This dictionary describes the variables to use for clustering.
-    sub_dict = { '8':'Vector Velocity'}
+    sub_dict = {'8':'Vector Velocity'}
         
     abort_dict = {'13': 'Eye Sum'}
 
@@ -3083,29 +3090,16 @@ if __name__ == '__main__':
 # bout array, matched with a flag array that describes summary statistics for each bout. A new BoutsandFlags object is then created
 # whose only role is to contain the bouts and corresponding flags for each fish. 
 
-    fish_id = '042318_6'
+    fish_id = '022318_1'
     drct = os.getcwd() + '/' + fish_id
-    new_exp = False
+    new_exp = True
     dimreduce = False
-    skip_import = True
-    add_vel_ends = False
+    skip_import = False
+    add_vel_ends = True
 
     if not skip_import:
         if new_exp:
-            # HERE IF YOU WANT TO CLUSTER MANY FISH IN THE FUTURE, MAKE A DICT OF FISH_IDs AND RUN THROUGH THIS LOOP. MAY WANT TO CLUSTER MORE FISH TO PULL OUT STRIKES VS ABORTS. 
-            # if num_fish != 1:
-            #     FISH ID DICTIONARY HERE, LOOP THROUGH
-            #         myexp = Experiment(10, all_varbs_dict, flag_dict, drct)
-            #         myexp.bout_detector(True, 'tail')
-            #         myexp.bout_nanfilt_and_arrange(False)
-            #         bouts_flags = BoutsAndFlags(fish_id,
-            #                                     myexp.bout_data, myexp.bout_flags)
-            #         bouts_flags.exporter()
-    #        else:
-
             myexp = Experiment(20, 3, all_varbs_dict, flag_dict, drct)
-    #        myexp.bout_detector(True, 'combined')
-    #        myexp.bout_detector(True, 'tail')
             myexp.bout_detector()
             myexp.bout_nanfilt_and_arrange(False)
             bouts_flags = BoutsAndFlags(drct,
@@ -3119,17 +3113,6 @@ if __name__ == '__main__':
                     myexp.bout_durations)
                 myexp.bout_durations = np.array(
                     myexp.bout_durations) + vel_extensions
-
-
-    #         # Note that .05 is slightly further than .1. It's basically the same with some
-    #         # subtle extensions during huntbouts. 
-
-    # # YOUR MOVEMENT IS COMPLETE IF YOU STOP
-    # # (i.e. tail beat ends or velocity back to .05)
-    # # OR IF YOU MAKE A NEW MOVE
-    # # This accounts for pure rotation where there is no vel bump
-    # # Also, you can't terminate on velocity b/c the tail may still be
-    # # rotating the fish. Only terminate on velocity if fish still cruising. 
             myexp.all_spherical_bouts(False)
             myexp.exporter()
 
@@ -3153,18 +3136,3 @@ if __name__ == '__main__':
 
 
 
-# # IF YOU WANT TO MESS WITH THIS, NOW YOU HAVE TO CALL IT ON MYEXP.BOUTS BY TAIL
-# # CURRENTLY, MYEXP BOUTS ARE ALL VEL DRIVEN.
-
-# # LOOK AT THIS THOUGH -- WILL TELL YOU DIFF BETWEEN .05 and .1
-# # myexp IS LOCKED IN AT .1.
-# # STILL GETTING A SLIGHT UNDERESTIMATE AT .1
-
-#    vel_ends, tvl = find_velocity_ends(myexp, .1)
- #   plot_bout_calls(myexp, vel_ends, tvl)
-
-#    rf = hunted_para_descriptor(dim, myexp, hd)
-    # k = yaw_kernel(myexp, 'hunts', hd, dim)[:-1]
-    # v = velocity_kernel(myexp, 'hunts', hd, dim)
-
-    vecs, vec_addresses = pvec_wrapper(myexp, hd)

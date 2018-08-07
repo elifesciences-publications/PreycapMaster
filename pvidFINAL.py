@@ -1205,7 +1205,7 @@ class ParaMaster():
                 if max_z_stretch:
                     if x2c != 0:
                         self.interp_indices.append(
-                            [[poi], [start_ind, ind]])
+                            [poi, [[start_ind, ind]]])
                         max_z_stretch = False
                 else:
                     if x2c == 0:
@@ -1251,7 +1251,7 @@ class ParaMaster():
                             win[1]-win[0]).astype(np.int)
                     inferred_windows.append(win)
             if inferred_windows:
-                self.interp_indices.append([[para_number], inferred_windows])
+                self.interp_indices.append([para_number, inferred_windows])
             # so here can have up to 3 entries per para
             return z_out
 

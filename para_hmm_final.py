@@ -11,31 +11,33 @@ import seaborn as sb
 import matplotlib.animation as anim
 from scipy.ndimage import gaussian_filter, uniform_filter1d
 
+# takes fish specific velocities and addresses, while
+# fitting model on all para from all fish
+
+
 class ParaMarkovModel:
-    def __init__(self, velocities, vec_addresses, spacing, nn):
+    def __init__(self, velocities, vec_addresses, apv, spacing, nn, *model):
+        self.all_para_velocities = apv
+        self.all_para_accelerations = np.diff(apv, axis=0)
+        self.all_accel_mags = [
+            [magvector(a) for a in accs]
+            for accs in self.all_para_accelerations]
         self.vec_addresses = vec_addresses
         self.spacing = spacing
         self.non_nan_velocity_indices = nn
         self.velocity_mags = [
-            [magvector(v) for v in vecs] for vecs in velocities]
-        self.accelerations = [
-            [v2 - v1 for v2, v1 in sliding_window(2, vecs)]
-            for vecs in velocities]
-        self.acc_mags = [
-            [magvector(a) for a in accs] for accs in self.accelerations]
-        self.sd_limit = 20
+            [magvector(v) for v in vecs] for vecs in apv]
+        self.accelerations = np.diff(velocities, axis=0)
+        self.mag_limit = np.percentile(95, self.all_accel_mags)
         self.len_simulation = 500
         self.accels_filt = []
-        self.model = []
-        for ac, ac_m in zip(self.accelerations, self.acc_mags):
-            if not (np.array(ac_m) > self.sd_limit).any():
+        if model != ():
+            self.model = model
+        else:
+            self.model = []
+        for ac, ac_m in zip(self.all_para_accelerations, self.all_accel_mags):
+            if not (np.array(ac_m) > self.mag_limit).any():
                 self.accels_filt.append(ac)
-            else:
-                temp_vd = []
-                for j, k in zip(ac, ac_m):
-                    if k < self.sd_limit:
-                        temp_vd.append(j)
-                self.accels_filt.append(temp_vd)
 
     def exporter(self):
         print('Saving Model')
@@ -77,10 +79,8 @@ class ParaMarkovModel:
             return acc_vector
 
         def draw_vmax():
-            five_sec_filter = 300 / self.spacing
-            max_v_per_para = [np.mean(vm) + 2*np.nanstd(vm)
-                              for vm in self.velocity_mags
-                              if len(vm) > five_sec_filter]
+            max_v_per_para = [np.percentile(vm, 80)
+                              for vm in self.velocity_mags]
             np.random.seed()
             max_ind = int(np.floor(np.random.random() * len(max_v_per_para)))
             return max_v_per_para[max_ind]
@@ -92,7 +92,7 @@ class ParaMarkovModel:
             else:
                 return False
 
-        if math.isnan(vmax):
+        if vmax < 0:
             vmax = draw_vmax()
             print("Max Velocity: " + str(vmax))
         self.len_simulation = lensim
@@ -216,19 +216,28 @@ def smooth_states(len_filter, states):
     return smoothed_states
 
 
+def concat_para_velocities(directories):
+    all_vels = []
+    for d in directories:
+        directory = os.getcwd() + '/' + d
+        v = np.load(directory + '/velocity_input.npy')
+        all_vels += v.tolist()
+    return all_vels
+
+
     #here you will have animations of the para of interest in xy, xz, and xyz, side by side with the state call from the model. model.predict(vecs[hunt_index]) is your posterior on the states given the training data. 
 
 if __name__ == '__main__':
 
-    directory = os.getcwd() + '/042318_6'
+    directory = os.getcwd() + '/042318_6_orig_analysis'
     # save_model = False
     # np.random.seed()
     # # Vec Addresses are hunt and para within the hunt.
     # # Vecs are velocity vectors in 3 frame windows
     # # 
     
-    v = np.load('input.npy')
-    va = np.load('vec_address.npy')
+    v = np.load('para_velocity_input.npy')
+    va = np.load('para_vec_address.npy')
     # spacing = np.load('spacing.npy')
     # non_nans = np.load('no_nan_inds.npy')
     # pmm = ParaMarkovModel(v, va, spacing, non_nans)
@@ -237,4 +246,11 @@ if __name__ == '__main__':
 #     if save_model:
 #         pmm.exporter()
 # #    pmm.para_state_predictor(6, 6, 2, directory)
-#     pmm.para_state_predictor(2, directory, va[0])
+
+
+# NOTE CURRENT MODEL IS DEVELOPED FROM 44 PARA TRAJECTORIES in
+# 042318_6. This data is in 042318_6_orig_analysis.
+
+# When you are finished with each fish, call pvec_wrapper to output all
+# para trajectories from hunts
+
