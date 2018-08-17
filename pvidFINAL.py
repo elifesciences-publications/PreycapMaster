@@ -887,7 +887,7 @@ class ParaMaster():
 
     #This function plots any para objects that were missed by the complete running of the algorithm.        
 
-    def find_misses(self):
+    def find_misses(self, plotornot):
         xyzrecs = self.xyzrecords
         pcw = self.pcw
         length_thresh = 0
@@ -905,35 +905,38 @@ class ParaMaster():
                 xzrecs.remove(xzrec)
         all_remaining_xy = [self.all_xy[i] for i in xyrecs]
         all_remaining_xz = [self.all_xz[j] for j in xzrecs]
-        fig, (ax, ax2) = pl.subplots(
-            1, 2, sharex=True, sharey=True, figsize=(6, 6))
-        ax.set_xlim([pcw, self.framewindow[1] - self.framewindow[0]])
-        ax.set_title("XY Misses")
-        ax2.set_xlim([pcw, self.framewindow[1] - self.framewindow[0]])
-        ax.set_ylim([0, 1888])
-        ax2.set_ylim([0, 1888])
-        ax2.set_title("XZ Misses")
-        for pcounter, para in zip(xyrecs, all_remaining_xy):
-            if len(para.location) > length_thresh:
-                ax.plot(
-                    range(para.timestamp, para.timestamp + len(para.location)),
-                    [x[0] for x in para.location],
-                    color='r')
-                ax.text(para.timestamp + len(para.location),
-                        para.location[-1][0], str(pcounter),
-                        fontsize=8, clip_on=True)
-        for pcounter, para in zip(xzrecs, all_remaining_xz):
-            if len(para.location) > length_thresh:
-                ax2.plot(
-                    range(para.timestamp, para.timestamp + len(para.location)),
-                    [x[0] for x in para.location],
-                    color='b')
-                ax2.text(para.timestamp + len(para.location),
-                         para.location[-1][0], str(pcounter),
-                         fontsize=8, clip_on=True)
+        if plotornot:
+            fig, (ax, ax2) = pl.subplots(
+                1, 2, sharex=True, sharey=True, figsize=(6, 6))
+            ax.set_xlim([pcw, self.framewindow[1] - self.framewindow[0]])
+            ax.set_title("XY Misses")
+            ax2.set_xlim([pcw, self.framewindow[1] - self.framewindow[0]])
+            ax.set_ylim([0, 1888])
+            ax2.set_ylim([0, 1888])
+            ax2.set_title("XZ Misses")
+            for pcounter, para in zip(xyrecs, all_remaining_xy):
+                if len(para.location) > length_thresh:
+                    ax.plot(
+                        range(para.timestamp,
+                              para.timestamp + len(para.location)),
+                        [x[0] for x in para.location],
+                        color='r')
+                    ax.text(para.timestamp + len(para.location),
+                            para.location[-1][0], str(pcounter),
+                            fontsize=8, clip_on=True)
+            for pcounter, para in zip(xzrecs, all_remaining_xz):
+                if len(para.location) > length_thresh:
+                    ax2.plot(
+                        range(para.timestamp,
+                              para.timestamp + len(para.location)),
+                        [x[0] for x in para.location],
+                        color='b')
+                    ax2.text(para.timestamp + len(para.location),
+                             para.location[-1][0], str(pcounter),
+                             fontsize=8, clip_on=True)
 
-        pl.ion()
-        pl.show()
+            pl.ion()
+            pl.show()
 
         self.unpaired_xy = []
         self.unpaired_xz = []
@@ -1031,17 +1034,13 @@ class ParaMaster():
     def manual_match(self):
         xy = 0
         xz = 0
-        cv2.namedWindow(
-            'Enter 1 to Manually Match a Record',
-            flags=cv2.WINDOW_AUTOSIZE)
-        cv2.moveWindow('Enter 1 to Manually Match a Record', 20, 20)
-        key = cv2.waitKey(0)
-        if key == 49:
-            cv2.destroyAllWindows()
+        key = raw_input("Fix?: ")
+        if key == 'y':
             xy = raw_input('Enter XY rec #  ')
             xz = raw_input('Enter XZ rec #  ')
             xy = int(xy)
             xz = int(xz)
+            pl.close()
             for ind_xy, up_xy in enumerate(self.unpaired_xy):
                 if up_xy[0] == xy:
                     del self.unpaired_xy[ind_xy]
@@ -1054,7 +1053,7 @@ class ParaMaster():
             self.clear_frames()
             return 1
         else:
-            cv2.destroyAllWindows()
+            pl.close()
             return 0
 
     def onerec_and_misses(self, rec_id):
@@ -1474,10 +1473,10 @@ class ParaMaster():
         self.makecorrmat()
         self.corr_mat_original = copy.deepcopy(self.corr_mat)
         self.makexyzrecords()
-        self.find_misses()
-        self.manual_match()
         self.make_3D_para()
+        self.find_misses(0)
         if showstats:
+            self.manual_match()
             self.recs_and_misses()
             self.graph3D(True)
         if self.makemovies:
@@ -1497,6 +1496,7 @@ class ParaMaster():
         self.plotxyzrec(rec_id)
         fix = raw_input("Fix? ")
         if fix != 'y':
+            pl.close()
             return 0
         xy = raw_input("Enter XY rec ")
         xz = raw_input("Enter XZ rec ")
@@ -1514,6 +1514,7 @@ class ParaMaster():
         self.make_3D_para()
         self.clear_frames()
         self.label_para()
+        pl.close()
         return 1
 
 

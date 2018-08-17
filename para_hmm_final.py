@@ -220,7 +220,7 @@ def concat_para_velocities(directories):
     all_vels = []
     for d in directories:
         directory = os.getcwd() + '/' + d
-        v = np.load(directory + '/velocity_input.npy')
+        v = np.load(directory + '/para_velocity_input.npy')
         all_vels += v.tolist()
     return all_vels
 
