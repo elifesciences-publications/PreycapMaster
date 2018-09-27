@@ -10,6 +10,7 @@ import mpl_toolkits.mplot3d.axes3d as p3
 import seaborn as sb
 import matplotlib.animation as anim
 from scipy.ndimage import gaussian_filter, uniform_filter1d
+from astropy.convolution import Gaussian1DKernel, convolve
 
 # takes fish specific velocities and addresses, while
 # fitting model on all para from all fish
@@ -18,7 +19,7 @@ from scipy.ndimage import gaussian_filter, uniform_filter1d
 class ParaMarkovModel:
     def __init__(self, velocities, vec_addresses, apv, spacing, nn, *model):
         self.all_para_velocities = apv
-        self.all_para_accelerations = np.diff(apv, axis=0)
+        self.all_para_accelerations = [np.diff(v, axis=0) for v in apv]
         self.all_accel_mags = [
             [magvector(a) for a in accs]
             for accs in self.all_para_accelerations]
@@ -27,8 +28,8 @@ class ParaMarkovModel:
         self.non_nan_velocity_indices = nn
         self.velocity_mags = [
             [magvector(v) for v in vecs] for vecs in apv]
-        self.accelerations = np.diff(velocities, axis=0)
-        self.mag_limit = np.percentile(95, self.all_accel_mags)
+        self.accelerations = [np.diff(v, axis=0) for v in velocities]
+        self.mag_limit = np.percentile(np.concatenate(self.all_accel_mags), 99.9)
         self.len_simulation = 500
         self.accels_filt = []
         if model != ():
@@ -38,6 +39,12 @@ class ParaMarkovModel:
         for ac, ac_m in zip(self.all_para_accelerations, self.all_accel_mags):
             if not (np.array(ac_m) > self.mag_limit).any():
                 self.accels_filt.append(ac)
+            else:
+                filt_acvec = []
+                for ac_vec, ac_mag in zip(ac, ac_m):
+                    if ac_mag < self.mag_limit:
+                        filt_acvec.append(ac_vec)
+                self.accels_filt.append(filt_acvec)
 
     def exporter(self):
         print('Saving Model')
@@ -46,12 +53,13 @@ class ParaMarkovModel:
                 
     def fit_hmm(self):
         print('Fitting Model')
+        # previous state was .1, 2
         s1 = pg.State(
             pg.MultivariateGaussianDistribution(
                 np.array([0, 0, 0]), .1*np.eye(3)), name='0')
         s2 = pg.State(
             pg.MultivariateGaussianDistribution(
-                np.array([0, 0, 0]), 2*np.eye(3)), name='1')
+                np.array([0, 0, 0]), 3*np.eye(3)), name='1')
         model = pg.HiddenMarkovModel()
         model.add_states([s1, s2])
         model.add_transition(model.start, s1, .95)
@@ -163,6 +171,7 @@ def magvector(vector):
 
 def stateplot_3d(para_x, para_y, para_z, states):
     states = np.concatenate([[x, x, x] for x in states])
+    sm_states = smooth_states(5, states)
     print "Length of Para Record"
     print len(para_x)
     fig = pl.figure(figsize=(12, 8))
@@ -189,31 +198,33 @@ def stateplot_3d(para_x, para_y, para_z, states):
         pz = para_z[num]
         state_x = range(num)
         state_y = states[0:num]
+        smoothed_state_y = sm_states[0:num]
         plotlist[0].set_data(px, py)
         plotlist[1].set_data(px, pz)
         plotlist[2].set_data(state_x, state_y)
+        plotlist[3].set_data(state_x, smoothed_state_y)
         return plotlist
-    p_xy_plot, = p_xy_ax.plot([], [], marker='.', ms=10)
-    p_xz_plot, = p_xz_ax.plot([], [], marker='.', ms=10)
+    p_xy_plot, = p_xy_ax.plot([], [], marker='.', ms=15)
+    p_xz_plot, = p_xz_ax.plot([], [], marker='.', ms=15)
     state_plot, = state_ax.plot([], [], linewidth=1.0)
-    p_list = [p_xy_plot, p_xz_plot, state_plot]
+    sm_state_plot, = state_ax.plot([], [], linewidth=1.0)
+    p_list = [p_xy_plot, p_xz_plot, state_plot, sm_state_plot]
     line_ani = anim.FuncAnimation(
         fig,
         updater,
         len(para_x),
         fargs=[p_list],
-        interval=3,
+        interval=2,
         repeat=True,
         blit=False)
 #        line_ani.save('test.mp4')
     pl.show()
 
-    
-def smooth_states(len_filter, states):
-    u_filter = 1.0 / len_filter * np.ones(len_filter)
-    smoothed_states = [np.sum(u_filter * np.array(
-        state_win)) for state_win in sliding_window(len_filter, states)]
-    return smoothed_states
+
+def smooth_states(sd_filter, states):
+    gkern = Gaussian1DKernel(sd_filter)
+    smoothed = convolve(states, gkern)
+    return smoothed
 
 
 def concat_para_velocities(directories):
@@ -229,27 +240,27 @@ def concat_para_velocities(directories):
 
 if __name__ == '__main__':
 
-    directory = os.getcwd() + '/042318_6_orig_analysis'
+    directory = os.getcwd() + '/091418_1'
+    save_model = True
     # save_model = False
     # np.random.seed()
     # # Vec Addresses are hunt and para within the hunt.
     # # Vecs are velocity vectors in 3 frame windows
     # # 
-    
-    v = np.load('para_velocity_input.npy')
-    va = np.load('para_vec_address.npy')
-    # spacing = np.load('spacing.npy')
-    # non_nans = np.load('no_nan_inds.npy')
-    # pmm = ParaMarkovModel(v, va, spacing, non_nans)
-    para_model = pickle.load(open(os.getcwd() + '/pmm.pkl', 'rb'))
-#     pmm.fit_hmm()
-#     if save_model:
-#         pmm.exporter()
+
+    apv = concat_para_velocities(['090418_3', '090418_4', '091418_1'])
+    v = np.load(directory + '/para_velocity_input.npy')
+    va = np.load(directory + '/para_vec_address.npy')
+    spacing = np.load(directory + '/spacing.npy')
+    non_nans = np.load(directory + '/no_nan_inds.npy')
+    pmm = ParaMarkovModel(v, va, apv, spacing, non_nans)
+#    para_model = pickle.load(open(os.getcwd() + '/pmm.pkl', 'rb'))
+    pmm.fit_hmm()
+    if save_model:
+        pmm.exporter()
 # #    pmm.para_state_predictor(6, 6, 2, directory)
 
 
-# NOTE CURRENT MODEL IS DEVELOPED FROM 44 PARA TRAJECTORIES in
-# 042318_6. This data is in 042318_6_orig_analysis.
 
 # When you are finished with each fish, call pvec_wrapper to output all
 # para trajectories from hunts

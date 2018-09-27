@@ -6,7 +6,7 @@ import pandas as pd
 import imageio
 import itertools
 from astropy.convolution import Gaussian1DKernel, convolve
-# from sklearn.manifold import SpectralEmbedding, Isomap
+from sklearn.manifold import SpectralEmbedding
 from sklearn.cluster import SpectralClustering
 import numpy as np
 import pickle
@@ -681,6 +681,7 @@ class DimensionalityReduce():
             pl.suptitle('Cluster' + str(_id))
             pl.subplots_adjust(top=0.9, hspace=.4, wspace=.4)
             pl.savefig(self.directory + '/cluster' + str(_id) + '.tif')
+            pl.show()
             pl.close()
 
     def flags_in_cluster(self, cluster_id, flag_id):
@@ -1952,6 +1953,7 @@ def para_vec_explorer(exp, h_id, p_id, animate):
     # or a tumbler (avg vel > 1.5). immobile are all < 1.5. confirmed
     # many times by watching vids. 
  #   if top_percentile_vel > 3 or avg_vel > 1.5:
+    print avg_vel
     if avg_vel > 1.5:
         for dot, vec, vel in zip(
                 penv.dotprod[p_id],
@@ -3187,11 +3189,11 @@ if __name__ == '__main__':
 # bout array, matched with a flag array that describes summary statistics for each bout. A new BoutsandFlags object is then created
 # whose only role is to contain the bouts and corresponding flags for each fish. 
 
-    fish_id = '070617_1'
+    fish_id = '091418_1'
     drct = os.getcwd() + '/' + fish_id
-    new_exp = True
-    dimreduce = True
-    skip_import = True
+    new_exp = False
+    dimreduce = False
+    skip_import = False
     add_vel_ends = True
 
     if not skip_import:
@@ -3231,38 +3233,42 @@ if __name__ == '__main__':
 
 #     sbouts = myexp.all_spherical_bouts()
 
+new_wik = ['090418_1', '090418_3', '090418_4', '090418_5', '090418_6',
+           '090418_7', '090518_1', '090518_2', '090518_3', '090518_4',
+           '090518_5', '090518_6', '090618_1', '090618_2', '090618_3',
+           '090618_4', '090618_5', '090618_6', '090718_1', '090718_2',
+           '090718_3', '090718_4', '090718_5', '090718_6', '091118_1',
+           '091118_2', '091118_3', '091118_4', '091118_5', '091118_6',
+           '091218_1', '091218_2', '091218_3', '091218_4', '091218_5',
+           '091218_6', '091318_1', '091318_2', '091318_3', '091318_4',
+           '091318_5', '091318_6', '091418_1', '091418_2', '091418_3',
+           '091418_4', '091418_5', '091418_6']
 
 
-wik = ['022318_1', '022718_1', '022718_3', '022818_1', '022818_3',
-       '022818_4', '030118_2', '030118_3', '030118_6', '041618_2',
-       '041618_3', '041618_4', '041618_5', '041618_6', '042318_1',
-       '022718_4', '022818_5', '030118_1'] 
-       
+# pilot = ['070617_1', '070617_2','072717_1', '072717_2', '072717_5']
 
-pilot = ['070617_1', '070617_2','072717_1', '072717_2', '072717_5']
-
-vcp_list = []
-xvcp_list = []
-lrz_list = []
-for drct in wik:
-    vcp, xvcp, lrz = validate_experiment(drct)
-    vcp_list.append(vcp)
-    xvcp_list.append(xvcp)
-    lrz_list.append(lrz)
+# vcp_list = []
+# xvcp_list = []
+# lrz_list = []
+# for drct in new_wik:
+#     vcp, xvcp, lrz = validate_experiment(drct)
+#     vcp_list.append(vcp)
+#     xvcp_list.append(xvcp)
+#     lrz_list.append(lrz)
 
 
-f, (ax1, ax2, ax3) = pl.subplots(3)
-velocities_at_checkpoints = np.array(zip(*vcp_list))
-vac = np.array([np.concatenate(v) for v in velocities_at_checkpoints])
-xyvelocities_at_checkpoints = np.array(zip(*xvcp_list))
-xyvac = np.array([np.concatenate(v) for v in xyvelocities_at_checkpoints])
-sb.pointplot(data=vac, ci=95, ax=ax1)
-sb.pointplot(data=xyvac, ci=95, ax=ax2)
-ax1.set_title('Para Velocity')
-ax2.set_title('Para XY Velocity')
-sb.tsplot(data=lrz_list, ci=95, ax=ax3)
-ax3.set_title('Z Position')
-pl.tight_layout()
-pl.savefig('wik.pdf')
+# f, (ax1, ax2, ax3) = pl.subplots(3)
+# velocities_at_checkpoints = np.array(zip(*vcp_list))
+# vac = np.array([np.concatenate(v) for v in velocities_at_checkpoints])
+# xyvelocities_at_checkpoints = np.array(zip(*xvcp_list))
+# xyvac = np.array([np.concatenate(v) for v in xyvelocities_at_checkpoints])
+# sb.pointplot(data=vac, ci=95, ax=ax1)
+# sb.pointplot(data=xyvac, ci=95, ax=ax2)
+# ax1.set_title('Para Velocity')
+# ax2.set_title('Para XY Velocity')
+# sb.tsplot(data=lrz_list, ci=95, ax=ax3)
+# ax3.set_title('Z Position')
+# pl.tight_layout()
+# pl.savefig('new_wik.pdf')
 
 
