@@ -193,7 +193,7 @@ class Hunt_Descriptor:
 
 class ParaEnv:
 
-    def __init__(self, index, directory, *para_coords):
+    def __init__(self, index, directory, filter_sd, *para_coords):
         if para_coords == ():
             self.wrth = np.load(
                 directory + '/wrth' + str(index).zfill(2) + '.npy')
@@ -211,6 +211,7 @@ class ParaEnv:
         self.target = []
         self.bout_number = str(index)
         self.vector_spacing = 3
+        self.gkern_sd = filter_sd
 
 # Question is whether fish wait, follow, or move to the predicted location of para behind barriers. 
 # Once you find the right metric for attention to a para, ask if ufish multiplied by any integer intersects 
@@ -225,6 +226,7 @@ class ParaEnv:
         pass
         
     def find_paravectors(self, plot_para, *para_id):
+        gkern = Gaussian1DKernel(self.gkern_sd)
         para_of_interest = []
         if para_id == ():
             if self.dimensions == 3:
@@ -237,16 +239,18 @@ class ParaEnv:
             win_length = self.vector_spacing
             rec_id = rec_rows / 3
             x = self.para_coords[rec_rows]
+            x = convolve(x, gkern, preserve_nan=True)
             y = self.para_coords[rec_rows+1]
-
-            # x_diffs = [a[-1] - a[0] for a in sliding_window(win_length, x)]
-            # y_diffs = [a[-1] - a[0] for a in sliding_window(win_length, y)]
-            # z_diffs = [a[-1] - a[0] for a in sliding_window(win_length, z)]
-            x_diffs = [a[-1] - a[0] for a in partition(win_length, x)]
-            y_diffs = [a[-1] - a[0] for a in partition(win_length, y)]
+            y = convolve(y, gkern, preserve_nan=True)
+# Note you have to cut the last val off the end of the convolution --
+# the nans at the end screw up the kernel 
+            
+            x_diffs = [a[-1] - a[0] for a in partition(win_length, x)][:-1]
+            y_diffs = [a[-1] - a[0] for a in partition(win_length, y)][:-1]
             if self.dimensions == 3:
                 z = self.para_coords[rec_rows+2]
-                z_diffs = [a[-1] - a[0] for a in partition(win_length, z)]
+                z = convolve(z, gkern, preserve_nan=True)
+                z_diffs = [a[-1] - a[0] for a in partition(win_length, z)][:-1]
                 vel_vector = [
                     np.array([deltax, deltay, deltaz])
                     for deltax, deltay, deltaz in zip(x_diffs, y_diffs, z_diffs)
@@ -1144,34 +1148,33 @@ class Experiment():
                     boutstarts, boutends)
             return boutstarts, boutends
 
-        std_thresh = 5
         tailang = [tail[-1] for tail in self.fishdata.tailangle]
-        ta_std = [np.abs(np.nanstd(tw)) for tw in sliding_window(5, tailang)]
+        ta_std = gaussian_filter(
+            [np.abs(np.nanstd(tw)) for tw in sliding_window(5, tailang)], 2).tolist()
+        std_thresh = 2*np.median(ta_std)
         bts = scipy.signal.argrelmax(np.array(ta_std), order=3)[0]
         bts = [b for b in bts if ta_std[b] > std_thresh]
-        boutstarts = []
-        boutends = []
+        boutstarts = [bts[0]]
+        boutends = [bts[0]+3]
 
 # DO want to do boutfilter_recur here, but over a very small window (i.e. you don't want extreme overlaps)
-        for b in bts:
-            winlen = 20
-            backwin = ta_std[b-winlen:b]
+        for b1, b2, b3 in sliding_window(3, bts):
+            backwin = ta_std[b1:b2]
             backwin.reverse()
             backwin = np.array(backwin)
-            forwardwin = np.array(ta_std[b:b+winlen])
+            forwardwin = np.array(ta_std[b2:b3])
         #thresh here will be noise + min calculation
-
             try:
-                crossback = -np.where(backwin < std_thresh)[0][0] + b
+                crossback = -np.where(backwin < std_thresh)[0][0] + b2
             except IndexError:
-                crossback = b - 5
+                crossback = b2 - 3
             try:
-                crossforward = np.where(forwardwin < std_thresh)[0][0] + b
+                crossforward = np.where(forwardwin < std_thresh)[0][0] + b2
             except IndexError:
-                crossforward = b + 5
+                crossforward = b2 + 3
             boutstarts.append(crossback)
             boutends.append(crossforward)
-        boutstarts, boutends = boutfilter_recur(boutstarts, boutends)
+#        boutstarts, boutends = boutfilter_recur(boutstarts, boutends)
         bout_durations = [
             be - bs for bs, be in zip(boutstarts, boutends)]
         
@@ -1897,7 +1900,7 @@ def plot_hairball(hd, *actionlist):
     pl.show()
     
 
-def pvec_wrapper(exp, hd):
+def pvec_wrapper(exp, hd, filter_sd):
     
     def concat_vecs(veclist):
         all_lengths = map(lambda a: len(a), veclist)
@@ -1912,7 +1915,9 @@ def pvec_wrapper(exp, hd):
         print h
         while True:
             try:
-                v, no_nan_inds, spacing = para_vec_explorer(exp, h, p_id, 0)
+                v, no_nan_inds, spacing = para_vec_explorer(exp,
+                                                            h, p_id,
+                                                            0, filter_sd)
             except IndexError:
                 p_id = 0
                 break
@@ -1929,8 +1934,8 @@ def pvec_wrapper(exp, hd):
     return vecs, vec_address
 
 
-def para_vec_explorer(exp, h_id, p_id, animate):
-    penv = ParaEnv(h_id, exp.directory)
+def para_vec_explorer(exp, h_id, p_id, animate, filter_sd):
+    penv = ParaEnv(h_id, exp.directory, filter_sd)
     penv.find_paravectors(False)
     pvec = []
     non_nan_indices = []
@@ -1953,8 +1958,7 @@ def para_vec_explorer(exp, h_id, p_id, animate):
     # or a tumbler (avg vel > 1.5). immobile are all < 1.5. confirmed
     # many times by watching vids. 
  #   if top_percentile_vel > 3 or avg_vel > 1.5:
-    print avg_vel
-    if avg_vel > 1.5:
+    if avg_vel > 2:
         for dot, vec, vel in zip(
                 penv.dotprod[p_id],
                 penv.paravectors[p_id][0][1:],
@@ -2045,7 +2049,7 @@ def para_state_plot(hd, exp):
     vels = []
     c_pallete = np.array(sb.color_palette('husl', len(hunt_inds)))
     for hunt, p in zip(hunt_inds, poi):
-        penv = ParaEnv(hunt, exp.directory)
+        penv = ParaEnv(hunt, exp.directory, 1)
         penv.find_paravectors(False, p)
         dps.append(np.copy(penv.dotprod))
         vels.append(np.copy(penv.velocity_mags))
@@ -2194,6 +2198,8 @@ def bouts_during_hunt(hunt_ind, dimred, exp, plotornot):
     secondind = dimred.hunt_wins[hunt_ind][1]    
     indrange = range(firstind, secondind+1, 1)
     #+1 so it includes the secondind
+    print('Bout Ids')
+    print range(firstind, secondind+1)
     print('Cluster Membership')
     print dim.cluster_membership[firstind:secondind+1]
     print('Bout Durations')
@@ -2221,7 +2227,10 @@ def bouts_during_hunt(hunt_ind, dimred, exp, plotornot):
     filt_phil = gaussian_filter(exp.fishdata.phileft, 2)[start:end]
     ax1.plot(framerange, filt_phir, color='g')
     ax1.plot(framerange, filt_phil, color='r')
-    ax3.plot(framerange, [t[-1] for t in exp.fishdata.tailangle[start:end]])
+    tailang = [t[-1] for t in exp.fishdata.tailangle]
+    ax3.plot(framerange, tailang[start:end])
+    ta_std = gaussian_filter([np.abs(np.nanstd(tw)) for tw in sliding_window(5, tailang)],2)
+    ax3.plot(framerange, ta_std[start:end])
     vel_during_hunt = filtV[start:end]
     ax3.plot(framerange, vel_during_hunt)
     bouts_tail = [exp.bout_frames[i] for i in indrange]
@@ -2294,7 +2303,7 @@ def hunted_para_descriptor(dim, exp, hd):
                 2) + ".npy")[
                     hp*3:hp*3 + 3][
                         :, cont_win+int_win-realfish.firstbout_para_intwin:]
-        penv = ParaEnv(hi, exp.directory)
+        penv = ParaEnv(hi, exp.directory, 1)
         penv.find_paravectors(False, hp)
         avg_vel = np.nanmean(penv.velocity_mags[0][
             exp.para_continuity_window / penv.vector_spacing:])
@@ -2314,6 +2323,8 @@ def hunted_para_descriptor(dim, exp, hd):
         filter_sd = 2
         kernel = Gaussian1DKernel(filter_sd)
         filt_az = convolve(az, kernel)
+        # note i later found the preserve_nans key -- change if you want for
+        # brevity. 
         filt_az = [f if not math.isnan(a) else np.nan for f, a in zip(
             filt_az, az)]
         filt_alt = convolve(alt, kernel)
@@ -2535,7 +2546,7 @@ def para_stimuli(dim, exp, hd):
         # get to the hunted para, 
         p3D = np.load(exp.directory + '/para3D' + str(h).zfill(2) + '.npy')
         distmat = make_distance_matrix(p3D)
-        penv = ParaEnv(h, exp.directory)
+        penv = ParaEnv(h, exp.directory, 1)
         penv.find_paravectors(False)
         wrth = np.load(
             exp.directory + '/wrth' + str(h).zfill(2) + '.npy')
@@ -2977,7 +2988,9 @@ def find_velocity_ends(myexp, v_thresh, b_or_bplus1):
         if bout_ind == interbouts.shape[0]:
             bd_plus.append(bd)
             break
-        v_win = filt_v[bf:bf+bd]
+#        v_win = filt_v[bf:bf+bd]
+        v_win_end = bd + 5
+        v_win = filt_v[bf:bf+v_win_end]
         v_max = np.max(v_win)
         v_argmax = np.argmax(v_win)
         v_start = filt_v[bf]
@@ -2991,9 +3004,14 @@ def find_velocity_ends(myexp, v_thresh, b_or_bplus1):
         # i is the distance from bf to the threshV.
         # if i is less than the interbout,
         # add i - bd to the prev called bout duration
+
+# has to be a catch here for when the if statement is never satisfied.
+# in pure rotation, there will be no velocity. have to note this.
+        v_thresh_found = False
         for i, v in enumerate(filt_v[bf:]):
             # can only go in here if v requirements are satisfied. 
             if v < thresh_v and i > v_argmax:
+                v_thresh_found = True
                 candidate_bd_extension = i - bd
                 if candidate_bd_extension <= 0:
                     bd_plus.append(0)
@@ -3003,6 +3021,9 @@ def find_velocity_ends(myexp, v_thresh, b_or_bplus1):
                     bd_plus.append(interbouts[bout_ind] - 1 - bd)
                 thresh_vlist.append(thresh_v)
                 break
+        # this is a catch for a pure rotation's velocity actually being extremely low. 
+        if not v_thresh_found:
+            bd_plus.append(interbouts[bout_ind] - 1 - bd)
     return bd_plus, thresh_vlist
 
 
@@ -3019,7 +3040,7 @@ def validate_experiment(drct):
                                                  False, drct + '/',
                                                  False, 0)
         # 0s are dummy variables b/c no specific reconstruction specified
-        penv3D = ParaEnv(0, 0, (para_validate.para3Dcoords, 3))
+        penv3D = ParaEnv(0, 0, 1, (para_validate.para3Dcoords, 3))
         penv3D.find_paravectors(False)
         unpaired_xy = [xyr[2] for xyr in para_validate.unpaired_xy if
                        len(xyr[2]) == len_pwindow]
@@ -3028,7 +3049,7 @@ def validate_experiment(drct):
             x, y = zip(*xyr)
             p_xy_matrix[2*row_id] = np.array(x)
             p_xy_matrix[2*row_id + 1] = np.array(y)
-        penvXY = ParaEnv(0, 0, (p_xy_matrix, 2))
+        penvXY = ParaEnv(0, 0, 1, (p_xy_matrix, 2))
         penvXY.find_paravectors(False)
         checkpoint_velocities = []
         checkpoint_xyvelocities = []
@@ -3088,11 +3109,12 @@ def plot_bout_calls(myexp, extension, tvl, *hunt_win):
     tailang = [
         tail[-1] for tail in myexp.fishdata.tailangle[
             myexp.bout_frames[start]:myexp.bout_frames[end]]]
-#    ta_std = [np.abs(np.nanstd(tw)) for tw in sliding_window(5, tailang)]
+    ta_std = gaussian_filter([np.abs(np.nanstd(tw)) for tw in sliding_window(5, tailang)], 2)
     pl.plot(tailang)
     pl.plot(gaussian_filter(
         myexp.fishdata.vectV[
             myexp.bout_frames[start]:myexp.bout_frames[end]], 1))
+    pl.plot(ta_std)
     pl.plot(
         bout_frames, np.zeros(len(bout_frames)),
         marker='.', linestyle='None',
@@ -3191,8 +3213,8 @@ if __name__ == '__main__':
 
     fish_id = '091418_1'
     drct = os.getcwd() + '/' + fish_id
-    new_exp = False
-    dimreduce = False
+    new_exp = True
+    dimreduce = True
     skip_import = False
     add_vel_ends = True
 

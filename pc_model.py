@@ -234,7 +234,7 @@ class PreyCap_Simulation:
             if self.para_states == []:
                 px, py, pz, states, vmax = self.paramodel.generate_model_para(
                     para_initial_conditions[1],
-                    para_initial_conditions[0], self.sim_length, , -1, False)
+                    para_initial_conditions[0], self.sim_length, -1, False)
             # resets para_xyz for generative model
             else:
                 px, py, pz, states, vmax = self.paramodel.generate_model_para(
@@ -324,11 +324,11 @@ class PreyCap_Simulation:
                             self.model_para_xyz = [px[-1], py[-1], pz[-1]]
                     else:
                         self.model_para_xyz = project_para([px, py, pz],
-                                                           self.fishmodel.firstbout_para_intwin,
+                                                           self.fishmodel.rfo.firstbout_para_intwin,
                                                            self.fishmodel.predict_forward_frames, framecounter)
                 else:
                     self.model_para_xyz = project_para([px, py, pz],
-                                                       self.fishmodel.firstbout_para_intwin, self.fishmodel.predict_forward_frames, framecounter)
+                                                       self.fishmodel.rfo.firstbout_para_intwin, self.fishmodel.predict_forward_frames, framecounter)
 
             else:
                 self.model_para_xyz = [px[framecounter], py[framecounter], pz[framecounter]]
@@ -725,38 +725,38 @@ class FishModel:
                                best_bout['Bout Dist'], best_bout['Delta Pitch'], -1*best_bout['Delta Yaw']])
         return bout_array
 
-    def regression_model(self, para_varbs):
-        if self.modchoice == "Multiple Regression Velocity":
-            p_input = [para_varbs["Para Az"],
-                       para_varbs["Para Alt"],
-                       para_varbs["Para Dist"],
-                       para_varbs["Para Az Velocity"], 
-                       para_varbs["Para Alt Velocity"],
-                       para_varbs["Para Dist Velocity"]]
-        elif self.modchoice == "Multiple Regression Position":
-            p_input = [para_varbs["Para Az"], para_varbs["Para Alt"], para_varbs["Para Dist"]]
-        elif self.modchoice == "Indpendent Linear Regression":
-            p_input = [para_varbs["Para Az"], para_varbs["Para Alt"], para_varbs["Para Dist"],
-                       para_varbs["Para Alt"], para_varbs["Para Az"]]
-        bout = self.regmod(p_input)
-        # invert bout delta yaw
-        bout[-1] *= -1
-        return np.array(bout)
-
     # def regression_model(self, para_varbs):
-    #     bout_az = (para_varbs['Para Az'] * 1.36) + .02
-    #     bout_yaw = -1 * ((.46 * para_varbs['Para Az']) - .02)
-    #     bout_alt = (1.5 * para_varbs['Para Alt']) + -.37
-    #     bout_pitch = (.27 * para_varbs['Para Alt']) - .04
-    #     bout_dist = (.09 * para_varbs['Para Dist']) + 29
-    #     bout_array = np.array([bout_az,
-    #                            bout_alt,
-    #                            bout_dist, bout_pitch, bout_yaw])
-    #     noise_array = np.ones(5)
-    #     # noise_array = np.array(
-    #     # [(np.random.random() * .4) + .8 for i in bout_array])
-    #     bout = bout_array * noise_array
-    #     return bout
+    #     if self.modchoice == "Multiple Regression Velocity":
+    #         p_input = [para_varbs["Para Az"],
+    #                    para_varbs["Para Alt"],
+    #                    para_varbs["Para Dist"],
+    #                    para_varbs["Para Az Velocity"], 
+    #                    para_varbs["Para Alt Velocity"],
+    #                    para_varbs["Para Dist Velocity"]]
+    #     elif self.modchoice == "Multiple Regression Position":
+    #         p_input = [para_varbs["Para Az"], para_varbs["Para Alt"], para_varbs["Para Dist"]]
+    #     elif self.modchoice == "Independent Regression":
+    #         p_input = [para_varbs["Para Az"], para_varbs["Para Alt"], para_varbs["Para Dist"],
+    #                    para_varbs["Para Alt"], para_varbs["Para Az"]]
+    #     bout = [rm(p_input) for rm in self.regmod]
+    #     # invert bout delta yaw
+    #     bout[-1] *= -1
+    #     return np.array(bout)
+
+    def regression_model(self, para_varbs):
+        bout_az = (para_varbs['Para Az'] * 1.36) + .02
+        bout_yaw = -1 * ((.46 * para_varbs['Para Az']) - .02)
+        bout_alt = (1.5 * para_varbs['Para Alt']) + -.37
+        bout_pitch = (.27 * para_varbs['Para Alt']) - .04
+        bout_dist = (.09 * para_varbs['Para Dist']) + 29
+        bout_array = np.array([bout_az,
+                               bout_alt,
+                               bout_dist, bout_pitch, bout_yaw])
+        noise_array = np.ones(5)
+        # noise_array = np.array(
+        # [(np.random.random() * .4) + .8 for i in bout_array])
+        bout = bout_array * noise_array
+        return bout
 
     def bdb_model(self, para_varbs):
         invert = True
@@ -1099,7 +1099,7 @@ def find_refractory_periods(rfo):
     
 
 if __name__ == "__main__":
-    csv_file = 'huntbouts_rad.csv'
+    csv_file = 'huntbouts_rad_pilot_nonan.csv'
     hb = pd.read_csv(csv_file)
     fish_id = '042318_6'
     rfo = pd.read_pickle(
@@ -1127,27 +1127,26 @@ if __name__ == "__main__":
     #
     # Hunt Results are: 1 = Success, 2 = Fail, 3 = Para Rec nans before end of hunt
     
-    modlist = [{"Model Type": "Regression", "Real or Sim": "Real"},
-               {"Model Type": "Regression", "Real or Sim": "Real", "Extrapolate Para": 10},
+    modlist = [{"Model Type": "Independent Regression", "Real or Sim": "Real"},
+               {"Model Type": "Independent Regression", "Real or Sim": "Real", "Extrapolate Para": 10},
                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All"},
-               {"Model Type": "Regression", "Real or Sim": "Real", "Willie Mays": 10}]
+               {"Model Type": "Independent Regression", "Real or Sim": "Real", "Willie Mays": 10}]
 
-
+#                {"Model Type": "Real Bouts", "Real or Sim": "Real"},
     modlist4 = [{"Model Type": "Real Coords", "Real or Sim": "Real"},
-                {"Model Type": "Real Bouts", "Real or Sim": "Real"},
-                {"Model Type": "Regression", "Real or Sim": "Real"},
-                {"Model Type": "Regression", "Real or Sim": "Real", "Extrapolate Para": 20},
+                {"Model Type": "Independent Regression", "Real or Sim": "Real"},
+                {"Model Type": "Independent Regression", "Real or Sim": "Real", "Extrapolate Para": 10},
                 {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All"},
-                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All", "Extrapolate Para": 20}]
+                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All", "Extrapolate Para": 10}]
 
 
     # modlist4 = [{"Model Type": "Real Coords", "Real or Sim": "Real"},
     #             {"Model Type": "Real Bouts", "Real or Sim": "Real"}, ]
 
-    # simlist = model_wrapper(rfo, strike_params, para_model, modlist4)
-    # ms = score_summary(simlist, modlist4, 0)
-    # sq = score_query("Result", ms, lambda x: Counter(x))
-    # print sq
+    simlist = model_wrapper(rfo, strike_params, para_model, modlist4, hb)
+    ms = score_summary(simlist, modlist4, 0)
+    sq = score_query("Result", ms, lambda x: Counter(x))
+    print sq
 
 
     
