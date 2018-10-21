@@ -1,3 +1,4 @@
+import ast
 import os
 import cv2
 import imageio
@@ -123,16 +124,22 @@ class ParaMaster():
 
 # This function fits contours to each frame of the high contrast videos created in flparse2. Contours are filtered for proper paramecia size, then the locations of contours are compared to the current locations of paramecia. Locations of contours falling within a distance threshold of a known paramecia are appended to the location list for that para. At the end, individual paramecia records are established for each paramecia in the tank. Each para object is stored in the all_xy or all_xz para object list depending on plane.
 
-    def findpara(self):
-
+    def findpara(self, params):
+        thresh = params[0]
+        erode_win = params[1]
+        dilate_win = params[2]
         directory = self.directory
         length_thresh = self.length_thresh
         # was previously 60 in final version
+        top_br = np.load(directory + 'backgrounds_top.npy')
+        side_br = np.load(directory + 'backgrounds_side.npy')
         pcw = self.pcw
         p_t = []
         p_s = []
         completed_t = []
         completed_s = []
+        # top_file = '/Volumes/drcofsamsung/' +directory[-8] + 'cam0.AVI'
+        # side_file = '/Volumes/drcofsamsung/' +directory[-8] + 'cam0.AVI'
         top_file = directory + 'top_contrasted.AVI'
         side_file = directory + 'side_contrasted.AVI'
         paravid_top = imageio.get_reader(top_file, 'ffmpeg')
@@ -146,34 +153,33 @@ class ParaMaster():
             sideframe = paravid_side.get_data(go_to_frame)
             para_top = cv2.cvtColor(np.copy(topframe), cv2.COLOR_BGR2GRAY)
             para_side = cv2.cvtColor(np.copy(sideframe), cv2.COLOR_BGR2GRAY)
-            r, para_top = cv2.threshold(para_top, 120, 255,
-                                        cv2.THRESH_BINARY)
-            r, para_side = cv2.threshold(para_side, 120, 255,
-                                         cv2.THRESH_BINARY)
+            brsub_top = brsub_img(para_top, top_br[go_to_frame / 1875])
+            brsub_side = brsub_img(para_side, side_br[go_to_frame / 1875])
+            cont_top = imcont(brsub_top, thresh, erode_win, dilate_win)
+            cont_side = imcont(brsub_side, thresh, erode_win, dilate_win)
             rim, contours_t, hierarchy = cv2.findContours(
-                para_top, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                cont_top, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             rim, contours_s, hierarchy = cv2.findContours(
-                para_side, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-#make a vectorized version here            
+                cont_side, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
             parafilter_top = [cv2.minEnclosingCircle(t)[0] for t in contours_t
                               if 50 < cv2.contourArea(t) < 1200]
             parafilter_side = [cv2.minEnclosingCircle(s)[0] for s in contours_s
                                if 50 < cv2.contourArea(s) < 1200]
+
+            cont_color_top = cv2.cvtColor(cont_top, cv2.COLOR_GRAY2RGB)
+            cont_color_side = cv2.cvtColor(cont_side, cv2.COLOR_GRAY2RGB)
             for para in parafilter_top:
-                cv2.circle(topframe, (int(para[0]), int(para[1])), 3,
+                cv2.circle(cont_color_top, (int(para[0]), int(para[1])), 3,
                            (0, 0, 255), -1)
             for para in parafilter_side:
-                cv2.circle(sideframe, (int(para[0]), int(para[1])), 3,
+                cv2.circle(cont_color_top, (int(para[0]), int(para[1])), 3,
                            (0, 0, 255), -1)
-
             if self.makemovies:
                 if framenum >= pcw:
                     self.topframes.append(topframe)
                     self.sideframes.append(sideframe)
-                # if framenum % 20 == 0:
-                #     pl.imshow(topframe)
-                #     pl.show()
- #fills para list with all contours in first frame.
+                    
             if firstframe:
                 firstframe = False
                 p_t = [Para(framenum, pr) for pr in parafilter_top]
@@ -181,10 +187,6 @@ class ParaMaster():
 
             # p_t is a list of para objects. asks if any elements of contour list are nearby each para p.
             else:
-                # for p in p_t:
-                #     xylist = p.nearby(parafilter_top)
-                # for p2 in p_s:
-                #     xzlist = p2.nearby(parafilter_side)
                 xylist = map(lambda n: n.nearby(parafilter_top), p_t)
                 xzlist = map(lambda n: n.nearby(parafilter_side), p_s)
                 newpara_t = [Para(framenum, cord) for cord in parafilter_top]
@@ -200,31 +202,40 @@ class ParaMaster():
 #current para list p_t and p_s are cleansed of records that are complete.
                 p_s = filter(lambda z: not z.completed, p_s)
 
-        all_xy = completed_t + p_t
-        all_xz = completed_s + p_s
-        all_xy = sorted(all_xy, key=lambda x: len(x.location))
-        all_xy.reverse()
-        all_xz = sorted(all_xz, key=lambda z: len(z.location))
-        all_xz.reverse()
-        self.all_xy = [para for para in all_xy
-                       if len(para.location) > 0 and
-                       para.timestamp + len(para.location) > self.pcw]
-        self.all_xz = [para for para in all_xz
-                       if len(para.location) > 0 and
-                       para.timestamp + len(para.location) > self.pcw]
-        self.long_xy = [para for para in self.all_xy
-                        if len(para.location) >= self.length_thresh]
-        self.long_xz = [para for para in self.all_xz
-                        if len(para.location) >= self.length_thresh]
+        self.watch_event(1)
+        self.watch_event(2)
+        modify = raw_input('Modify Videos?: ')
+        if modify == 'y':
+            action = raw_input('Enter new params: ')
+            self.topframes = []
+            self.sideframes = []
+            return self.findpara(ast.literal_eval(action))
+        else:
+            all_xy = completed_t + p_t
+            all_xz = completed_s + p_s
+            all_xy = sorted(all_xy, key=lambda x: len(x.location))
+            all_xy.reverse()
+            all_xz = sorted(all_xz, key=lambda z: len(z.location))
+            all_xz.reverse()
+            self.all_xy = [para for para in all_xy
+                           if len(para.location) > 0 and
+                           para.timestamp + len(para.location) > self.pcw]
+            self.all_xz = [para for para in all_xz
+                           if len(para.location) > 0 and
+                           para.timestamp + len(para.location) > self.pcw]
+            self.long_xy = [para for para in self.all_xy
+                            if len(para.location) >= self.length_thresh]
+            self.long_xz = [para for para in self.all_xz
+                            if len(para.location) >= self.length_thresh]
 
-        print('Para Found in XY')        
-        print len(self.all_xy)
-        print('Para Found in XZ')        
-        print len(self.all_xz)
-        self.topframes_original = copy.deepcopy(self.topframes)
-        self.sideframes_original = copy.deepcopy(self.sideframes)
-        paravid_top.close()
-        paravid_side.close()
+            print('Para Found in XY')        
+            print len(self.all_xy)
+            print('Para Found in XZ')        
+            print len(self.all_xz)
+            self.topframes_original = copy.deepcopy(self.topframes)
+            self.sideframes_original = copy.deepcopy(self.sideframes)
+            paravid_top.close()
+            paravid_side.close()
 
 
 
@@ -1469,7 +1480,7 @@ class ParaMaster():
 
     def parawrapper(self, showstats):
         print('hey im in parawrapper')
-        self.findpara()
+        self.findpara([10, 3, 3])
         self.makecorrmat()
         self.corr_mat_original = copy.deepcopy(self.corr_mat)
         self.makexyzrecords()
@@ -1517,6 +1528,30 @@ class ParaMaster():
         pl.close()
         return 1
 
+def imcont(image, thresh, erode_win, dilate_win):
+    r,th = cv2.threshold(image, thresh, 255, cv2.THRESH_BINARY) 
+    ek = np.ones([erode_win, erode_win]).astype(np.uint8)
+    dk = np.ones([dilate_win, dilate_win]).astype(np.uint8)
+    er = cv2.erode(th, ek)
+    dl = cv2.dilate(er, dk)
+    th_c = cv2.cvtColor(dl.astype(np.uint8), cv2.COLOR_GRAY2RGB)
+    return th_c
+
+def fix_blackline(im):
+    cols_to_replace = [833, 1056, 1135, 1762, 1489]
+    for c in cols_to_replace:
+        col_replacement = [int(np.mean([a,b])) for a,b in zip(im[:, c-1],im[:, c+1])]
+        im[:, c] = col_replacement
+    return im
+
+def brsub_img(img, ir_t_br):
+    brmean_top = np.mean(ir_t_br)
+    img = fix_blackline(img)
+    top_avg = np.mean(img)
+    img_adj = (img * (brmean_top/top_avg)).astype(np.uint8) 
+    top_brsub = cv2.absdiff(img_adj, ir_t_br) 
+    return top_brsub
+    
 
 def return_paramaster_object(start_ind,
                              end_ind,

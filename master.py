@@ -558,6 +558,7 @@ class DimensionalityReduce():
         pl.show()
 
     def find_hunts(self, init_inds, abort_inds):
+        self.clear_huntwins()
         self.hunt_cluster = init_inds
         self.deconverge_cluster = abort_inds
         start_bouts_per_hunt = 10
@@ -783,9 +784,11 @@ class Experiment():
         self.directory = dirct
         self.fishdata = pickle.load(open(
            self.directory + '/fishdata.pkl', 'rb'))
+        self.original_pitch = copy.deepcopy(self.fishdata.pitch)
 #        self.fluor_data = pickle.load(open('fluordata.pkl', 'rb'))
         self.set_types()
         self.nans_in_original = count_nans(self.fishdata)
+        self.pitch_fix()
         self.filter_fishdata()
         self.delta_ha = []
         self.vectVcalc(2)
@@ -814,9 +817,20 @@ class Experiment():
         self.bout_dpitch = []
         self.bout_dyaw = []
 
+
 # to do in bout detector: 
 # HA must have no nans in 20 width window. 
-# do bout detection for vel and tailangle here. 
+# do bout detection for vel and tailangle here.
+
+    def pitch_fix(self):
+        new_pitch = []
+        for pitch, ha in zip(self.fishdata.pitch, self.fishdata.headingangle):
+            if (80 < ha < 100) or (260 < ha < 280):
+                newpit = np.degrees(np.arcsin(pitch / 90.0))
+            else:
+                newpit = pitch
+            new_pitch.append(newpit)
+        self.fishdata.pitch = new_pitch
  
     def set_types(self):
         self.fishdata.pitch = np.float64(self.fishdata.pitch)
@@ -1150,8 +1164,10 @@ class Experiment():
 
         tailang = [tail[-1] for tail in self.fishdata.tailangle]
         ta_std = gaussian_filter(
-            [np.abs(np.nanstd(tw)) for tw in sliding_window(5, tailang)], 2).tolist()
-        std_thresh = 2*np.median(ta_std)
+            [np.nanstd(tw) for tw in sliding_window(5, tailang)], 2).tolist()
+        std_thresh = 4
+        print("STD THRESH")
+        print(std_thresh)
         bts = scipy.signal.argrelmax(np.array(ta_std), order=3)[0]
         bts = [b for b in bts if ta_std[b] > std_thresh]
         boutstarts = [bts[0]]
@@ -1168,6 +1184,8 @@ class Experiment():
                 crossback = -np.where(backwin < std_thresh)[0][0] + b2
             except IndexError:
                 crossback = b2 - 3
+            if crossback <= boutends[-1]:
+                crossback = boutends[-1] + 1
             try:
                 crossforward = np.where(forwardwin < std_thresh)[0][0] + b2
             except IndexError:
@@ -1433,7 +1451,7 @@ class Experiment():
         pitch_all = np.radians(pitch_all)
         yaw_all = unit_to_angle(
             filter_uvec(
-                ang_to_unit(self.fishdata.headingangle), 1))
+                ang_to_unit(self.fishdata.headingangle), filter_sd))
         yaw_rad = np.radians(yaw_all)
         x_all = gaussian_filter(self.fishdata.x, filter_sd)
         y_all = gaussian_filter(self.fishdata.y, filter_sd)
@@ -2229,7 +2247,7 @@ def bouts_during_hunt(hunt_ind, dimred, exp, plotornot):
     ax1.plot(framerange, filt_phil, color='r')
     tailang = [t[-1] for t in exp.fishdata.tailangle]
     ax3.plot(framerange, tailang[start:end])
-    ta_std = gaussian_filter([np.abs(np.nanstd(tw)) for tw in sliding_window(5, tailang)],2)
+    ta_std = gaussian_filter([np.nanstd(tw) for tw in sliding_window(5, tailang)],2)
     ax3.plot(framerange, ta_std[start:end])
     vel_during_hunt = filtV[start:end]
     ax3.plot(framerange, vel_during_hunt)
@@ -3109,7 +3127,7 @@ def plot_bout_calls(myexp, extension, tvl, *hunt_win):
     tailang = [
         tail[-1] for tail in myexp.fishdata.tailangle[
             myexp.bout_frames[start]:myexp.bout_frames[end]]]
-    ta_std = gaussian_filter([np.abs(np.nanstd(tw)) for tw in sliding_window(5, tailang)], 2)
+    ta_std = gaussian_filter([np.nanstd(tw) for tw in sliding_window(5, tailang)], 2)
     pl.plot(tailang)
     pl.plot(gaussian_filter(
         myexp.fishdata.vectV[
@@ -3132,7 +3150,23 @@ def plot_bout_calls(myexp, extension, tvl, *hunt_win):
     pl.show()
 
 
-
+def return_ta_std(drc_list):
+    all_ta = []
+    for drc in drc_list:
+        print drc
+        fishdata = pickle.load(open(
+            drc + '/fishdata.pkl', 'rb'))
+        temp_tail = np.array(fishdata.tailangle)
+        for i in range(len(temp_tail[0])):
+            temp_tail[:, i] = fill_in_nans(temp_tail[:, i])
+        tailangle = temp_tail.tolist()
+        tailang_lastseg = [ta[-1] for ta in tailangle]
+        all_ta = all_ta + tailang_lastseg
+    ta_std = gaussian_filter(
+            [np.nanstd(tw) for tw in sliding_window(5, all_ta)], 2).tolist()
+    threshold = 2*np.round(np.median(ta_std))
+    return threshold
+    
 if __name__ == '__main__':
 
 # 15 requires 250 consecutive milliseconds of data. this yields 497 bouts. 
@@ -3211,7 +3245,7 @@ if __name__ == '__main__':
 # bout array, matched with a flag array that describes summary statistics for each bout. A new BoutsandFlags object is then created
 # whose only role is to contain the bouts and corresponding flags for each fish. 
 
-    fish_id = '091418_1'
+    fish_id = '091418_3'
     drct = os.getcwd() + '/' + fish_id
     new_exp = True
     dimreduce = True
@@ -3249,13 +3283,17 @@ if __name__ == '__main__':
             dim.dim_reduction(2)
             dim.exporter()
             hd = Hunt_Descriptor(drct)
+            hd.exporter()
         else:
             dim = pickle.load(open(drct + '/dim_reduce.pkl', 'rb'))
-            hd = hd_import(myexp.directory)
+            try:
+                hd = hd_import(drct)
+            except IOError:
+                hd = Hunt_Descriptor(drct)
 
 #     sbouts = myexp.all_spherical_bouts()
 
-new_wik = ['090418_1', '090418_3', '090418_4', '090418_5', '090418_6',
+new_wik = ['090418_3', '090418_4', '090418_5', '090418_6',
            '090418_7', '090518_1', '090518_2', '090518_3', '090518_4',
            '090518_5', '090518_6', '090618_1', '090618_2', '090618_3',
            '090618_4', '090618_5', '090618_6', '090718_1', '090718_2',
@@ -3265,6 +3303,18 @@ new_wik = ['090418_1', '090418_3', '090418_4', '090418_5', '090418_6',
            '091218_6', '091318_1', '091318_2', '091318_3', '091318_4',
            '091318_5', '091318_6', '091418_1', '091418_2', '091418_3',
            '091418_4', '091418_5', '091418_6']
+
+#m_std = return_ta_std(new_wik)
+# ran on all data -- yields 4.0
+
+
+
+
+
+
+
+
+
 
 
 # pilot = ['070617_1', '070617_2','072717_1', '072717_2', '072717_5']
