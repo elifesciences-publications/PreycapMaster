@@ -60,8 +60,6 @@ z and eye angle trajectories over each hunt, which is valuable for convincing pe
 '''
 
 
-
-
 # The Experiment class wraps all methods one level up from finding fish and para related variables. It reveals how fish and para interact. Para can be mapped to the eyes of the fish and the heading angle of the fish. Behavior of paramecia during hunting epochs can be analyzed.
 
 
@@ -130,6 +128,7 @@ class Hunt_Descriptor:
         self.boutrange = []
         self.directory = directory
         self.interp_windows = []
+        self.decimated_vids = []
 
     def exporter(self):
         with open(self.directory + '/hunt_descriptor.pkl', 'wb') as file:
@@ -147,12 +146,14 @@ class Hunt_Descriptor:
             inferred_window_ranges_poi = [
                     range(win[0], win[1]) for win in inferred_windows_poi]
         self.interp_windows.append(inferred_window_ranges_poi)
+        self.decimated_vids.append(exp.paradata.decimated_vids)
 
     def current(self):
         print self.hunt_ind_list
         print self.para_id_list
         print self.actions
         print self.boutrange
+        print self.decimated_vids
 
     def remove_entry(self, h_id):
         ind = np.where(np.array(self.hunt_ind_list) == h_id)[0][0]
@@ -161,6 +162,7 @@ class Hunt_Descriptor:
         del self.actions[ind]
         del self.boutrange[ind]
         del self.interp_windows[ind]
+        del self.decimated_vids[ind]
 
     def update_hunt_data(self, p, a, br, exp):
         self.hunt_ind_list.append(copy.deepcopy(exp.current_hunt_ind))
@@ -596,15 +598,22 @@ class DimensionalityReduce():
             di = int(di)
         except ValueError:
             return
-        candidate_window = [start_ind, start_ind + di]
-        self.hunt_wins[ind] = candidate_window
+        self.hunt_wins[ind] = [start_ind, start_ind + di]
         exp.watch_hunt(self, 1, 15, ind)
         response = raw_input('Cap Window?  ')
         if response == 'y':
             self.exporter()
         else:
-            self.hunt_wins[ind] = [start_ind, original_end_ind]
-            return
+            #            self.hunt_wins[ind] = [start_ind, original_end_ind]
+            while(True):
+                new_end = raw_input('Correct End: ')
+                if new_end == 'd':
+                    break
+                else:
+                    new_end = int(new_end)
+                self.hunt_wins[ind] = [start_ind, start_ind + new_end]
+                exp.watch_hunt(self, 1, 15, ind)
+                
         view_bouts = raw_input("View Bouts During Hunt?: ")
         if view_bouts == 'y':
             bouts_during_hunt(exp.current_hunt_ind, dim, exp, True)
@@ -1361,7 +1370,13 @@ class Experiment():
 # syntax is always myexp.paradata.all_xy[xyrec].timestamp or location
 # up to you to figure out proper fill in timestamps according to 1,2,3 above
 
-    def assign_max_z(self, xyrec, auto, zmax, *xzrec):
+    def assign_z(self, xyrec, auto, zmax, *xzrec):
+        if zmax == 0:
+            fish_z = self.fishdata.z[
+                self.paradata.framewindow[
+                    0] + self.paradata.all_xy[xyrec].timestamp]
+            print("Fish mouth is at" + str(fish_z))
+            zmax = raw_input('Enter Z:  ')
         if not auto:
             timestamp = raw_input("Enter Timestamp for New XZ: ")
             timestamp = int(eval(timestamp))
@@ -1374,7 +1389,7 @@ class Experiment():
             else:
                 xzrec = xzrec[0]
                 f_or_b = raw_input(
-                    "Enter f for max_z ahead of known xzrec, b for behind: ")
+                    "Enter f for assign_z ahead of known xzrec, b for behind: ")
                 if f_or_b == 'f':
                     timestamp = self.paradata.all_xz[
                         xzrec].timestamp + len(
@@ -1401,9 +1416,9 @@ class Experiment():
             del self.paradata.all_xz[-1]
             del self.paradata.xyzrecords[-1]
             if xzrec != ():
-                return self.assign_max_z(xyrec, auto, new_maxz, xzrec)
+                return self.assign_z(xyrec, auto, new_maxz, xzrec)
             else:
-                return self.assign_max_z(xyrec, auto, new_maxz)
+                return self.assign_z(xyrec, auto, new_maxz)
         elif accept == 'y':
             self.map_para_to_heading(self.current_hunt_ind)
             return
@@ -1929,8 +1944,10 @@ def pvec_wrapper(exp, hd, filter_sd):
     vec_address = []
     nonan_indices = []
     p_id = 0
-    for h in hd.hunt_ind_list:
+    for h, d in zip(hd.hunt_ind_list, hd.decimated_vids):
         print h
+        if d:
+            continue
         while True:
             try:
                 v, no_nan_inds, spacing = para_vec_explorer(exp,
@@ -2298,6 +2315,9 @@ def hunted_para_descriptor(dim, exp, hd):
               'Para Az Velocity',
               'Para Alt Velocity',
               'Para Dist Velocity',
+              'Para Az Accel',
+              'Para Alt Accel',
+              'Para Dist Accel',
               'Postbout Para Az',
               'Postbout Para Alt',
               'Postbout Para Dist',
@@ -2323,13 +2343,12 @@ def hunted_para_descriptor(dim, exp, hd):
                         :, cont_win+int_win-realfish.firstbout_para_intwin:]
         penv = ParaEnv(hi, exp.directory, 1)
         penv.find_paravectors(False, hp)
+# raw_para_vel = penv.velocity_mags[0][exp.para_continuity_window / penv.vector_spacing:]
+# can index raw_para_vel with norm_bf / penv.vector_spacing.
         avg_vel = np.nanmean(penv.velocity_mags[0][
             exp.para_continuity_window / penv.vector_spacing:])
         hunt_df = pd.DataFrame(columns=df_labels)
         poi_wrth = create_poirec(hi, 3, exp.directory, hp)
-
-# THIS IS WRONG! YOU ARE GOING TO THE NORM_FRAME. POI_WRTH has
-# cont_win + int_win 
         dist = [pr[4] for pr in poi_wrth]
         az = [pr[6] for pr in poi_wrth]
         alt = [pr[7] for pr in poi_wrth]
@@ -2340,17 +2359,11 @@ def hunted_para_descriptor(dim, exp, hd):
         # list comp the nans. 
         filter_sd = 2
         kernel = Gaussian1DKernel(filter_sd)
-        filt_az = convolve(az, kernel)
+        filt_az = convolve(az, kernel, preserve_nan=True)
         # note i later found the preserve_nans key -- change if you want for
         # brevity. 
-        filt_az = [f if not math.isnan(a) else np.nan for f, a in zip(
-            filt_az, az)]
-        filt_alt = convolve(alt, kernel)
-        filt_alt = [f if not math.isnan(a) else np.nan for f, a in zip(
-            filt_alt, alt)]
-        filt_dist = convolve(dist, kernel)
-        filt_dist = [f if not math.isnan(d) else np.nan for f, d in zip(
-            filt_dist, dist)]
+        filt_alt = convolve(alt, kernel, preserve_nan=True)
+        filt_dist = convolve(dist, kernel, preserve_nan=True)
         if len(filt_az) < 2 or len(filt_dist) < 2:
             continue
         hunt_bouts = range(dim.hunt_wins[hi][0],
@@ -2402,15 +2415,15 @@ def hunted_para_descriptor(dim, exp, hd):
                 pmap_returns.append(p_map_to_fish(uf,
                                                   ufish_origin,
                                                   uperp, upar, p_xyz, 0))
-            para_daz = np.nanmean(
-                gaussian_filter(
-                    np.diff([x[0] for x in pmap_returns]), 1)) / .015
-            para_dalt = np.nanmean(
-                gaussian_filter(
-                    np.diff([x[1] for x in pmap_returns]), 1)) / .015
-            para_ddist = np.nanmean(
-                gaussian_filter(
-                    np.diff([x[2] for x in pmap_returns]), 1)) / .015
+            para_daz = gaussian_filter(np.diff(
+                [x[0] for x in pmap_returns]), 1) / .015
+            para_dalt = gaussian_filter(
+                np.diff([x[1] for x in pmap_returns]), 1) / .015
+            para_ddist = gaussian_filter(
+                np.diff([x[2] for x in pmap_returns]), 1) / .015
+            para_az_accel = np.diff(para_daz)
+            para_alt_accel = np.diff(para_dalt)
+            para_dist_accel = np.diff(para_ddist)
             # this exception is no longer required as I built the last bout duration into the para_during_hunt function
 #            try:
             postbout_az = filt_az[norm_frame+bout_dur]
@@ -2438,9 +2451,12 @@ def hunted_para_descriptor(dim, exp, hd):
                                     para_az,
                                     para_alt,
                                     para_dist,
-                                    para_daz,
-                                    para_dalt,
-                                    para_ddist,
+                                    np.nanmean(para_daz),
+                                    np.nanmean(para_dalt),
+                                    np.nanmean(para_ddist),
+                                    np.nanmean(para_az_accel),
+                                    np.nanmean(para_alt_accel),
+                                    np.nanmean(para_dist_accel),
                                     postbout_az,
                                     postbout_alt,
                                     postbout_dist,
@@ -2555,13 +2571,16 @@ def para_stimuli(dim, exp, hd):
     hunt_ind_list = hd.hunt_ind_list
     p_list = hd.para_id_list
     actions = hd.actions
+    decimation = hd.decimated_vids
     stim_list = []
 
-    for h, hp, ac in zip(hunt_ind_list,
-                         p_list, actions):
+    for h, hp, ac, d in zip(hunt_ind_list,
+                            p_list, actions, decimation):
         print h
         # here you will create a bout frames list for the entire hunt. once you
-        # get to the hunted para, 
+        # get to the hunted para,
+        if d:
+            continue
         p3D = np.load(exp.directory + '/para3D' + str(h).zfill(2) + '.npy')
         distmat = make_distance_matrix(p3D)
         penv = ParaEnv(h, exp.directory, 1)
@@ -2572,7 +2591,7 @@ def para_stimuli(dim, exp, hd):
 # HERE IS WHERE THE INTERVAL GETS SET.
 # When this is a function, your flags here will include whether its an init or an abort. 
 
-        if ac >= 5:
+        if ac >= 4:
             continue
             # update this when you know how fish move to known para. then you can figure out when the new hunt starts
             # once you figure out when the new hunt starts, just wrth_int = wrth[huntstart:huntstart+int_win]
@@ -2750,7 +2769,7 @@ def hd_import(dr):
     x = pickle.load(open(dr + '/hunt_descriptor.pkl', 'rb'))
     return x
 
-    
+
 def contour_diameter(contour):
     distances = pdist(contour.vertices)
     sq = squareform(distances)

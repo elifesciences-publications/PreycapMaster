@@ -61,11 +61,11 @@ class Para:
 #if there's nothing found, add 1 to the waitindex, and say current position is the last position
 
         if pcoords.shape[0] == 0:
-            self.waitindex += 1
             self.location.append(self.lastcoord)
             if self.waitindex == self.waitmax:
                 #end record if you've gone 'waitmax' frames without finding anything. this value greatly changes things. its a delicate balance between losing the para and waiting too long while another para enters
                 self.endrecord()
+            self.waitindex += 1
 
 # this case is only one contour is within the threshold distance to this Para.
         elif pcoords.shape[0] == 1:
@@ -87,6 +87,7 @@ class ParaMaster():
     def __init__(self, start_ind, end_ind, directory, pcw):
         self.pcw = pcw
         self.directory = directory
+        self.decimated_vids = False
         self.all_xy = []
         self.all_xz = []
         self.corr_mat = []
@@ -124,9 +125,18 @@ class ParaMaster():
 
 # This function fits contours to each frame of the high contrast videos created in flparse2. Contours are filtered for proper paramecia size, then the locations of contours are compared to the current locations of paramecia. Locations of contours falling within a distance threshold of a known paramecia are appended to the location list for that para. At the end, individual paramecia records are established for each paramecia in the tank. Each para object is stored in the all_xy or all_xz para object list depending on plane.
 
-    def findpara(self, params, record_para):
-        params_top, params_side = params
-
+    def findpara(self, params, record_para, *ask):
+        params_top, params_side, area = params
+        if ask != ():
+            dec_vid = raw_input('Decimate Video?: ')
+        else:
+            dec_vid = 'y'
+        if dec_vid == 'y':
+            use_c_vids = False
+            self.decimated_vids = True
+        else:
+            use_c_vids = True
+            record_para = True
         def repeat_vids():
             self.watch_event(1)
             self.watch_event(2)
@@ -157,12 +167,14 @@ class ParaMaster():
         p_s = []
         completed_t = []
         completed_s = []
-        top_file = '/Volumes/WIKmovies/' + directory[-9:-1] + '_cam0.AVI'
-        side_file = '/Volumes/WIKmovies/' + directory[-9:-1] + '_cam1.AVI'
+        if use_c_vids:
+            top_file = directory + 'top_contrasted.AVI'
+            side_file = directory + 'side_contrasted.AVI'
+        else:
+            top_file = '/Volumes/WIKmovies/' + directory[-9:-1] + '_cam0.AVI'
+            side_file = '/Volumes/WIKmovies/' + directory[-9:-1] + '_cam1.AVI'
 #        top_file = directory + directory[-9:-1] + '_cam0.AVI'
 #        side_file = directory + directory[-9:-1] + '_cam1.AVI'
-#        top_file = directory + 'top_contrasted.AVI'
-#        side_file = directory + 'side_contrasted.AVI'
         paravid_top = imageio.get_reader(top_file, 'ffmpeg')
         paravid_side = imageio.get_reader(side_file, 'ffmpeg')
         firstframe = True
@@ -171,7 +183,7 @@ class ParaMaster():
                       self.framewindow[1], 1)):
             if framenum % 100 == 0:
                 print go_to_frame
-            if not record_para:
+            if not record_para and not use_c_vids:
                 if framenum >= pcw:
                     cont_top, cont_side = contrast_frame(
                         paravid_top, paravid_side,
@@ -181,21 +193,33 @@ class ParaMaster():
                     self.topframes.append(cont_top)
                     self.sideframes.append(cont_side)
                 continue
-            cont_top, cont_side = contrast_frame(
-                        paravid_top, paravid_side,
-                        top_br[go_to_frame / 1875],
-                        side_br[go_to_frame / 1875],
-                        go_to_frame)
-            cont_color_top = cv2.cvtColor(cont_top, cv2.COLOR_GRAY2RGB)
-            cont_color_side = cv2.cvtColor(cont_side, cv2.COLOR_GRAY2RGB)
+            if not use_c_vids:
+                cont_top, cont_side = contrast_frame(
+                    paravid_top, paravid_side,
+                    top_br[go_to_frame / 1875],
+                    side_br[go_to_frame / 1875],
+                    go_to_frame)
+                cont_color_top = cv2.cvtColor(cont_top, cv2.COLOR_GRAY2RGB)
+                cont_color_side = cv2.cvtColor(cont_side, cv2.COLOR_GRAY2RGB)
+            else:
+                cont_color_top = paravid_top.get_data(go_to_frame)
+                cont_color_side = paravid_side.get_data(go_to_frame)
+                cont_top = cv2.cvtColor(
+                    cont_color_top, cv2.COLOR_BGR2GRAY)
+                cont_side = cv2.cvtColor(
+                    cont_color_side, cv2.COLOR_BGR2GRAY)
+                r, cont_top = cv2.threshold(cont_top, 120, 255,
+                                            cv2.THRESH_BINARY)
+                r, cont_side = cv2.threshold(cont_side, 120, 255,
+                                             cv2.THRESH_BINARY)
             rim, contours_t, hierarchy = cv2.findContours(
                 cont_top, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             rim, contours_s, hierarchy = cv2.findContours(
                 cont_side, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             parafilter_top = [cv2.minEnclosingCircle(t)[0] for t in contours_t
-                              if 10 < cv2.contourArea(t) < 500]
+                              if area <= cv2.contourArea(t) < 500]
             parafilter_side = [cv2.minEnclosingCircle(s)[0] for s in contours_s
-                               if 10 < cv2.contourArea(s) < 500]
+                               if area <= cv2.contourArea(s) < 500]
             for para in parafilter_top:
                 cv2.circle(cont_color_top, (int(para[0]), int(para[1])), 3,
                            (0, 0, 255), -1)
@@ -237,7 +261,10 @@ class ParaMaster():
         if modify == 'r':
             modify = repeat_vids()
         if modify == 'y':
-            action = raw_input('Enter new params: ')
+            if use_c_vids:
+                action = str(params)
+            else:
+                action = raw_input('Enter new params: ')
             self.topframes = deque()
             self.sideframes = deque()
             paravid_top.close()
@@ -1518,9 +1545,10 @@ class ParaMaster():
 
 #this function simply wraps all ParaMaster methods. It calls them sequentially after the ParaMaster class has been initialized with proper time bounds.
 
+
     def parawrapper(self, showstats):
         print('hey im in parawrapper')
-        self.findpara([[10, 3, 3], [10, 3, 3]], False)
+        self.findpara([[10, 3, 5, 3], [10, 3, 5, 3], 6], False, True)
         self.makecorrmat()
         self.corr_mat_original = copy.deepcopy(self.corr_mat)
         self.makexyzrecords()
@@ -1569,14 +1597,15 @@ class ParaMaster():
         return 1
 
 def imcont(image, params):
-    thresh, erode_win, dilate_win = params
+    thresh, erode_win, dilate_win, med_win = params
     r,th = cv2.threshold(image, thresh, 255, cv2.THRESH_BINARY) 
     ek = np.ones([erode_win, erode_win]).astype(np.uint8)
     dk = np.ones([dilate_win, dilate_win]).astype(np.uint8)
     er = cv2.erode(th, ek)
     dl = cv2.dilate(er, dk)
+    md = cv2.medianBlur(dl, med_win)
 #    th_c = cv2.cvtColor(dl.astype(np.uint8), cv2.COLOR_GRAY2RGB)
-    return dl
+    return md
 
 def fix_blackline(im):
     cols_to_replace = [833, 1056, 1135, 1762, 1489]
@@ -1591,11 +1620,11 @@ def fix_blackline(im):
 # mean norm gets rid of luminance diffs between frames by looking at tank edge
 # illumination
 def brsub_img(img, ir_br):
-  #  brmean_top = np.mean(ir_br[1880:,:])
+#    brmean = np.mean(ir_br[1880:, :])
     img = fix_blackline(img)
  #   im_avg = np.mean(img[1880:, :])
-#    img_adj = (img * np.uint8(brmean_top/im_avg))
-   # brsub = cv2.absdiff(img_adj, ir_br)
+#    img_adj = (img * (brmean/im_avg)).astype(np.uint8)
+  #  brsub = cv2.absdiff(img_adj, ir_br)
     brsub = cv2.absdiff(img, ir_br)
     return brsub
 
