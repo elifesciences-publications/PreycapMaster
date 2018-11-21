@@ -19,6 +19,7 @@ from toolz.itertoolz import sliding_window, partition
 # from sympy import Point3D, Plane
 from scipy.spatial.distance import pdist, squareform
 import warnings
+from collections import deque
 import matplotlib.cm as cm
 from matplotlib import pyplot as pl
 from matplotlib.colors import Normalize, ListedColormap
@@ -341,27 +342,25 @@ class DimensionalityReduce():
     def __init__(self,
                  bout_dict,
                  flag_dict,
-                 all_varbs_dict, directory, fish_id_dict, exp_bouts_list, ):
+                 all_varbs_dict, fish_id_list, exp_bouts_list, exp_flags_list):
+        self.fish_list = fish_id_list
         self.recluster = True
-        self.directory = directory
+        self.directory = os.getcwd()
         self.cluster_input = []
         self.num_dp = len(all_varbs_dict)
         self.all_varbs_dict = all_varbs_dict
-        self.all_bouts = []
-        self.all_flags = []
-        self.exp_class_list = exp_class_list
+        self.num_bouts_per_fish = [len(bts) for bts in exp_bouts_list]
+        self.all_bouts = np.concatenate(exp_bouts_list, axis=0).tolist()
+        self.all_flags = np.concatenate(exp_flags_list, axis=0).tolist()
         self.dim_reduce_output = []
         self.cmem_pre_sub = []
         self.cluster_membership = []
+        self.cmem_by_fish = []
         self.bout_dict = bout_dict
-        self.num_bouts_per_fish = []
         self.flag_dict = flag_dict
         self.inv_fdict = {v: k for k, v in flag_dict.iteritems()}
         self.transition_matrix = np.array([])
         self.cluster_count = 3
-        self.hunt_cluster = []
-        self.deconverge_cluster = []
-        self.hunt_wins = []
 
 # This will be for the future if you want to cluster all fish in the fish_id_dict. Just add the IDs from the dict to the flag data.
 
@@ -398,6 +397,9 @@ class DimensionalityReduce():
             if cmem[b_id] != 0:
                 self.cluster_membership[c_ind] = max_cluster_id + cmem[b_id]
 
+    def set_directory(self, exp):
+        self.directory = exp.directory
+
     def strike_abort_sep(self, term_cluster):
         cluster_indices = np.where(self.cluster_membership == term_cluster)[0]
             # now get all bouts from cluster indices in all_bouts
@@ -416,13 +418,22 @@ class DimensionalityReduce():
         pl.show()
         return interbouts_in_cluster, dyaw_in_cluster
 
-    def watch_cluster(self, exp, clusters, vidtype, term):
+    def create_cmem_by_fish(self):
+        cumsum_numbouts = np.r_[0, np.cumsum(self.num_bouts_per_fish)]
+        self.cmem_by_fish = [self.cluster_membership[
+            i[0]:i[1]] for i in sliding_window(2, cumsum_numbouts)]
+
+    def watch_cluster(self, fish_id, clusters, vidtype, term):
+        cluster_ids_for_fish = self.cmem_by_fish[
+            self.fish_id_list.index(fish_id)]
+        directory = os.get_cwd + '/' + fish_id
+        exp = pickle.load(open(directory + '/master.pkl', 'rb'))
         if vidtype == 1:
             vid = imageio.get_reader(
-                self.directory + '/top_contrasted.AVI', 'ffmpeg')
+                directory + '/top_contrasted.AVI', 'ffmpeg')
         elif vidtype == 0:
             vid = imageio.get_reader(
-                self.directory + '/conts.AVI', 'ffmpeg')
+                directory + '/conts.AVI', 'ffmpeg')
         cv2.namedWindow('vid', flags=cv2.WINDOW_AUTOSIZE)
         cv2.moveWindow('vid', 20, 20)
         c_mem_counter = 0
@@ -451,37 +462,15 @@ class DimensionalityReduce():
                         cv2.destroyAllWindows()
                         vid.close()
                         return
-
         cv2.destroyAllWindows()
         vid.close()
         return
-
-    def extract_and_assignID(self, file_id):
-        boutdata = pickle.load(open(file_id, 'rb'))
-        num_bouts = len(boutdata.bouts)
-        self.num_bouts_per_fish.append(num_bouts)
-        new_flags = []
-        for flag in boutdata.flags:
-            flag.append(fish_id)
-            new_flags.append(flag)
-        boutdata.flags = new_flags
-        return boutdata
 
     def exporter(self):
         with open(self.directory + '/dim_reduce.pkl', 'wb') as file:
             pickle.dump(self, file)
 
-    def clear_huntwins(self):
-        self.hunt_wins = []
-        self.hunt_cluster = []
-        self.deconverge_cluster = []
-
-    def concatenate_records(self):
-        for exp_class in self.exp_class_list:
-            self.all_bouts = self.all_bouts + exp_class.bout_data
-            self.all_flags = self.all_flags + exp_class.bout_flags        
-# Looks like a typo, but since bout inversion mixes left and right, wanted to have a standard deviation 
-# for "an eye". 
+    def prepare_records(self):
         bt_array = np.array(self.all_bouts)
         std_array = [np.nanstd(
             bt_array[:, i:len(self.all_bouts[0])+1:self.num_dp])
@@ -511,90 +500,11 @@ class DimensionalityReduce():
             np.array(norm_bouts))
         self.cluster_membership = c_flag
         num_clusters = np.unique(self.cluster_membership).shape[0]
-        transition_mat = np.zeros([num_clusters, num_clusters])
-        for i, j in sliding_window(2, self.cluster_membership):
-            transition_mat[i, j] += 1
-        transition_mat /= self.cluster_membership.shape[0]
-        self.transition_matrix = transition_mat
-# Add 1 so there is no cluster 0
         new_flags = []
         for flag, cflag in zip(self.all_flags, self.cluster_membership):
             flag.append(cflag)
             new_flags.append(flag)
         self.all_flags = new_flags
-
-    def transition_bar(self, cluster):
-        palette = sb.color_palette('husl', 8)
-        probs = self.transition_matrix[cluster]
-        probs /= np.sum(probs)
-        fig = pl.figure(figsize=(8, 8))
-        ax = fig.add_subplot(111)
-        ax.bar([ind for ind, p in enumerate(probs)],
-               probs, align='center', color=palette[1])
-        ax.set_title('Transition Probability, Cluster'+str(cluster))
-        ax.set_xlim([-.5, self.transition_matrix.shape[0] - .5])
-        ax.grid(False)
-        pl.show()
-
-    def find_hunts(self, init_inds, abort_inds):
-        self.clear_huntwins()
-        self.hunt_cluster = init_inds
-        self.deconverge_cluster = abort_inds
-        start_bouts_per_hunt = 10
-        for i, cmem in enumerate(self.cluster_membership):
-            if cmem in self.hunt_cluster:
-                if i + start_bouts_per_hunt < len(self.cluster_membership) - 1:
-                    self.hunt_wins.append([i, i + start_bouts_per_hunt])
-                else:
-                    self.hunt_wins.append([i, len(self.cluster_membership) - 2])
-        self.exporter()
-                
-    def extend_hunt_window(self, exp, numbouts):
-        self.hunt_wins[exp.current_hunt_ind][1] += numbouts
-        self.exporter()
-
-    def reset_hunt_window(self, exp):
-        orig = self.hunt_wins[exp.current_hunt_ind][0]
-        self.hunt_wins[exp.current_hunt_ind] = [orig, orig+10]
-        self.exporter()
-
-# one bug is deconverge_cluster should be cleared when find_hunts is called        
-    def cap_hunt_window(self, exp):
-        ind = exp.current_hunt_ind
-        start_ind = self.hunt_wins[ind][0]
-        original_end_ind = self.hunt_wins[ind][1]
-        cluster_mem = self.cluster_membership[
-            start_ind:original_end_ind+1].tolist()
-        deconverge_inds = [
-                i for i, v in enumerate(
-                    cluster_mem) if v in self.deconverge_cluster]
-        print('Candidate Deconvergences')
-        print deconverge_inds
-        di = raw_input('Enter Correct Deconvergence:  ')
-        try:
-            di = int(di)
-        except ValueError:
-            return
-        self.hunt_wins[ind] = [start_ind, start_ind + di]
-        exp.watch_hunt(self, 1, 15, ind)
-        response = raw_input('Cap Window?  ')
-        if response == 'y':
-            self.exporter()
-        else:
-            #            self.hunt_wins[ind] = [start_ind, original_end_ind]
-            while(True):
-                new_end = raw_input('Correct End: ')
-                if new_end == 'd':
-                    break
-                else:
-                    new_end = int(new_end)
-                self.hunt_wins[ind] = [start_ind, start_ind + new_end]
-                exp.watch_hunt(self, 1, 15, ind)
-                
-        view_bouts = raw_input("View Bouts During Hunt?: ")
-        if view_bouts == 'y':
-            bouts_during_hunt(exp.current_hunt_ind, dim, exp, True)
-            exp.watch_hunt(self, 0, 50, ind)
 
     def dim_reduction(self, dimension):
         print('running dimensionality reduction')
@@ -796,13 +706,15 @@ class Experiment():
         self.bout_of_interest = 0
         self.hunt_windows = []
         self.current_hunt_ind = 0
-        self.integration_window = 30
+        self.integration_window = 10
         self.bout_az = []
         self.bout_alt = []
         self.bout_dist = []
         self.bout_dpitch = []
         self.bout_dyaw = []
-
+        self.hunt_cluster = 0
+        self.deconverge_cluster = 0
+        self.cluster_membership = []
 
 # to do in bout detector: 
 # HA must have no nans in 20 width window. 
@@ -914,19 +826,75 @@ class Experiment():
         return (calc_near_wall(x_init, y_init, z_init, ha_init, pitch_init)
                 or calc_near_wall(x_end, y_end, z_end, ha_end, pitch_end))
 
-    def nexthunt(self, dim, vid):
-        ret = self.watch_hunt(
-            dim, vid, 15, self.current_hunt_ind + 1)
+    def find_hunts(self, init_inds, abort_inds):
+        self.hunt_wins = []
+        self.hunt_cluster = init_inds
+        self.deconverge_cluster = abort_inds
+        start_bouts_per_hunt = 10
+        for i, cmem in enumerate(self.cluster_membership):
+            if cmem in self.hunt_cluster:
+                if i + start_bouts_per_hunt < len(self.cluster_membership) - 1:
+                    self.hunt_wins.append([i, i + start_bouts_per_hunt])
+                else:
+                    self.hunt_wins.append([i, len(self.cluster_membership) - 2])
+        self.exporter()
+                
+    def extend_hunt_window(self, numbouts):
+        self.hunt_wins[self.current_hunt_ind][1] += numbouts
+        self.exporter()
+
+    def reset_hunt_window(self):
+        orig = self.hunt_wins[self.current_hunt_ind][0]
+        self.hunt_wins[self.current_hunt_ind] = [orig, orig+10]
+        self.exporter()
+
+# one bug is deconverge_cluster should be cleared when find_hunts is called        
+    def cap_hunt_window(self):
+        start_ind = self.hunt_wins[self.current_hunt_ind][0]
+        original_end_ind = self.hunt_wins[self.current_hunt_ind][1]
+        cluster_mem = self.cluster_membership[
+            start_ind:original_end_ind+1].tolist()
+        deconverge_inds = [
+                i for i, v in enumerate(
+                    cluster_mem) if v in self.deconverge_cluster]
+        print('Candidate Deconvergences')
+        print deconverge_inds
+        di = raw_input('Enter Correct Deconvergence:  ')
+        try:
+            di = int(di)
+        except ValueError:
+            return
+        self.hunt_wins[self.current_hunt_ind] = [start_ind, start_ind + di]
+        self.watch_hunt(self, 1, 15, self.current_hunt_ind)
+        response = raw_input('Cap Window?  ')
+        if response == 'y':
+            self.exporter()
+        else:
+            #            self.hunt_wins[ind] = [start_ind, original_end_ind]
+            while(True):
+                new_end = raw_input('Correct End: ')
+                if new_end == 'd':
+                    break
+                else:
+                    new_end = int(new_end)
+                self.hunt_wins[self.current_hunt_ind] = [start_ind, start_ind + new_end]
+                exp.watch_hunt(self, 1, 15, self.current_hunt_ind)
+                
+        view_bouts = raw_input("View Bouts During Hunt?: ")
+        if view_bouts == 'y':
+            bouts_during_hunt(self.current_hunt_ind, dim, self, True)
+            self.watch_hunt(self, 0, 50, self.current_hunt_ind)
+
+    def nexthunt(self):
+        ret = self.watch_hunt(1, 15, self.current_hunt_ind + 1)
         if not ret:
-            return self.nexthunt(dim, vid)
+            return self.nexthunt()
 
-    def repeat(self, dim, vid):
-        self.watch_hunt(
-            dim, vid, 15, self.current_hunt_ind)
+    def repeat(self, vid):
+        self.watch_hunt(vid, 15, self.current_hunt_ind)
 
-    def backone(self, dim):
-        self.watch_hunt(
-            dim, 1, 15, self.current_hunt_ind - 1)
+    def backone(self):
+        self.watch_hunt(1, 15, self.current_hunt_ind - 1)
 
     def bout_nanfilt_and_arrange(self, filter_walls):
         def get_var_index(var_name):
@@ -1179,6 +1147,7 @@ class Experiment():
                     boutstarts, boutends)
             return boutstarts, boutends
 
+        plot_bouts = False
         tailang = [tail[-1] for tail in self.fishdata.tailangle]
         ta_std = gaussian_filter(
             [np.nanstd(tw) for tw in sliding_window(5, tailang)], 2).tolist()
@@ -1215,18 +1184,19 @@ class Experiment():
         
         self.bout_frames = boutstarts
         self.bout_durations = bout_durations
-        fig, (ax1, ax2) = pl.subplots(1, 2, sharex=True, figsize=(6, 6))
-        ax1.plot(bts, np.zeros(len(bts)), marker='.', color='b')
-        ax2.plot(bts, np.zeros(len(bts)), marker='.', color='b')
-        ax1.plot(
-            boutstarts, np.zeros(len(boutstarts)), marker='.', color='c')
-        ax2.plot(
-            boutstarts, np.zeros(len(boutstarts)), marker='.', color='c')
-        ax1.plot(boutends, np.zeros(len(boutends)), marker='.', color='m')
-        ax2.plot(boutends, np.zeros(len(boutends)), marker='.', color='m')
-        ax1.plot(ta_std)
-        ax2.plot(tailang)
-        pl.show()
+        if plot_bouts:
+            fig, (ax1, ax2) = pl.subplots(1, 2, sharex=True, figsize=(6, 6))
+            ax1.plot(bts, np.zeros(len(bts)), marker='.', color='b')
+            ax2.plot(bts, np.zeros(len(bts)), marker='.', color='b')
+            ax1.plot(
+                boutstarts, np.zeros(len(boutstarts)), marker='.', color='c')
+            ax2.plot(
+                boutstarts, np.zeros(len(boutstarts)), marker='.', color='c')
+            ax1.plot(boutends, np.zeros(len(boutends)), marker='.', color='m')
+            ax2.plot(boutends, np.zeros(len(boutends)), marker='.', color='m')
+            ax1.plot(ta_std)
+            ax2.plot(tailang)
+            pl.show()
 
     def para_during_hunt(self, index, movies, hunt_wins):
         cv2.destroyAllWindows()
@@ -1254,13 +1224,12 @@ class Experiment():
         self.map_para_to_heading(index)
         return True
 
-    def watch_hunt(self, dim, cont_side, delay, h_ind):
-        hunt_wins = dim.hunt_wins
+    def watch_hunt(self, cont_side, delay, h_ind):
         print('Hunt # ' + str(h_ind))
         print('Init Cluster: ' + str(
-            dim.cluster_membership[hunt_wins[h_ind][0]]))
+            self.cluster_membership[self.hunt_wins[h_ind][0]]))
         self.current_hunt_ind = h_ind
-        firstbout, lastbout = hunt_wins[h_ind]
+        firstbout, lastbout = self.hunt_wins[h_ind]
         ind1 = self.bout_frames[firstbout]
         ind2 = self.bout_frames[lastbout+1]
         if np.mean(
@@ -1312,7 +1281,7 @@ class Experiment():
         key = cv2.waitKey(0)
         print key
         if key == 49:
-            ret = self.para_during_hunt(h_ind, True, hunt_wins)
+            ret = self.para_during_hunt(h_ind, True, self.hunt_wins)
             cv2.destroyAllWindows()
             if ret:
                 self.paradata.watch_event(1)
@@ -1320,9 +1289,9 @@ class Experiment():
         return True
 
 # Eye1 is the eye on the side of the direction of the turn.
-    def bout_stats(self, bout_ind, dim, global_bout):
+    def bout_stats(self, bout_ind, global_bout):
         if not global_bout:
-            bout_index = bout_ind + dim.hunt_wins[self.current_hunt_ind][0]
+            bout_index = bout_ind + self.hunt_wins[self.current_hunt_ind][0]
         else:
             bout_index = bout_ind
         bout = self.bout_data[bout_index]
@@ -1330,7 +1299,7 @@ class Experiment():
         num_rows = 3
         fig = pl.figure(figsize=(8, 8))
         palette = np.array(sb.color_palette("Set1", self.num_dp))
-        cmem = dim.cluster_membership[bout_index]
+        cmem = self.cluster_membership[bout_index]
         print('Cluster Membership: ' + str(cmem))
         for i in range(self.num_dp):
             bout_partition = partition(self.num_dp, bout)
@@ -1565,12 +1534,12 @@ class Experiment():
         vid.close()
         return
 
-    def spherical_huntbouts(self, fsbs, hd, dim):
+    def spherical_huntbouts(self, fsbs, hd):
         shbs = []
         huntframes = [range(
             self.bout_frames[d[0]], self.bout_frames[d[1]] + 1)
                       for i, d in enumerate(
-                              dim.hunt_wins) if i in hd.hunt_ind_list]
+                              self.hunt_wins) if i in hd.hunt_ind_list]
         hf_concat = np.concatenate(huntframes)
         for sbout in fsbs:
             bf = sbout["Bout Frame"]
@@ -2235,19 +2204,18 @@ def every_huntbout(dim, exp, hd):
         
 def bouts_during_hunt(hunt_ind, dimred, exp, plotornot):
     integ_win = exp.integration_window
-    firstind = dimred.hunt_wins[hunt_ind][0]
-    secondind = dimred.hunt_wins[hunt_ind][1]    
+    firstind = exp.hunt_wins[hunt_ind][0]
+    secondind = exp.hunt_wins[hunt_ind][1]    
     indrange = range(firstind, secondind+1, 1)
     #+1 so it includes the secondind
     print('Bout Ids')
     print range(firstind, secondind+1)
     print('Cluster Membership')
-    
-    print dim.cluster_membership[firstind:secondind+1]
+    print exp.cluster_membership[firstind:secondind+1]
     print('Bout Durations')
     print exp.bout_durations[firstind:secondind+1]
     print('Nans in Bouts')
-    print [d[9] for d in dim.all_flags[firstind:secondind+1]]
+    print [d[9] for d in exp.bout_flags[firstind:secondind+1]]
     filtV = gaussian_filter(exp.fishdata.vectV, 0)
     # yaw_all_filt = unit_to_angle(
     #     filter_uvec(
@@ -2289,7 +2257,7 @@ def bouts_during_hunt(hunt_ind, dimred, exp, plotornot):
              marker='.',
              ms=10,
              color='m')
-    for ind, typ in enumerate(dim.cluster_membership[firstind:secondind+1]):
+    for ind, typ in enumerate(exp.cluster_membership[firstind:secondind+1]):
         ax3.text(bouts_tail[ind], -.5, str(typ))
     pitch_during_hunt = exp.spherical_pitch[start:end]
     yaw_during_hunt = exp.spherical_yaw[start:end]
@@ -2308,7 +2276,7 @@ def bouts_during_hunt(hunt_ind, dimred, exp, plotornot):
     return pitch_during_hunt, yaw_during_hunt, z_during_hunt, filt_phil, filt_phir
 
 
-def hunted_para_descriptor(dim, exp, hd):
+def hunted_para_descriptor(exp, hd):
 
     header = ['Hunt ID',
               'Bout Number',
@@ -2376,11 +2344,11 @@ def hunted_para_descriptor(dim, exp, hd):
         filt_dist = convolve(dist, kernel, preserve_nan=True)
         if len(filt_az) < 2 or len(filt_dist) < 2:
             continue
-        hunt_bouts = range(dim.hunt_wins[hi][0],
-                           dim.hunt_wins[hi][1]+1)
+        hunt_bouts = range(exp.hunt_wins[hi][0],
+                           exp.hunt_wins[hi][1]+1)
         nans_in_bouts = [d[9] for d
-                         in dim.all_flags[
-                             dim.hunt_wins[hi][0]:dim.hunt_wins[hi][1]+1]]
+                         in exp.bout_flags[
+                             exp.hunt_wins[hi][0]:exp.hunt_wins[hi][1]+1]]
         hunt_bout_frames = [exp.bout_frames[i] for i in hunt_bouts]
         hunt_bout_durations = [exp.bout_durations[i] for i in hunt_bouts]
         percent_nans = np.array([na / float(bd) for na, bd
@@ -2912,12 +2880,12 @@ def calculate_delta_yaw(raw_yaw):
 # a new realfish object for the modeling.
 # 
 
-def yaw_kernel(myexp, all_or_hb, hd, dim):
+def yaw_kernel(exp, all_or_hb, hd):
     yaw_profiles = []
-    yaw = myexp.spherical_yaw
+    yaw = exp.spherical_yaw
     bd = 7
     if all_or_hb == 'all':
-        for bf in myexp.bout_frames:
+        for bf in exp.bout_frames:
             ydiff = np.abs(yaw[bf+bd] - yaw[bf])
             if .1 < ydiff or ydiff > .5:
                 continue
@@ -2928,9 +2896,9 @@ def yaw_kernel(myexp, all_or_hb, hd, dim):
     elif all_or_hb == 'hunts':
         h_inds = hd.hunt_ind_list
         huntbouts = np.concatenate(
-            [range(dim.hunt_wins[h][0], dim.hunt_wins[h][1]+1)
+            [range(exp.hunt_wins[h][0], exp.hunt_wins[h][1]+1)
              for h in h_inds], axis=0)
-        huntframes = [myexp.bout_frames[hb] for hb in huntbouts]
+        huntframes = [exp.bout_frames[hb] for hb in huntbouts]
         for hf in huntframes:
             ydiff = np.abs(yaw[hf+bd] - yaw[hf])
             if .05 < ydiff or ydiff > .3:
@@ -2955,20 +2923,20 @@ def yaw_kernel(myexp, all_or_hb, hd, dim):
     # return final_vel_profile
     
 
-def velocity_kernel(myexp, all_or_hb, hd, dim):
+def velocity_kernel(exp, all_or_hb, hd):
 
-    filtV = gaussian_filter(myexp.fishdata.vectV, 0)
+    filtV = gaussian_filter(exp.fishdata.vectV, 0)
     vel_profiles = []
     if all_or_hb == 'all':
-        for bf, bd in zip(myexp.bout_frames, myexp.bout_durations):
+        for bf, bd in zip(exp.bout_frames, exp.bout_durations):
             vel_profiles.append(filtV[bf:bf+bd])
     elif all_or_hb == 'hunts':
         h_inds = hd.hunt_ind_list
         huntbouts = np.concatenate(
-            [range(dim.hunt_wins[h][0], dim.hunt_wins[h][1]+1)
+            [range(exp.hunt_wins[h][0], exp.hunt_wins[h][1]+1)
              for h in h_inds], axis=0)
-        huntframes = [myexp.bout_frames[hb] for hb in huntbouts]
-        bd_hunts = [myexp.bout_durations[hb] for hb in huntbouts]
+        huntframes = [exp.bout_frames[hb] for hb in huntbouts]
+        bd_hunts = [exp.bout_durations[hb] for hb in huntbouts]
         for hf, hd in zip(huntframes, bd_hunts):
             vel_profiles.append(filtV[hf:hf+hd])
     max_len_window = np.max([len(vp) for vp in vel_profiles])
@@ -3010,13 +2978,13 @@ def normalize_kernel_interp(kernel, length):
     normed_kernel = new_kernel / np.sum(new_kernel)
     return normed_kernel
 
-def find_velocity_ends(myexp, v_thresh, b_or_bplus1):
+def find_velocity_ends(exp, v_thresh, b_or_bplus1):
     bd_plus = []
-    filt_v = gaussian_filter(myexp.fishdata.vectV, 0)
-    interbouts = np.diff(myexp.bout_frames)
+    filt_v = gaussian_filter(exp.fishdata.vectV, 0)
+    interbouts = np.diff(exp.bout_frames)
     thresh_vlist = []
     for bout_ind, (bf, bd) in enumerate(
-            zip(myexp.bout_frames, myexp.bout_durations)):
+            zip(exp.bout_frames, exp.bout_durations)):
         if bout_ind == interbouts.shape[0]:
             bd_plus.append(bd)
             break
@@ -3026,7 +2994,7 @@ def find_velocity_ends(myexp, v_thresh, b_or_bplus1):
         v_max = np.max(v_win)
         v_argmax = np.argmax(v_win)
         v_start = filt_v[bf]
-        v_start_boutplus1 = filt_v[myexp.bout_frames[bout_ind+1]]
+        v_start_boutplus1 = filt_v[exp.bout_frames[bout_ind+1]]
         if b_or_bplus1 == 0:
             dv = v_max - v_start
             thresh_v = (dv * v_thresh) + v_start
@@ -3120,32 +3088,32 @@ def validate_experiment(drct):
 # duration one less than the interbout. 
 
 # BE SURE TO RE-KICK OUT ANY OVERLAP
-def plot_bout_calls(myexp, extension, tvl, *hunt_win):
+def plot_bout_calls(exp, extension, tvl, *hunt_win):
 
     if hunt_win != ():
         start = hunt_win[0][0]
         end = hunt_win[0][1]
         bout_frames = np.array(
-            myexp.bout_frames[start:end]) - myexp.bout_frames[start]
-        b_durs = np.array(myexp.bout_durations[start:end])
+            exp.bout_frames[start:end]) - exp.bout_frames[start]
+        b_durs = np.array(exp.bout_durations[start:end])
         extension = extension[start:end]
         print("threshold velocity list")
         print tvl[start:end]
     else:
         start = 0
         end = -1
-        bout_frames = np.array(myexp.bout_frames) - myexp.bout_frames[start]
-        b_durs = np.array(myexp.bout_durations)
+        bout_frames = np.array(exp.bout_frames) - exp.bout_frames[start]
+        b_durs = np.array(exp.bout_durations)
         
     bdurs = b_durs + extension
     tailang = [
-        tail[-1] for tail in myexp.fishdata.tailangle[
-            myexp.bout_frames[start]:myexp.bout_frames[end]]]
+        tail[-1] for tail in exp.fishdata.tailangle[
+            exp.bout_frames[start]:exp.bout_frames[end]]]
     ta_std = gaussian_filter([np.nanstd(tw) for tw in sliding_window(5, tailang)], 2)
     pl.plot(tailang)
     pl.plot(gaussian_filter(
-        myexp.fishdata.vectV[
-            myexp.bout_frames[start]:myexp.bout_frames[end]], 1))
+        exp.fishdata.vectV[
+            exp.bout_frames[start]:exp.bout_frames[end]], 1))
     pl.plot(ta_std)
     pl.plot(
         bout_frames, np.zeros(len(bout_frames)),
@@ -3180,7 +3148,60 @@ def return_ta_std(drc_list):
             [np.nanstd(tw) for tw in sliding_window(5, all_ta)], 2).tolist()
     threshold = 2*np.round(np.median(ta_std))
     return threshold
+
+
+def exp_generation_and_clustering(fish_drct_list,
+                                  all_varbs, cluster_varbs, flag_varbs, new_exps):
+    all_bout_data = []
+    all_flags = []
+    add_vel_ends = True
+    for drct in fish_drct_list:
+        if new_exps:
+            myexp = Experiment(20, 3, all_varbs_dict, flag_dict, drct)
+            myexp.bout_detector()
+            myexp.bout_nanfilt_and_arrange(False)
+            print("Creating Unit Vectors")
+            myexp.create_unit_vectors()
+            if add_vel_ends:
+                vel_extensions, tvl = find_velocity_ends(myexp, .05, 1)
+                myexp.bout_durations_tail_only = copy.deepcopy(
+                    myexp.bout_durations)
+                myexp.bout_durations = np.array(
+                    myexp.bout_durations) + vel_extensions
+            myexp.all_spherical_bouts(False)
+            myexp.exporter()
+        else:
+            myexp = pickle.load(open(drct + '/master.pkl', 'rb'))
+        all_bout_data.append(myexp.bout_data)
+        all_flags.append(myexp.bout_flags)
+    dim = DimensionalityReduce(cluster_varbs, flag_varbs, all_varbs,
+                               fish_drct_list, all_bout_data, all_flags)
+    dim.prepare_records()
+    dim.dim_reduction(2)
+    dim.exporter()
+
     
+def cluster_call_wrapper(dim, fish_drct_list):
+    for drct in fish_drct_list:
+        myexp = pickle.load(open(drct + '/master.pkl', 'rb'))
+        extract_cluster_calls_to_exp(dim, myexp)
+
+        
+def extract_cluster_calls_to_exp(dim, exp):
+    rejected_bout_inds = [b[0] for b in
+                          exp.rejected_bouts if b[1] == 'near_wall']
+    cluster_mem = []
+    fish_id = dim.fish_id_list.index(exp.directory[-8:])
+    cluster_id_deque = deque(dim.cmem_by_fish[fish_id])
+    for raw_bout_id in range(len(exp.bout_data)):
+        if raw_bout_id in rejected_bout_inds:
+            cluster_mem.append(-1)
+        else:
+            c = cluster_id_deque.popleft()
+            cluster_mem.append(c)
+    myexp.cluster_membership = cluster_mem
+    myexp.exporter()
+
 if __name__ == '__main__':
 
 # 15 requires 250 consecutive milliseconds of data. this yields 497 bouts. 
@@ -3268,73 +3289,26 @@ if __name__ == '__main__':
 
     fish_id = '091418_1'
     drct = os.getcwd() + '/' + fish_id
-    new_exp = True
-    dimreduce = True
-    skip_import = False
-    add_vel_ends = True
-
-    if not skip_import:
-        if new_exp:
-            myexp = Experiment(20, 3, all_varbs_dict, flag_dict, drct)
-            myexp.bout_detector()
-            myexp.bout_nanfilt_and_arrange(False)
-            print("Creating Unit Vectors")
-            myexp.create_unit_vectors()
-            if add_vel_ends:
-                vel_extensions, tvl = find_velocity_ends(myexp, .05, 1)
-                myexp.bout_durations_tail_only = copy.deepcopy(
-                    myexp.bout_durations)
-                myexp.bout_durations = np.array(
-                    myexp.bout_durations) + vel_extensions
-            myexp.all_spherical_bouts(False)
-            myexp.exporter()
-
-        else:
-            myexp = pickle.load(open(drct + '/master.pkl', 'rb'))
-
-        if dimreduce:
-            dim = DimensionalityReduce(bout_dict,
-                                       flag_dict,
-                                       all_varbs_dict,
-                                       drct, {},
-                                       [myexp.boud_data], [myexp.bout_flags])
-            dim.concatenate_records()
-            dim.dim_reduction(2)
-            dim.exporter()
+    import_exp = True
+    if import_exp:
+        myexp = pickle.load(open(drct + '/master.pkl', 'rb'))
+        try:
+            hd = hd_import(drct)
+        except IOError:
             hd = Hunt_Descriptor(drct)
-            hd.exporter()
-        else:
-            dim = pickle.load(open(drct + '/dim_reduce.pkl', 'rb'))
-            try:
-                hd = hd_import(drct)
-            except IOError:
-                hd = Hunt_Descriptor(drct)
 
 #     sbouts = myexp.all_spherical_bouts()
 
-new_wik = ['090418_3', '090418_4', '090418_5', '090418_6',
-           '090418_7', '090518_1', '090518_2', '090518_3', '090518_4',
-           '090518_5', '090518_6', '090618_1', '090618_2', '090618_3',
-           '090618_4', '090618_5', '090618_6', '090718_1', '090718_2',
-           '090718_3', '090718_4', '090718_5', '090718_6', '091118_1',
-           '091118_2', '091118_3', '091118_4', '091118_5', '091118_6',
-           '091218_1', '091218_2', '091218_3', '091218_4', '091218_5',
-           '091218_6', '091318_1', '091318_2', '091318_3', '091318_4',
-           '091318_5', '091318_6', '091418_1', '091418_2', '091418_3',
-           '091418_4', '091418_5', '091418_6']
-
-#m_std = return_ta_std(new_wik)
-# ran on all data -- yields 4.0
-
-
-
-
-
-
-
-
-
-
+    new_wik = ['090418_3', '090418_4', '090418_5', '090418_6',
+               '090418_7', '090518_1', '090518_2', '090518_3', '090518_4',
+               '090518_5', '090518_6', '090618_1', '090618_2', '090618_3',
+               '090618_4', '090618_5', '090618_6', '090718_1', '090718_2',
+               '090718_3', '090718_4', '090718_5', '090718_6', '091118_1',
+               '091118_2', '091118_3', '091118_4', '091118_5', '091118_6',
+               '091218_1', '091218_2', '091218_3', '091218_4', '091218_5',
+               '091218_6', '091318_1', '091318_2', '091318_3', '091318_4',
+               '091318_5', '091318_6', '091418_1', '091418_2', '091418_3',
+               '091418_4', '091418_5', '091418_6']
 
 # pilot = ['070617_1', '070617_2','072717_1', '072717_2', '072717_5']
 
