@@ -17,11 +17,11 @@ from matplotlib.colors import Normalize, ListedColormap
 
 
 class BayesDB_Simulator:
-    def __init__(self, fish_id, file_id):
+    def __init__(self, fish_id, file_id, model_num):
         self.bdb_file = bl.bayesdb_open(fish_id + '/' + file_id)
 #        self.bdb_file = bl.bayesdb_open(
 #            '/home/nightcrawler/bayesDB/Bolton_HuntingBouts_Sim_Inverted_optimized.bdb')
-        self.model_varbs = {"Model Number": 37,
+        self.model_varbs = {"Model Number": model_num,
                             "Row Limit": 5000,
                             "Para Az": "BETWEEN -3.14 AND 3.14",
                             "Para Alt": "BETWEEN -1.57 AND 1.57",
@@ -57,11 +57,17 @@ class BayesDB_Simulator:
 
     def setup_rejection_query(self):
         self.bdb_file.execute('''DROP TABLE IF EXISTS "bout_simulation"''')
-        self.bdb_file.execute('''CREATE TABLE "bout_simulation" AS
-        SIMULATE "Bout Az", "Bout Alt", "Bout Dist", "Bout Delta Yaw", "Bout Delta Pitch", "Para Az", "Para Az Velocity", "Para Alt", "Para Alt Velocity", "Para Dist", "Para Dist Velocity"
-        FROM bout_population
-        USING MODEL {Model Number}
-        LIMIT {Row Limit}; '''.format(**self.model_varbs))
+        if self.model_varbs['Model Number'] < 0:
+            self.bdb_file.execute('''CREATE TABLE "bout_simulation" AS
+            SIMULATE "Bout Az", "Bout Alt", "Bout Dist", "Bout Delta Yaw", "Bout Delta Pitch", "Para Az", "Para Az Velocity", "Para Alt", "Para Alt Velocity", "Para Dist", "Para Dist Velocity"
+            FROM bout_population
+            LIMIT {Row Limit}; '''.format(**self.model_varbs))
+        else:
+            self.bdb_file.execute('''CREATE TABLE "bout_simulation" AS
+            SIMULATE "Bout Az", "Bout Alt", "Bout Dist", "Bout Delta Yaw", "Bout Delta Pitch", "Para Az", "Para Az Velocity", "Para Alt", "Para Alt Velocity", "Para Dist", "Para Dist Velocity"
+            FROM bout_population
+            USING MODEL {Model Number}
+            LIMIT {Row Limit}; '''.format(**self.model_varbs))
 
     def set_query_params(self, query_expression, conditioner):
         self.query_params['query_expression'] = query_expression
@@ -128,8 +134,15 @@ class BayesDB_Simulator:
         self.set_query_params(q_exp, condition2)
         c2_result = self.rejection_query(real)
         fig = pl.figure()
-        sb.distplot(c1_result[q_exp.replace('"', '')], fit_kws={"color":"blue"}, fit=norm, kde=False,color='b')
-        sb.distplot(c2_result[q_exp.replace('"', '')], fit_kws={"color":"yellow"}, fit=norm, kde=False,color='y')
+        c1_distribution = c1_result[q_exp.replace('"', '')]
+        c2_distribution = c2_result[q_exp.replace('"', '')]
+        print(str(c1_distribution.shape[0]) + ' bouts in Blue Query')
+        print(str(c2_distribution.shape[0]) + ' bouts in Yellow Query')
+        sb.distplot(c1_distribution, fit_kws={"color": "blue"},
+                    fit=norm, kde=False, color='b')
+        sb.distplot(c2_distribution, fit_kws={"color": "yellow"},
+                    fit=norm, kde=False, color='y')
+        pl.savefig('2query.pdf')
         return fig
         
                         
@@ -319,6 +332,8 @@ def prediction_conditionals(pred):
     lag_lag_intersect = np.intersect1d(pred[1], pred[3])
     leadaz_lagalt = np.intersect1d(pred[0], pred[3])
     lagaz_leadalt = np.intersect1d(pred[1], pred[2])
+    if (np.array([len(p) for p in pred[0:4]]) == 0).any():
+        return
     p_leadaz_cond_leadalt = lead_lead_intersect.shape[0] / float(len(pred[2]))
     p_leadaz_cond_lagalt = leadaz_lagalt.shape[0] / float(len(pred[3]))
     p_leadalt_cond_leadaz = lead_lead_intersect.shape[0] / float(len(pred[0]))
@@ -336,12 +351,12 @@ def prediction_conditionals(pred):
 
 
 def pred_wrapper(data, limits, skip_bout_numbers,
-                 condition, az_or_alt):
+                 condition, dist_limit, az_or_alt):
     ratio_list = []
     total_bouts = []
     for lim in limits:
         pred = prediction_calculator(
-            data, lim, skip_bout_numbers, condition, az_or_alt)
+            data, lim, skip_bout_numbers, condition, az_or_alt, dist_limit)
         prediction_conditionals(pred)
         if az_or_alt == 'az':
             ratio_list.append(len(pred[0]) / float(len(pred[1])))
@@ -350,12 +365,13 @@ def pred_wrapper(data, limits, skip_bout_numbers,
             ratio_list.append(len(pred[2]) / float(len(pred[3])))
             total_bouts.append(len(pred[2]) + len(pred[3]))
     sb.barplot(range(len(ratio_list)), ratio_list, color='g')
+    pl.savefig('pred_wrapper.pdf')
     pl.show()
     bout_assignments = pred[-1]
     return total_bouts, bout_assignments
 
 
-def prediction_calculator(data, limit, skip_bout_numbers, condition, az_or_alt):
+def prediction_calculator(data, limit, skip_bout_numbers, condition, az_or_alt, dist_limit):
     leading_az = []
     lagging_az = []
     leading_alt = []
@@ -376,6 +392,9 @@ def prediction_calculator(data, limit, skip_bout_numbers, condition, az_or_alt):
         if data["Bout Number"][i] in skip_bout_numbers:
             bout_assignment.append(0)
             continue
+        if not (dist_limit[0] <= data["Para Dist"][i] <= dist_limit[1]):
+            bout_assignment.append(0)
+            continue
         if not np.isfinite([data["Para Az Velocity"][i],
                             data["Para Alt Velocity"][i],
                             data["Para Az"][i],
@@ -384,35 +403,71 @@ def prediction_calculator(data, limit, skip_bout_numbers, condition, az_or_alt):
                             data["Postbout Para Alt"][i]]).all():
             bout_assignment.append(0)
             continue
-        az_sign_same = False
-        alt_sign_same = False
+
+
+        
+# if az sign or alt sign NOT the same,
+# means coming towards the fish. undershoot is a lead.
+# if are the same sign,
+# overshoot is a lead. lead is correct response in terms of prediction.
+# a bout assignment of 1 is an undershooting lag.
+# bout assignment of 2 is an overshooting lag
+# bout assignment of 3 is an undershooting lead.
+# bout assignment of 4 is an overshooting lead
+
         if np.sign(data["Para Az Velocity"][i]) == np.sign(data["Para Az"][i]):
             az_sign_same = True
+        else:
+            az_sign_same = False
         if np.sign(
                 data["Para Alt Velocity"][i]) == np.sign(data["Para Alt"][i]):
             alt_sign_same = True
-        if az_sign_same and np.sign(
-                data["Para Az"][i]) == np.sign(data["Postbout Para Az"][i]):
+        else:
+            alt_sign_same = False
+
+        if np.sign(data["Para Az"][i]) == np.sign(data["Postbout Para Az"][i]):
+            az_undershoot = True
+        else:
+            az_undershoot = False
+        if np.sign(
+                data["Para Alt"][i]) == np.sign(data["Postbout Para Alt"][i]):
+            alt_undershoot = True
+        else:
+            alt_undershoot = False
+        
+        if az_sign_same and az_undershoot:
             lagging_az.append(i)
             if az_or_alt == 'az':
-                bout_assignment.append(0)
-        else:
-            leading_az.append(i)
-            if az_or_alt == 'az' and az_sign_same:
-                bout_assignment.append(2)
-            if az_or_alt == 'az' and not az_sign_same:
                 bout_assignment.append(1)
-        if alt_sign_same and np.sign(
-                data["Para Alt"][i]) == np.sign(data["Postbout Para Alt"][i]):
+        if not az_sign_same and not az_undershoot:
+            lagging_az.append(i)
+            if az_or_alt == 'az':
+                bout_assignment.append(2)
+        if not az_sign_same and az_undershoot:
+            leading_az.append(i)
+            if az_or_alt == 'az':
+                bout_assignment.append(3)
+        if az_sign_same and not az_undershoot:
+            leading_az.append(i)
+            if az_or_alt == 'az':
+                bout_assignment.append(4)
+
+        if alt_sign_same and alt_undershoot:
             lagging_alt.append(i)
             if az_or_alt == 'alt':
-                bout_assignment.append(0)
-        else:
-            leading_alt.append(i)
-            if az_or_alt == 'alt' and alt_sign_same:
-                bout_assignment.append(2)
-            if az_or_alt == 'alt' and not alt_sign_same:
                 bout_assignment.append(1)
+        if not alt_sign_same and not alt_undershoot:
+            lagging_alt.append(i)
+            if az_or_alt == 'alt':
+                bout_assignment.append(2)
+        if not alt_sign_same and alt_undershoot:
+            leading_alt.append(i)
+            if az_or_alt == 'alt':
+                bout_assignment.append(3)
+        if alt_sign_same and not alt_undershoot:
+            leading_alt.append(i)
+            if az_or_alt == 'alt':
+                bout_assignment.append(4)
             
     sb.barplot(range(4),
                [len(leading_az),

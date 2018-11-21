@@ -88,6 +88,7 @@ class ParaMaster():
         self.pcw = pcw
         self.directory = directory
         self.decimated_vids = False
+        self.startover = False
         self.all_xy = []
         self.all_xz = []
         self.corr_mat = []
@@ -129,14 +130,18 @@ class ParaMaster():
         params_top, params_side, area = params
         if ask != ():
             dec_vid = raw_input('Decimate Video?: ')
-        else:
-            dec_vid = 'y'
-        if dec_vid == 'y':
-            use_c_vids = False
+            if dec_vid == 'y':
+                pms = raw_input('Enter Decimation Params: ')
+                params = ast.literal_eval(pms)
+                params_top, params_side, area = params
+            else:
+                params_top = []
+                params_side = []
+                area = 6
+                record_para = True
+        if params_top != [] or params_side != []:
             self.decimated_vids = True
-        else:
-            use_c_vids = True
-            record_para = True
+            
         def repeat_vids():
             self.watch_event(1)
             self.watch_event(2)
@@ -148,16 +153,12 @@ class ParaMaster():
             else:
                 return 'n'
 
-        def contrast_frame(vid_top, vid_side, brt, brs, frameid):
-            topframe = vid_top.get_data(frameid)
-            sideframe = vid_side.get_data(frameid)
-            para_top = cv2.cvtColor(topframe, cv2.COLOR_BGR2GRAY)
-            para_side = cv2.cvtColor(sideframe, cv2.COLOR_BGR2GRAY)
-            brsub_top = brsub_img(para_top, brt)
-            brsub_side = brsub_img(para_side, brs)
-            cont_t = imcont(brsub_top, params_top).astype(np.uint8)
-            cont_s = imcont(brsub_side, params_side).astype(np.uint8)
-            return cont_t, cont_s
+        def contrast_frame(vid, br, frameid, prms):
+            frame = vid.get_data(frameid)
+            grayframe = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            brsub = brsub_img(grayframe, br)
+            cont_ = imcont(brsub, prms).astype(np.uint8)
+            return cont_
 
         directory = self.directory
         top_br = np.load(directory + 'backgrounds_top.npy').astype(np.uint8)
@@ -167,14 +168,14 @@ class ParaMaster():
         p_s = []
         completed_t = []
         completed_s = []
-        if use_c_vids:
+        if params_top == []:
             top_file = directory + 'top_contrasted.AVI'
-            side_file = directory + 'side_contrasted.AVI'
         else:
             top_file = '/Volumes/WIKmovies/' + directory[-9:-1] + '_cam0.AVI'
+        if params_side == []:
+            side_file = directory + 'side_contrasted.AVI'
+        else:
             side_file = '/Volumes/WIKmovies/' + directory[-9:-1] + '_cam1.AVI'
-#        top_file = directory + directory[-9:-1] + '_cam0.AVI'
-#        side_file = directory + directory[-9:-1] + '_cam1.AVI'
         paravid_top = imageio.get_reader(top_file, 'ffmpeg')
         paravid_side = imageio.get_reader(side_file, 'ffmpeg')
         firstframe = True
@@ -183,33 +184,48 @@ class ParaMaster():
                       self.framewindow[1], 1)):
             if framenum % 100 == 0:
                 print go_to_frame
-            if not record_para and not use_c_vids:
+            if not record_para:
                 if framenum >= pcw:
-                    cont_top, cont_side = contrast_frame(
-                        paravid_top, paravid_side,
-                        top_br[go_to_frame / 1875],
-                        side_br[go_to_frame / 1875],
-                        go_to_frame)
-                    self.topframes.append(cont_top)
-                    self.sideframes.append(cont_side)
-                continue
-            if not use_c_vids:
-                cont_top, cont_side = contrast_frame(
-                    paravid_top, paravid_side,
-                    top_br[go_to_frame / 1875],
-                    side_br[go_to_frame / 1875],
-                    go_to_frame)
+                    if params_top != []:
+                        cont_top = contrast_frame(paravid_top, 
+                                                  top_br[go_to_frame / 1875],
+                                                  go_to_frame,
+                                                  params_top)
+                        self.topframes.append(cont_top)
+                    if params_side != []:
+                        cont_side = contrast_frame(paravid_side, 
+                                                   side_br[go_to_frame / 1875],
+                                                   go_to_frame,
+                                                   params_side)
+                        self.sideframes.append(cont_side)
+                    continue
+                else:
+                    continue
+
+            if params_top != []:
+                cont_top = contrast_frame(paravid_top,
+                                          top_br[go_to_frame / 1875],
+                                          go_to_frame,
+                                          params_top)
                 cont_color_top = cv2.cvtColor(cont_top, cv2.COLOR_GRAY2RGB)
-                cont_color_side = cv2.cvtColor(cont_side, cv2.COLOR_GRAY2RGB)
+
             else:
                 cont_color_top = paravid_top.get_data(go_to_frame)
-                cont_color_side = paravid_side.get_data(go_to_frame)
                 cont_top = cv2.cvtColor(
                     cont_color_top, cv2.COLOR_BGR2GRAY)
-                cont_side = cv2.cvtColor(
-                    cont_color_side, cv2.COLOR_BGR2GRAY)
                 r, cont_top = cv2.threshold(cont_top, 120, 255,
                                             cv2.THRESH_BINARY)
+            if params_side != []:
+                cont_side = contrast_frame(paravid_side,
+                                           side_br[go_to_frame / 1875],
+                                           go_to_frame,
+                                           params_side)
+                cont_color_side = cv2.cvtColor(cont_side, cv2.COLOR_GRAY2RGB)
+
+            else:
+                cont_color_side = paravid_side.get_data(go_to_frame)
+                cont_side = cv2.cvtColor(
+                    cont_color_side, cv2.COLOR_BGR2GRAY)
                 r, cont_side = cv2.threshold(cont_side, 120, 255,
                                              cv2.THRESH_BINARY)
             rim, contours_t, hierarchy = cv2.findContours(
@@ -217,9 +233,9 @@ class ParaMaster():
             rim, contours_s, hierarchy = cv2.findContours(
                 cont_side, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             parafilter_top = [cv2.minEnclosingCircle(t)[0] for t in contours_t
-                              if area <= cv2.contourArea(t) < 500]
+                              if area <= cv2.contourArea(t) < 1000]
             parafilter_side = [cv2.minEnclosingCircle(s)[0] for s in contours_s
-                               if area <= cv2.contourArea(s) < 500]
+                               if area <= cv2.contourArea(s) < 1000]
             for para in parafilter_top:
                 cv2.circle(cont_color_top, (int(para[0]), int(para[1])), 3,
                            (0, 0, 255), -1)
@@ -228,8 +244,6 @@ class ParaMaster():
                            (0, 0, 255), -1)
             if self.makemovies:
                 if framenum >= pcw:
-                    # self.topframes.append(topframe)
-                    # self.sideframes.append(sideframe)
                     self.topframes.append(cont_color_top)
                     self.sideframes.append(cont_color_side)
 
@@ -260,11 +274,11 @@ class ParaMaster():
         modify = raw_input('Modify Videos?: ')
         if modify == 'r':
             modify = repeat_vids()
+        if modify == 'q':
+            self.startover = True
+            return
         if modify == 'y':
-            if use_c_vids:
-                action = str(params)
-            else:
-                action = raw_input('Enter new params: ')
+            action = raw_input('Enter new params: ')
             self.topframes = deque()
             self.sideframes = deque()
             paravid_top.close()
@@ -1549,6 +1563,8 @@ class ParaMaster():
     def parawrapper(self, showstats):
         print('hey im in parawrapper')
         self.findpara([[10, 3, 5, 3], [10, 3, 5, 3], 6], False, True)
+        if self.startover:
+            return
         self.makecorrmat()
         self.corr_mat_original = copy.deepcopy(self.corr_mat)
         self.makexyzrecords()
@@ -1556,7 +1572,7 @@ class ParaMaster():
         self.find_misses(0)
         if showstats:
             self.manual_match()
-            self.recs_and_misses()
+            self.recs_anqd_misses()
             self.graph3D(True)
         if self.makemovies:
             self.label_para()
@@ -1647,5 +1663,5 @@ if __name__ == '__main__':
                                        600)
 #     paramaster = ParaMaster(1499, 1550, os.getcwd() + '/Fish00/')
 #     paramaster.makemovies = False
-#     paramaster.parawrapper(False)
+#     paramaster.parawrapperq(False)
 # #    paramaster.find_paravectors(False)

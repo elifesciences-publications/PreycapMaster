@@ -173,17 +173,19 @@ class Hunt_Descriptor:
         self.exporter()
 
 
-# 	1) Hunted Para
-#       2) Strike Success = 1,
+# 	1) Hunted Para. -1 if unknown
+#       2) Orientation to unknown target = 0
+#          Strike Success = 1,
 # 	   Strike Fail = 2,
 # 	   Abort = 3,
 # 	   Abort for Reorientation = 4,
 # 	   Reorientation and successful strike = 5,
 # 	   Reorientation and fail = 6,
 # 	   Reorientation and abort = 7,
-#       3) Range of bouts within hunt. Enter as tuple
+#       3) Range of bouts within hunt. Type list. (0,1) for unknown targets
 #       4) enter myexp
 
+# 
 
         
 # for each para env, you will get a coordinate matrix that is scalexscalexscale, representing
@@ -334,28 +336,12 @@ class ParaEnv:
             return nanlist, nanlist
 
 
-class BoutsAndFlags():
-
-    def __init__(self, directory, bouts, flags):
-        self.bouts = bouts
-        self.flags = flags
-        self.dirct = directory
-
-    def exporter(self):
-        with open(
-                self.dirct + '/bouts.pkl', 'wb') as file:
-            pickle.dump(self, file)
-
-        
-# This class will take in BoutsAndFlags objects for each fish then run TSNE on the combined dataset
-# Want this to be able to take the boutsandflags from ALL fish. You want to add a dictionary with the fishids you want to cluster on.
-# 
-
 class DimensionalityReduce():
 
     def __init__(self,
                  bout_dict,
-                 flag_dict, all_varbs_dict, directory, fish_id_dict):
+                 flag_dict,
+                 all_varbs_dict, directory, fish_id_dict, exp_bouts_list, ):
         self.recluster = True
         self.directory = directory
         self.cluster_input = []
@@ -363,6 +349,7 @@ class DimensionalityReduce():
         self.all_varbs_dict = all_varbs_dict
         self.all_bouts = []
         self.all_flags = []
+        self.exp_class_list = exp_class_list
         self.dim_reduce_output = []
         self.cmem_pre_sub = []
         self.cluster_membership = []
@@ -371,7 +358,6 @@ class DimensionalityReduce():
         self.flag_dict = flag_dict
         self.inv_fdict = {v: k for k, v in flag_dict.iteritems()}
         self.transition_matrix = np.array([])
-        self.bouts_flags = [pickle.load(open(directory + '/bouts.pkl'))]
         self.cluster_count = 3
         self.hunt_cluster = []
         self.deconverge_cluster = []
@@ -412,20 +398,12 @@ class DimensionalityReduce():
             if cmem[b_id] != 0:
                 self.cluster_membership[c_ind] = max_cluster_id + cmem[b_id]
 
-
-            
-
-
-        # what you will do is go through cluster_membership and assign a
-        # 3 to clusters that come out 1, and keep at hunt_cluster the ones that come out 0.
-        # then you can call cluster_summary and change the hunt_wins based on your observation. 
-            
     def strike_abort_sep(self, term_cluster):
         cluster_indices = np.where(self.cluster_membership == term_cluster)[0]
             # now get all bouts from cluster indices in all_bouts
         flags_in_term_cluster = np.array(self.all_flags)[cluster_indices]
-        interbout_index = int(dim.inv_fdict['Interbout'])
-        delta_yaw_index = int(dim.inv_fdict['Total Yaw Change'])
+        interbout_index = int(self.inv_fdict['Interbout'])
+        delta_yaw_index = int(self.inv_fdict['Total Yaw Change'])
         interbouts_in_cluster = [
             f[interbout_index] for f in flags_in_term_cluster]
         dyaw_in_cluster = [
@@ -438,7 +416,7 @@ class DimensionalityReduce():
         pl.show()
         return interbouts_in_cluster, dyaw_in_cluster
 
-    def watch_cluster(self, exp, cluster, vidtype, term):
+    def watch_cluster(self, exp, clusters, vidtype, term):
         if vidtype == 1:
             vid = imageio.get_reader(
                 self.directory + '/top_contrasted.AVI', 'ffmpeg')
@@ -449,9 +427,9 @@ class DimensionalityReduce():
         cv2.moveWindow('vid', 20, 20)
         c_mem_counter = 0
         if term:
-            ib, dy = self.strike_abort_sep(cluster)
+            ib, dy = self.strike_abort_sep(clusters)
         for bout_num, cluster_mem in enumerate(self.cluster_membership):
-            if cluster_mem == cluster:
+            if cluster_mem in clusters:
                 print('Bout #: ' + str(bout_num))
                 if term:
                     dyaw = dy[c_mem_counter]
@@ -499,10 +477,9 @@ class DimensionalityReduce():
         self.deconverge_cluster = []
 
     def concatenate_records(self):
-        for record in self.bouts_flags:
-            self.all_bouts = self.all_bouts + record.bouts
-            self.all_flags = self.all_flags + record.flags
-        
+        for exp_class in self.exp_class_list:
+            self.all_bouts = self.all_bouts + exp_class.bout_data
+            self.all_flags = self.all_flags + exp_class.bout_flags        
 # Looks like a typo, but since bout inversion mixes left and right, wanted to have a standard deviation 
 # for "an eye". 
         bt_array = np.array(self.all_bouts)
@@ -899,6 +876,44 @@ class Experiment():
 # THIS FUNCTION AND FLAGS HAVE TO CHANGE BASED ON WHICH VARIABLES ARE ADDED TO THE CLUSTERING. YOU CANT LEAVE OUT HA B/C 
 # IT CONTROLS BOUT INVERSION.
 
+    def nearwall(self, bout_frame, bout_dur, wall_thresh):
+
+        def calc_near_wall(x, y, z, ha, pitch):
+            if x < wall_thresh and (90 < ha < 270):
+                return True
+            elif x > 1888-wall_thresh and (ha < 90 or ha > 270):
+                return True
+            elif y < wall_thresh and (ha > 180):
+                return True
+            elif y > 1888-wall_thresh and (ha < 180):
+                return True
+            elif z < wall_thresh and pitch < 0:
+                return True
+            elif z > 1888-wall_thresh and pitch > 0:
+                return True
+            else:
+                return False
+        
+        ha_init = np.median(
+            self.fishdata.headingangle[bout_frame-3:bout_frame])
+        x_init = np.median(self.fishdata.x[bout_frame-3:bout_frame])
+        y_init = np.median(self.fishdata.y[bout_frame-3:bout_frame])
+        z_init = np.median(self.fishdata.z[bout_frame-3:bout_frame])
+        pitch_init = np.median(self.fishdata.pitch[bout_frame-3:bout_frame])
+        x_end = np.median(
+            self.fishdata.x[bout_frame+bout_dur:bout_frame+bout_dur+3])
+        y_end = np.median(
+            self.fishdata.y[bout_frame+bout_dur:bout_frame+bout_dur+3])
+        z_end = np.median(
+            self.fishdata.z[bout_frame+bout_dur:bout_frame+bout_dur+3])
+        pitch_end = np.median(
+            self.fishdata.pitch[bout_frame+bout_dur:bout_frame+bout_dur+3])
+        ha_end = np.median(
+            self.fishdata.headingangle[
+                bout_frame+bout_dur:bout_frame+bout_dur+3])
+        return (calc_near_wall(x_init, y_init, z_init, ha_init, pitch_init)
+                or calc_near_wall(x_end, y_end, z_end, ha_end, pitch_end))
+
     def nexthunt(self, dim, vid):
         ret = self.watch_hunt(
             dim, vid, 15, self.current_hunt_ind + 1)
@@ -989,23 +1004,16 @@ class Experiment():
             interbout_backwards = np.copy(
                 bout[0] - bout_windows[bindex - 1][0])
             bout_vec = []
-            ha_init = np.nanmean(self.fishdata.headingangle[bout[0]:bout[0]+5])
-            x_init = np.nanmean(self.fishdata.x[bout[0]:bout[0]+5])
-            y_init = np.nanmean(self.fishdata.y[bout[0]:bout[0]+5])
-            z_init = np.nanmean(self.fishdata.z[bout[0]:bout[0]+5])
-            pitch_init = np.nanmean(self.fishdata.pitch[bout[0]:bout[0]+5])
-            
-# x is 0,1888 left to right, y is 0,1888 bottom to top, 
-            if nearwall(x_init,
-                        y_init,
-                        z_init,
-                        ha_init,
-                        pitch_init, 50):
-                rejected_bouts.append([bout[0], 'nearwall'])
-# if filter_walls input to this function is false, bouts will still be candidates for clustering, but will be flagged in rejection. 
+            # ha_init = np.nanmean(self.fishdata.headingangle[bout[0]:bout[0]+5])
+            # x_init = np.nanmean(self.fishdata.x[bout[0]:bout[0]+5])
+            # y_init = np.nanmean(self.fishdata.y[bout[0]:bout[0]+5])
+            # z_init = np.nanmean(self.fishdata.z[bout[0]:bout[0]+5])
+            # pitch_init = np.nanmean(self.fishdata.pitch[bout[0]:bout[0]+5])
+            if self.nearwall(bout[0], bout_duration, 50):
+                rejected_bouts.append([bindex, 'nearwall'])
                 if filter_walls:
                     continue
-# THIS IS FOR CLUSTERING. FLAGS ARE COUNTED WITH BOUT DURATION AS THE ENDPOINT.             
+
             bout = (bout[0], bout[0] + self.minboutlength)
             full_window = (bout[0]-self.integration_window, bout[1])
             if np.array(frametypes_ir[full_window[0]:full_window[1]]).any():
@@ -1241,6 +1249,8 @@ class Experiment():
 # This establishes a setup where para_continuity_window is used for correlation, and integ_window frames before the first bout are kept for wrth. so the framewindow adds para_continuity_window to the 3D para coords so that you don't map 10 seconds backwards, but only 500 ms backwards.         
         self.framewindow = [window[0] + self.para_continuity_window, window[1]]
         # self.map_bouts_to_heading(index, hunt_wins)
+        if self.paradata.startover:
+            return False
         self.map_para_to_heading(index)
         return True
 
@@ -1277,6 +1287,7 @@ class Experiment():
 #        cv2.namedWindow('vid', flags=cv2.WINDOW_NORMAL)
         cv2.namedWindow('vid', flags=cv2.WINDOW_AUTOSIZE)
         cv2.moveWindow('vid', 20, 20)
+#        cv2.startWindowThread()
         for i in range(ind1-30, ind2):
             im = vid.get_data(i)
             im = cv2.resize(im, (700, 700))
@@ -1374,9 +1385,19 @@ class Experiment():
         if zmax == 0:
             fish_z = self.fishdata.z[
                 self.paradata.framewindow[
-                    0] + self.paradata.all_xy[xyrec].timestamp]
-            print("Fish mouth is at" + str(fish_z))
+                    0] + self.paradata.all_xy[
+                        xyrec].timestamp + len(
+                            self.paradata.all_xy[xyrec].location)]
+            fish_z = 1888 - fish_z
+            if xzrec == ():
+                print("Fish mouth is at " + str(fish_z))
+            elif xzrec != ():
+                print(
+                    "last z of para is " + str(
+                        self.paradata.all_xz[
+                            xzrec[0]].location[-1][1]))
             zmax = raw_input('Enter Z:  ')
+            zmax = int(zmax)
         if not auto:
             timestamp = raw_input("Enter Timestamp for New XZ: ")
             timestamp = int(eval(timestamp))
@@ -1443,7 +1464,7 @@ class Experiment():
             xz_coords[xzpara_obj.timestamp:xzpara_obj.timestamp+len(
                 xzpara_obj.location)] = inv_z
             self.paradata.unpaired_xz.append((xz_id, xzpara_obj, xz_coords))
-            del self.paradata.xyzrecords[rec]
+        del self.paradata.xyzrecords[rec]
         self.paradata.make_3D_para()
         self.paradata.clear_frames()
         self.paradata.label_para()
@@ -1565,21 +1586,9 @@ class Experiment():
             bd = sbout["Bout Duration"]
             pct_interp = np.sum(self.nans_in_original[bf:bf+bd]) / bd
             if bf - 3 >= 0:
-                ha_init = np.median(self.fishdata.headingangle[bf-3:bf])
-                x_init = np.median(self.fishdata.x[bf-3:bf])
-                y_init = np.median(self.fishdata.y[bf-3:bf])
-                z_init = np.median(self.fishdata.z[bf-3:bf])
-                pitch_init = np.median(self.fishdata.pitch[bf-3:bf])
-                x_end = np.median(self.fishdata.x[bf+bd:bf+bd+3])
-                y_end = np.median(self.fishdata.y[bf+bd:bf+bd+3])
-                z_end = np.median(self.fishdata.z[bf+bd:bf+bd+3])
-                pitch_end = np.median(self.fishdata.pitch[bf+bd:bf+bd+3])
-                ha_end = np.median(self.fishdata.headingangle[bf+bd:bf+bd+3])
-                nw_begin = nearwall(x_init,
-                                    y_init,
-                                    z_init, ha_init, pitch_init, 200)
-                nw_end = nearwall(x_end, y_end, z_end, ha_end, pitch_end, 200)
-                if not nw_begin and not nw_end and pct_interp <= .1:
+# more stringent than initial filtering b/c want to make sure bout call is excellent
+                nw = self.nearwall(bf, bd, 200)
+                if not nw and pct_interp <= .1:
                     filt_sb.append(sbout)
         return filt_sb
 
@@ -1648,9 +1657,6 @@ class Experiment():
             pl.show()
         return spherical_bouts
 
-
-    
-        
     def map_para_to_heading(self, h_index):
         para_wrt_heading = []
         wrth_xy = []
@@ -2236,6 +2242,7 @@ def bouts_during_hunt(hunt_ind, dimred, exp, plotornot):
     print('Bout Ids')
     print range(firstind, secondind+1)
     print('Cluster Membership')
+    
     print dim.cluster_membership[firstind:secondind+1]
     print('Bout Durations')
     print exp.bout_durations[firstind:secondind+1]
@@ -2296,6 +2303,7 @@ def bouts_during_hunt(hunt_ind, dimred, exp, plotornot):
         pl.clf()
         pl.close()
     elif plotornot == 1:
+        pl.savefig('bouts_during_hunt.pdf')
         pl.show()
     return pitch_during_hunt, yaw_during_hunt, z_during_hunt, filt_phil, filt_phir
 
@@ -2335,7 +2343,9 @@ def hunted_para_descriptor(dim, exp, hd):
             hd.hunt_ind_list,
             hd.para_id_list, hd.actions, hd.boutrange, hd.interp_windows):
         print('Hunt ID')
-        print hi
+# this is a catch for not knowing the para
+        if ac == 0:
+            continue
         para_xyz = np.load(
             exp.directory + "/para3D" + str(hi).zfill(
                 2) + ".npy")[
@@ -2488,7 +2498,7 @@ def hunted_para_descriptor(dim, exp, hd):
                 # anything less than 1.5 is stationary
                 if para_velocity > 1.5 and pararec_present_at_outset and (
                         percent_nans < 1.0 / 2).all() and (
-                            prcnt_para_interp <= 1.0 / 3) and ac < 4:
+                            prcnt_para_interp <= 1.0 / 3) and 0 < ac < 4:
                     realfish.hunt_ids.append(hi)
                     realfish.hunt_frames.append(
                         (hunt_bout_frames[br[0]],
@@ -2893,21 +2903,6 @@ def calculate_delta_yaw(raw_yaw):
     return delta_yaw
 
 
-def nearwall(x_init, y_init, z_init, ha_init, pitch_init, wall_thresh):
-    if x_init < wall_thresh and (90 < ha_init < 270):
-        return True
-    elif x_init > 1888-wall_thresh and (ha_init < 90 or ha_init > 270):
-        return True
-    elif y_init < wall_thresh and (ha_init > 180):
-        return True
-    elif y_init > 1888-wall_thresh and (ha_init < 180):
-        return True
-    elif z_init < wall_thresh and pitch_init < 0:
-        return True
-    elif z_init > 1888-wall_thresh and pitch_init > 0:
-        return True
-    else:
-        return False
 
 # before implementing this in full in the bout detector,
 # add these extensions to the current bout_durations as
@@ -3211,8 +3206,15 @@ if __name__ == '__main__':
         '14': 'Interbout_Back'}
 
 # This dictionary describes the variables to use for clustering.
-    sub_dict = {'8':'Vector Velocity'}
-        
+    sub_dict = {'8': 'Vector Velocity'}
+
+    tail_dict = {'2': 'Tail Segment 2',
+                 '3': 'Tail Segment 3',
+                 '4': 'Tail Segment 4',
+                 '5': 'Tail Segment 5',
+                 '6': 'Tail Segment 6',
+                 '7': 'Tail Segment 7'}
+
     abort_dict = {'13': 'Eye Sum'}
 
     bout_dict = {
@@ -3266,8 +3268,8 @@ if __name__ == '__main__':
 
     fish_id = '091418_1'
     drct = os.getcwd() + '/' + fish_id
-    new_exp = False
-    dimreduce = False
+    new_exp = True
+    dimreduce = True
     skip_import = False
     add_vel_ends = True
 
@@ -3276,9 +3278,6 @@ if __name__ == '__main__':
             myexp = Experiment(20, 3, all_varbs_dict, flag_dict, drct)
             myexp.bout_detector()
             myexp.bout_nanfilt_and_arrange(False)
-            bouts_flags = BoutsAndFlags(drct,
-                                        myexp.bout_data, myexp.bout_flags)
-            bouts_flags.exporter()
             print("Creating Unit Vectors")
             myexp.create_unit_vectors()
             if add_vel_ends:
@@ -3297,7 +3296,8 @@ if __name__ == '__main__':
             dim = DimensionalityReduce(bout_dict,
                                        flag_dict,
                                        all_varbs_dict,
-                                       drct, {})
+                                       drct, {},
+                                       [myexp.boud_data], [myexp.bout_flags])
             dim.concatenate_records()
             dim.dim_reduction(2)
             dim.exporter()
