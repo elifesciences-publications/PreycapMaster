@@ -342,8 +342,8 @@ class DimensionalityReduce():
     def __init__(self,
                  bout_dict,
                  flag_dict,
-                 all_varbs_dict, fish_id_list, exp_bouts_list, exp_flags_list):
-        self.fish_list = fish_id_list
+                 all_varbs_dict, fish_id_list, exp_bouts_list, exp_flags_list, bout_frames):
+        self.fish_id_list = fish_id_list
         self.recluster = True
         self.directory = os.getcwd()
         self.cluster_input = []
@@ -355,6 +355,7 @@ class DimensionalityReduce():
         self.dim_reduce_output = []
         self.cmem_pre_sub = []
         self.cluster_membership = []
+        self.bout_frames_by_fish = bout_frames
         self.cmem_by_fish = []
         self.bout_dict = bout_dict
         self.flag_dict = flag_dict
@@ -424,10 +425,11 @@ class DimensionalityReduce():
             i[0]:i[1]] for i in sliding_window(2, cumsum_numbouts)]
 
     def watch_cluster(self, fish_id, clusters, vidtype, term):
+        directory = os.getcwd() + '/' + fish_id
         cluster_ids_for_fish = self.cmem_by_fish[
             self.fish_id_list.index(fish_id)]
-        directory = os.get_cwd + '/' + fish_id
-        exp = pickle.load(open(directory + '/master.pkl', 'rb'))
+        bout_frames_for_fish = self.bout_frames_by_fish[
+            self.fish_id_list.index(fish_id)]
         if vidtype == 1:
             vid = imageio.get_reader(
                 directory + '/top_contrasted.AVI', 'ffmpeg')
@@ -439,18 +441,18 @@ class DimensionalityReduce():
         c_mem_counter = 0
         if term:
             ib, dy = self.strike_abort_sep(clusters)
-        for bout_num, cluster_mem in enumerate(self.cluster_membership):
+        for bout_frame, cluster_mem in zip(bout_frames_for_fish,
+                                           cluster_ids_for_fish):
             if cluster_mem in clusters:
-                print('Bout #: ' + str(bout_num))
                 if term:
                     dyaw = dy[c_mem_counter]
                     c_mem_counter += 1
                     if dyaw > 10:
                         continue
-                firstframe = exp.bout_frames[bout_num] - 10
+                firstframe = bout_frame - 10
                 if firstframe <= 0:
                     continue
-                lastframe = exp.bout_frames[bout_num] + 30
+                lastframe = bout_frame + 30
                 for frame in range(firstframe, lastframe):
                     im = vid.get_data(frame)
                     im = cv2.resize(im, (700, 700))
@@ -700,8 +702,6 @@ class Experiment():
         self.bout_flags = []
         self.minboutlength = cluster_length
         self.num_dp = len(bout_dict)
-#just assures that 20 frames before bout is also continuous in order for para reconstructions to be accurate per bout. 
-# This allows trajectory matching over x frames to improve correlation
         self.para_continuity_window = 600
         self.bout_of_interest = 0
         self.hunt_windows = []
@@ -713,6 +713,7 @@ class Experiment():
         self.bout_dpitch = []
         self.bout_dyaw = []
         self.hunt_cluster = 0
+        self.hunt_wins = []
         self.deconverge_cluster = 0
         self.cluster_membership = []
 
@@ -841,12 +842,13 @@ class Experiment():
                 
     def extend_hunt_window(self, numbouts):
         self.hunt_wins[self.current_hunt_ind][1] += numbouts
-        self.exporter()
+        np.save(self.directory + 'hunt_wins.npy', self.hunt_wins)
 
     def reset_hunt_window(self):
         orig = self.hunt_wins[self.current_hunt_ind][0]
         self.hunt_wins[self.current_hunt_ind] = [orig, orig+10]
-        self.exporter()
+        np.save(self.directory + 'hunt_wins.npy', self.hunt_wins)
+        
 
 # one bug is deconverge_cluster should be cleared when find_hunts is called        
     def cap_hunt_window(self):
@@ -865,10 +867,10 @@ class Experiment():
         except ValueError:
             return
         self.hunt_wins[self.current_hunt_ind] = [start_ind, start_ind + di]
-        self.watch_hunt(self, 1, 15, self.current_hunt_ind)
+        self.watch_hunt(1, 15, self.current_hunt_ind)
         response = raw_input('Cap Window?  ')
         if response == 'y':
-            self.exporter()
+            np.save(self.directory + 'hunt_wins.npy', self.hunt_wins)
         else:
             #            self.hunt_wins[ind] = [start_ind, original_end_ind]
             while(True):
@@ -877,13 +879,14 @@ class Experiment():
                     break
                 else:
                     new_end = int(new_end)
-                self.hunt_wins[self.current_hunt_ind] = [start_ind, start_ind + new_end]
-                exp.watch_hunt(self, 1, 15, self.current_hunt_ind)
-                
+                self.hunt_wins[self.current_hunt_ind] = [start_ind,
+                                                         start_ind + new_end]
+                self.watch_hunt(1, 15, self.current_hunt_ind)
+        np.save(self.directory + 'hunt_wins.npy', self.hunt_wins)
         view_bouts = raw_input("View Bouts During Hunt?: ")
         if view_bouts == 'y':
             bouts_during_hunt(self.current_hunt_ind, dim, self, True)
-            self.watch_hunt(self, 0, 50, self.current_hunt_ind)
+            self.watch_hunt(0, 50, self.current_hunt_ind)
 
     def nexthunt(self):
         ret = self.watch_hunt(1, 15, self.current_hunt_ind + 1)
@@ -2509,7 +2512,7 @@ def hunted_para_descriptor(exp, hd):
     return realfish
 
 
-def para_stimuli(dim, exp, hd):
+def para_stimuli(exp, hd):
 
     include_kde = False
     cont_win = exp.para_continuity_window
@@ -3157,7 +3160,9 @@ def exp_generation_and_clustering(fish_drct_list,
     add_vel_ends = True
     for drct in fish_drct_list:
         if new_exps:
-            myexp = Experiment(20, 3, all_varbs_dict, flag_dict, drct)
+            fish_directory = os.getcwd() + '/' + drct
+            myexp = Experiment(20, 3, all_varbs_dict,
+                               flag_dict, fish_directory)
             myexp.bout_detector()
             myexp.bout_nanfilt_and_arrange(False)
             print("Creating Unit Vectors")
@@ -3172,21 +3177,38 @@ def exp_generation_and_clustering(fish_drct_list,
             myexp.exporter()
         else:
             myexp = pickle.load(open(drct + '/master.pkl', 'rb'))
-        all_bout_data.append(myexp.bout_data)
-        all_flags.append(myexp.bout_flags)
+            try:
+                myexp.hunt_wins = np.load(myexp.directory + '/hunt_wins.npy')
+            except IOError:
+                pass
+        rejected_bout_inds = [b[0] for b in
+                              myexp.rejected_bouts if b[1] == 'near_wall']
+        bout_data_no_rejects = []
+        bout_flag_no_rejects = []
+        non_reject_frames = []
+        for b_ind, (bout_d, bout_f) in enumerate(
+                zip(myexp.bout_data, myexp.bout_flags)):
+            if b_ind not in rejected_bout_inds:
+                bout_data_no_rejects.append(bout_d)
+                bout_flag_no_rejects.append(bout_f)
+                non_reject_frames.append(myexp.bout_frames[b_ind])
+        all_bout_data.append(bout_data_no_rejects)
+        all_flags.append(bout_flag_no_rejects)
     dim = DimensionalityReduce(cluster_varbs, flag_varbs, all_varbs,
-                               fish_drct_list, all_bout_data, all_flags)
+                               fish_drct_list, all_bout_data,
+                               all_flags, non_reject_frames)
     dim.prepare_records()
     dim.dim_reduction(2)
     dim.exporter()
+    return dim
 
-    
+
 def cluster_call_wrapper(dim, fish_drct_list):
     for drct in fish_drct_list:
         myexp = pickle.load(open(drct + '/master.pkl', 'rb'))
         extract_cluster_calls_to_exp(dim, myexp)
 
-        
+
 def extract_cluster_calls_to_exp(dim, exp):
     rejected_bout_inds = [b[0] for b in
                           exp.rejected_bouts if b[1] == 'near_wall']
@@ -3199,12 +3221,20 @@ def extract_cluster_calls_to_exp(dim, exp):
         else:
             c = cluster_id_deque.popleft()
             cluster_mem.append(c)
-    myexp.cluster_membership = cluster_mem
-    myexp.exporter()
+    exp.cluster_membership = cluster_mem
+    exp.exporter()
+
+
+def finish_experiment(exp, hd):
+    exp.exporter()
+    hd.exporter()
+    hunted_para_descriptor(exp, hd)
+    para_stimuli(exp, hd)
+    v, va = pvec_wrapper(exp, hd, 1)
+
 
 if __name__ == '__main__':
 
-# 15 requires 250 consecutive milliseconds of data. this yields 497 bouts. 
     print('Running Master')
 
 
@@ -3287,16 +3317,22 @@ if __name__ == '__main__':
 # bout array, matched with a flag array that describes summary statistics for each bout. A new BoutsandFlags object is then created
 # whose only role is to contain the bouts and corresponding flags for each fish. 
 
-    fish_id = '091418_1'
+    fish_id = '090418_3'
     drct = os.getcwd() + '/' + fish_id
     import_exp = True
+    import_dim = False
     if import_exp:
         myexp = pickle.load(open(drct + '/master.pkl', 'rb'))
+        try:
+            myexp.hunt_wins = np.load(drct + '/hunt_wins.npy')
+        except IOError:
+            pass
         try:
             hd = hd_import(drct)
         except IOError:
             hd = Hunt_Descriptor(drct)
-
+    if import_dim:
+        dim = pickle.load(open(os.getcwd() + '/dim_reduce.pkl', 'rb'))
 #     sbouts = myexp.all_spherical_bouts()
 
     new_wik = ['090418_3', '090418_4', '090418_5', '090418_6',
@@ -3310,6 +3346,10 @@ if __name__ == '__main__':
                '091318_5', '091318_6', '091418_1', '091418_2', '091418_3',
                '091418_4', '091418_5', '091418_6']
 
+    new_wik_subset = ['090418_3', '090418_4', '090418_5', '090418_6']
+
+#    dim = exp_generation_and_clustering(new_wik_subset, all_varbs_dict,
+#                                        bout_dict, flag_dict, True)
 # pilot = ['070617_1', '070617_2','072717_1', '072717_2', '072717_5']
 
 # vcp_list = []
