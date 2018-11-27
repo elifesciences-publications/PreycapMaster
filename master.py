@@ -367,7 +367,8 @@ class DimensionalityReduce():
     def __init__(self,
                  bout_dict,
                  flag_dict,
-                 all_varbs_dict, fish_id_list, exp_bouts_list, exp_flags_list, bout_frames):
+                 all_varbs_dict, fish_id_list,
+                 exp_bouts_list, exp_flags_list, bout_frames, num_clusters):
         self.fish_id_list = fish_id_list
         self.directory = os.getcwd()
         self.cluster_input = []
@@ -385,7 +386,7 @@ class DimensionalityReduce():
         self.flag_dict = flag_dict
         self.inv_fdict = {v: k for k, v in flag_dict.iteritems()}
         self.transition_matrix = np.array([])
-        self.cluster_count = 3
+        self.cluster_count = num_clusters
 
 # This will be for the future if you want to cluster all fish in the fish_id_dict. Just add the IDs from the dict to the flag data.
 
@@ -461,6 +462,9 @@ class DimensionalityReduce():
         elif vidtype == 0:
             vid = imageio.get_reader(
                 directory + '/conts.AVI', 'ffmpeg')
+        elif vidtype == 2:
+            vid = imageio.get_reader(
+                directory + '/side_contrasted.AVI', 'ffmpeg')
         cv2.namedWindow('vid', flags=cv2.WINDOW_AUTOSIZE)
         cv2.moveWindow('vid', 20, 20)
         c_mem_counter = 0
@@ -531,7 +535,13 @@ class DimensionalityReduce():
         self.cluster_membership = c_flag
         num_clusters = np.unique(self.cluster_membership).shape[0]
         new_flags = []
+        if len(self.all_flags[0]) < len(self.flag_dict):
+            chop_end = False
+        else:
+            chop_end = True
         for flag, cflag in zip(self.all_flags, self.cluster_membership):
+            if chop_end:
+                flag = flag[0:-1]
             flag.append(cflag)
             new_flags.append(flag)
         self.all_flags = new_flags
@@ -540,12 +550,14 @@ class DimensionalityReduce():
         print('running dimensionality reduction')
         np.set_printoptions(suppress=True)
         np.random.seed(1)
+        num_neighbors = 10
+        print('num_neighbors = ' + str(num_neighbors))
         model = SpectralEmbedding(n_components=dimension,
                                   affinity='nearest_neighbors',
                                   gamma=None,
                                   random_state=None,
                                   eigen_solver=None,
-                                  n_neighbors=None,
+                                  n_neighbors=num_neighbors,
                                   n_jobs=1)
         for b in self.all_bouts:
             if not np.isfinite(b).all():
@@ -624,13 +636,13 @@ class DimensionalityReduce():
         pl.show()
 
     def cluster_plot(self, dimensions, flagnum):
-        pl.ion()
-        fish_id_flag = int(self.inv_fdict['Fish ID'])
+#        pl.ion()
+#        fish_id_flag = int(self.inv_fdict['Fish ID'])
         cluster_flag_id = int(self.inv_fdict['Cluster ID'])
         # fish_id_flag is the last entry in a flag set.
         palette = np.array(sb.color_palette("cubehelix", 10))
         flags = np.array([fl[flagnum] for fl in self.all_flags])
-        if not flagnum == fish_id_flag and not flagnum == cluster_flag_id:
+        if not flagnum == cluster_flag_id:
             flag_ranks, flagbins = pd.qcut(flags, 10,
                                            labels=False,
                                            retbins=True)
@@ -652,6 +664,10 @@ class DimensionalityReduce():
             ax.set_axis_off()
         
         elif dimensions == 3:
+            if flagnum == cluster_flag_id:
+                palette = np.array(
+                    sb.color_palette(
+                        "cubehelix", np.max(self.cluster_membership)+1))
             ax = fig.add_subplot(121, projection='3d')
             ax.scatter(self.dim_reduce_output[:, 0],
                        self.dim_reduce_output[:, 1],
@@ -669,7 +685,8 @@ class DimensionalityReduce():
         ax2 = fig.add_subplot(122)
         n, bins, patches = ax2.hist(flags, bins=100)
 #        new_patchlist = []
-        if not flagnum == fish_id_flag and not flagnum == cluster_flag_id:
+#        if not flagnum == fish_id_flag and not flagnum == cluster_flag_id:
+        if not flagnum == cluster_flag_id:
             for bn, patch in zip(bins, patches):
                 bin_rank = [ind
                             for ind, fb
@@ -813,7 +830,7 @@ class Experiment():
 
     def nearwall(self, bout_frame, bout_dur, wall_thresh, ceiling_thresh):
 
-        def calc_near_wall(x, y, z, ha, pitch):
+        def calc_near_wall_w_angle(x, y, z, ha, pitch):
             if x < wall_thresh and (90 < ha < 270):
                 return True
             elif x > 1888-wall_thresh and (ha < 90 or ha > 270):
@@ -828,12 +845,26 @@ class Experiment():
                 return True
             else:
                 return False
-        
+
+        def calc_near_wall(x, y, z):
+            if x < wall_thresh or x > 1888 - wall_thresh:
+                return [True, '_X']
+            elif y < wall_thresh or y > 1888-wall_thresh:
+                return [True, '_Y']
+            elif z < ceiling_thresh or z > 1888-ceiling_thresh:
+                return [True, '_Z']
+            else:
+                return [False, '']
+
         ha_init = np.median(
             self.fishdata.headingangle[bout_frame-3:bout_frame])
         x_init = np.median(self.fishdata.x[bout_frame-3:bout_frame])
         y_init = np.median(self.fishdata.y[bout_frame-3:bout_frame])
         z_init = np.median(self.fishdata.z[bout_frame-3:bout_frame])
+        lrz_init = np.median(
+            self.fishdata.low_res_z[bout_frame-3:bout_frame])
+        if lrz_init > z_init:
+            z_init = lrz_init
         pitch_init = np.median(self.fishdata.pitch[bout_frame-3:bout_frame])
         x_end = np.median(
             self.fishdata.x[bout_frame+bout_dur:bout_frame+bout_dur+3])
@@ -841,13 +872,24 @@ class Experiment():
             self.fishdata.y[bout_frame+bout_dur:bout_frame+bout_dur+3])
         z_end = np.median(
             self.fishdata.z[bout_frame+bout_dur:bout_frame+bout_dur+3])
+        lrz_end = np.median(
+            self.fishdata.low_res_z[bout_frame+bout_dur:bout_frame+bout_dur+3])
+        if lrz_end > z_end:
+            z_end = lrz_end
         pitch_end = np.median(
             self.fishdata.pitch[bout_frame+bout_dur:bout_frame+bout_dur+3])
         ha_end = np.median(
             self.fishdata.headingangle[
                 bout_frame+bout_dur:bout_frame+bout_dur+3])
-        return (calc_near_wall(x_init, y_init, z_init, ha_init, pitch_init)
-                or calc_near_wall(x_end, y_end, z_end, ha_end, pitch_end))
+        init_nearwall = calc_near_wall(x_init, y_init, z_init)
+        end_nearwall = calc_near_wall(x_end, y_end, z_end)
+        if init_nearwall[0]:
+            return init_nearwall
+        elif end_nearwall[0]:
+            return end_nearwall
+        else:
+            return init_nearwall
+
 
     def find_hunts(self, init_inds, abort_inds):
         self.hunt_wins = []
@@ -921,7 +963,7 @@ class Experiment():
     def backone(self):
         self.watch_hunt(1, 15, self.current_hunt_ind - 1)
 
-    def bout_nanfilt_and_arrange(self, filter_walls):
+    def bout_nanfilt_and_arrange(self):
         def get_var_index(var_name):
             try:
                 v = int(self.inv_bdict[var_name])
@@ -997,16 +1039,9 @@ class Experiment():
             interbout_backwards = np.copy(
                 bout[0] - bout_windows[bindex - 1][0])
             bout_vec = []
-            # ha_init = np.nanmean(self.fishdata.headingangle[bout[0]:bout[0]+5])
-            # x_init = np.nanmean(self.fishdata.x[bout[0]:bout[0]+5])
-            # y_init = np.nanmean(self.fishdata.y[bout[0]:bout[0]+5])
-            # z_init = np.nanmean(self.fishdata.z[bout[0]:bout[0]+5])
-            # pitch_init = np.nanmean(self.fishdata.pitch[bout[0]:bout[0]+5])
-            if self.nearwall(bout[0], bout_duration, 200, 100):
-                rejected_bouts.append([bindex, 'nearwall'])
-                if filter_walls:
-                    continue
-
+            nw_filter = self.nearwall(bout[0], bout_duration, 200, 100)
+            if nw_filter[0]:
+                rejected_bouts.append([bindex, 'nearwall' + nw_filter[1]])
             bout = (bout[0], bout[0] + self.minboutlength)
             full_window = (bout[0]-self.integration_window, bout[1])
             if np.array(frametypes_ir[full_window[0]:full_window[1]]).any():
@@ -1585,7 +1620,7 @@ class Experiment():
             pct_interp = np.sum(self.nans_in_original[bf:bf+bd]) / bd
             if bf - 3 >= 0:
 # more stringent than initial filtering b/c want to make sure bout call is excellent
-                nw = self.nearwall(bf, bd, 200)
+                nw = self.nearwall(bf, bd, 200, 100)[0]
                 if not nw and pct_interp <= .1:
                     filt_sb.append(sbout)
         return filt_sb
@@ -2620,16 +2655,14 @@ def para_stimuli(exp, hd):
         penv.find_paravectors(False)
         wrth = np.load(
             exp.directory + '/wrth' + str(h).zfill(2) + '.npy')
+        wrth_int = wrth[0:int_win]
 
 # HERE IS WHERE THE INTERVAL GETS SET.
 # When this is a function, your flags here will include whether its an init or an abort. 
 
             # update this when you know how fish move to known para. then you can figure out when the new hunt starts
             # once you figure out when the new hunt starts, just wrth_int = wrth[huntstart:huntstart+int_win]
-
-        else:
-            wrth_int = wrth[0:int_win]
-                
+            
         p_in_intwindow = find_integration_para(wrth_int)
         temp_stim_list = []
         for vis_para in p_in_intwindow:
@@ -3216,7 +3249,7 @@ def exp_generation_and_clustering(fish_drct_list,
             myexp = Experiment(20, 3, all_varbs_dict,
                                flag_dict, fish_directory)
             myexp.bout_detector()
-            myexp.bout_nanfilt_and_arrange(False)
+            myexp.bout_nanfilt_and_arrange()
             print("Creating Unit Vectors")
             myexp.create_unit_vectors()
             if add_vel_ends:
@@ -3234,7 +3267,7 @@ def exp_generation_and_clustering(fish_drct_list,
             except IOError:
                 pass
         rejected_bout_inds = [b[0] for b in
-                              myexp.rejected_bouts if b[1] == 'nearwall']
+                              myexp.rejected_bouts if b[1][0:8] == 'nearwall']
         bout_data_no_rejects = []
         bout_flag_no_rejects = []
         non_reject_frames = []
@@ -3250,11 +3283,12 @@ def exp_generation_and_clustering(fish_drct_list,
     myexp = []
     dim = DimensionalityReduce(cluster_varbs, flag_varbs, all_varbs,
                                fish_drct_list, all_bout_data,
-                               all_flags, all_bout_frames)
+                               all_flags, all_bout_frames, 5)
     dim.prepare_records()
     dim.exporter()
     dim.dim_reduction(2)
     dim.exporter()
+    dim.cluster_plot(2, 10)
     return dim
 
 
@@ -3266,7 +3300,7 @@ def cluster_call_wrapper(dim, fish_drct_list):
 
 def extract_cluster_calls_to_exp(dim, exp):
     rejected_bout_inds = [b[0] for b in
-                          exp.rejected_bouts if b[1] == 'nearwall']
+                          exp.rejected_bouts if b[1][0:8] == 'nearwall']
     cluster_mem = []
     fish_id = dim.fish_id_list.index(exp.directory[-8:])
     cluster_id_deque = deque(dim.cmem_by_fish[fish_id])
@@ -3376,9 +3410,9 @@ if __name__ == '__main__':
 # bout array, matched with a flag array that describes summary statistics for each bout. A new BoutsandFlags object is then created
 # whose only role is to contain the bouts and corresponding flags for each fish. 
 
-    fish_id = '090418_3'
+    fish_id = '090418_5'
     drct = os.getcwd() + '/' + fish_id
-    import_exp = False
+    import_exp = True
     import_dim = True
     if import_exp:
         myexp = pickle.load(open(drct + '/master.pkl', 'rb'))
@@ -3408,8 +3442,9 @@ if __name__ == '__main__':
     new_wik_subset = ['090418_3', '090418_4', '090418_5',
                       '090418_6', '090418_7']
 
-    dim = exp_generation_and_clustering(new_wik, all_varbs_dict,
-                                        bout_dict, flag_dict, False)
+#    dim = exp_generation_and_clustering(new_wik, all_varbs_dict,
+#                                        bdict_2, flag_dict, False)
+    
 # pilot = ['070617_1', '070617_2','072717_1', '072717_2', '072717_5']
 
 # vcp_list = []
