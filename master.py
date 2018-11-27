@@ -560,6 +560,7 @@ class DimensionalityReduce():
         palette = np.array(sb.color_palette("Set1", num_dp))
         cluster_ids = np.unique(self.cluster_membership)
         all_bouts = np.array(self.all_bouts)
+        confidence_interval = 'sd'
         if cluster_id != ():
             cluster_ids = cluster_id
         for _id in cluster_ids:
@@ -584,13 +585,8 @@ class DimensionalityReduce():
             for i in bdict_keys:
                 ax = fig.add_subplot(num_rows, num_cols, i+1)
                 ax.set_title(self.all_varbs_dict[str(i)])
-                # if self.all_varbs_dict[str(i)] == 'Interbout_Back':
-                #     sb.barplot(data=data_points[str(i)])
-                #     continue
-
-# Eventually make the "datapoint" keyword a dictionary of variable names
-# you can also use the dictionary to access points for cluster plots
-                sb.tsplot(data_points[str(i)], color=palette[i], ci=95)
+                sb.tsplot(data_points[str(i)], color=palette[i],
+                          ci=confidence_interval)
                 if self.all_varbs_dict[str(i)][0:3] == 'Eye':
                     ax.set_ylim([-60, 60])
                 elif self.all_varbs_dict[str(i)] == 'Interbout_Back':
@@ -601,12 +597,12 @@ class DimensionalityReduce():
                     sb.tsplot([np.cumsum(dp)
                                for dp in data_points[str(i)]],
                               color='k',
-                              ci=95)
+                              ci=confidence_interval)
                 elif self.all_varbs_dict[str(i)] == 'Delta Yaw':
                     sb.tsplot([np.cumsum(dp)
                                for dp in data_points[str(i)]],
                               color='k',
-                              ci=95)
+                              ci=confidence_interval)
                 
             pl.suptitle('Cluster' + str(_id))
             pl.subplots_adjust(top=0.9, hspace=.4, wspace=.4)
@@ -619,7 +615,6 @@ class DimensionalityReduce():
         cluster_indices = np.where(
             self.cluster_membership == cluster_id)[0]
         flags_in_cluster = all_flags[cluster_indices]
-# Could choose to cluster more here if you want
         flag_title = self.flag_dict[str(flag_id)]
         fl_plot = []
         for flag in flags_in_cluster:
@@ -1891,12 +1886,18 @@ def fill_in_nans_prevcoord(arr):
 def create_poirec(h_index, two_or_three, directory, para_id, dec):
     wrth = []
     poi_wrth = []
+    if dec:
+        subscript = '_d'
+    else:
+        subscript = ''
     if two_or_three == 2:
         wrth = np.load(
-            directory + '/wrth_xy' + str(h_index).zfill(2) + '.npy')
+            directory + '/wrth_xy' + str(
+                h_index).zfill(2) + subscript + '.npy')
     elif two_or_three == 3:
         wrth = np.load(
-            directory + '/wrth' + str(h_index).zfill(2) + '.npy')
+            directory + '/wrth' + str(
+                h_index).zfill(2) + subscript + '.npy')
     for all_visible_para in wrth:
         rec_found = False
         for prec in all_visible_para:
@@ -1919,13 +1920,18 @@ def plot_hairball(hd, *actionlist):
     ax.set_ylabel('Y')
     ax.set_zlabel('Z')
     max_xyz = 0
+    hd.dec_doubles = []
     for h, p, a in zip(hd.hunt_ind_list,
                        hd.para_id_list,
                        hd.actions):
-        if a not in actionlist:
+        if a not in actionlist or h in hd.dec_doubles:
             continue
+        if hd.check_for_doubles(h):
+            dec = True
+        else:
+            dec = False
         xyz_coords = []
-        poi_wrth = create_poirec(h, 3, hd.directory, p)
+        poi_wrth = create_poirec(h, 3, hd.directory, p, dec)
         for prec in poi_wrth:
             xyz_coords.append(prec[0:3])
         xyz_coords = np.array(xyz_coords)
@@ -2093,7 +2099,8 @@ def para_vec_explorer(exp, h_id, p_id, animate, filter_sd):
 #        line_ani.save('test.mp4')
         pl.show()
     return pvec, non_nan_indices, penv.vector_spacing
-    
+
+
 def para_state_plot(hd, exp):
     hunt_inds = hd.hunt_ind_list
     poi = hd.para_id_list
@@ -2349,6 +2356,7 @@ def hunted_para_descriptor(exp, hd):
     df_labels = ["Bout Az", "Bout Alt",
                  "Bout Dist", "Bout Delta Pitch", "Bout Delta Yaw"]
     realfish = RealFishControl(exp)
+    hd.dec_doubles = []
     for hi, hp, ac, br, iws in zip(
             hd.hunt_ind_list,
             hd.para_id_list, hd.actions, hd.boutrange, hd.interp_windows):
@@ -2367,14 +2375,14 @@ def hunted_para_descriptor(exp, hd):
                 2) + subscript + ".npy")[
                     hp*3:hp*3 + 3][
                         :, cont_win+int_win-realfish.firstbout_para_intwin:]
-        penv = ParaEnv(hi, exp.directory, penv_dec, 1)
+        penv = ParaEnv(hi, exp.directory, 1, penv_dec)
         penv.find_paravectors(False, hp)
 # raw_para_vel = penv.velocity_mags[0][exp.para_continuity_window / penv.vector_spacing:]
 # can index raw_para_vel with norm_bf / penv.vector_spacing.
         avg_vel = np.nanmean(penv.velocity_mags[0][
             exp.para_continuity_window / penv.vector_spacing:])
         hunt_df = pd.DataFrame(columns=df_labels)
-        poi_wrth = create_poirec(hi, 3, exp.directory, hp)
+        poi_wrth = create_poirec(hi, 3, exp.directory, hp, penv_dec)
         dist = [pr[4] for pr in poi_wrth]
         az = [pr[6] for pr in poi_wrth]
         alt = [pr[7] for pr in poi_wrth]
@@ -2499,14 +2507,12 @@ def hunted_para_descriptor(exp, hd):
             if endhunt:
                 bout_descriptor[-1][1] = last_bout
                 para_velocity = bout_descriptor[-1][-2]
-                # THIS IS WRONG. IF REC ENDS BEFORE DECONVERGE (i.e. w/ -2 index) THIS WILL GO BACK TOO FAR
-                # INTO THE PREVIOUS PARA. 
                 first_bout_in_hunt_index = (-1 * (hb_ind+1)) + br[0]
                 print first_bout_in_hunt_index
                 print("first_bout_in_hunt_index")
                 para_interp_list = [
                     b[-3] for b in bout_descriptor[
-                            first_bout_in_hunt_index:]] 
+                        first_bout_in_hunt_index:]]
                 prcnt_para_interp = np.sum(
                     para_interp_list).astype(float) / len(para_interp_list)
                 pararec_present_at_outset = np.isfinite(
@@ -2528,8 +2534,9 @@ def hunted_para_descriptor(exp, hd):
                     realfish.hunt_results.append(ac)
 #                    realfish.para_xyz_per_hunt.append(para_xyz)
                     realfish.para_xyz_per_hunt.append(
-                        para_xyz[
-                            :, norm_bf_raw[br[0]]:norm_bf_raw[hb_ind] + hunt_bout_durations[
+                        para_xyz[:,
+                                 norm_bf_raw[br[0]]:norm_bf_raw[
+                                     hb_ind] + hunt_bout_durations[
                                     hb_ind] + realfish.firstbout_para_intwin])
                     realfish.hunt_dataframes.append(copy.deepcopy(hunt_df))
                     print pararec_present_at_outset
@@ -2605,11 +2612,11 @@ def para_stimuli(exp, hd):
         print h
         # here you will create a bout frames list for the entire hunt. once you
         # get to the hunted para,
-        if d:
+        if d or ac >= 4:
             continue
         p3D = np.load(exp.directory + '/para3D' + str(h).zfill(2) + '.npy')
         distmat = make_distance_matrix(p3D)
-        penv = ParaEnv(h, exp.directory, False, 1)
+        penv = ParaEnv(h, exp.directory, 1, False)
         penv.find_paravectors(False)
         wrth = np.load(
             exp.directory + '/wrth' + str(h).zfill(2) + '.npy')
@@ -2617,8 +2624,6 @@ def para_stimuli(exp, hd):
 # HERE IS WHERE THE INTERVAL GETS SET.
 # When this is a function, your flags here will include whether its an init or an abort. 
 
-        if ac >= 4:
-            continue
             # update this when you know how fish move to known para. then you can figure out when the new hunt starts
             # once you figure out when the new hunt starts, just wrth_int = wrth[huntstart:huntstart+int_win]
 
@@ -2630,7 +2635,7 @@ def para_stimuli(exp, hd):
         for vis_para in p_in_intwindow:
             k1, k3, k5 = k_nearest(distmat, vis_para)
             p_wrth = create_poirec(h, 3,
-                                   exp.directory, vis_para)[0:int_win]
+                                   exp.directory, vis_para, False)[0:int_win]
             dist = [pr[4] for pr in p_wrth]
             az = [pr[6] for pr in p_wrth]
             alt = [pr[7] for pr in p_wrth]
@@ -3199,7 +3204,8 @@ def return_ta_std(drc_list):
 
 
 def exp_generation_and_clustering(fish_drct_list,
-                                  all_varbs, cluster_varbs, flag_varbs, new_exps):
+                                  all_varbs, cluster_varbs,
+                                  flag_varbs, new_exps):
     all_bout_data = []
     all_flags = []
     all_bout_frames = []
@@ -3247,8 +3253,8 @@ def exp_generation_and_clustering(fish_drct_list,
                                all_flags, all_bout_frames)
     dim.prepare_records()
     dim.exporter()
-#    dim.dim_reduction(2)
- #   dim.exporter()
+    dim.dim_reduction(2)
+    dim.exporter()
     return dim
 
 
@@ -3402,8 +3408,8 @@ if __name__ == '__main__':
     new_wik_subset = ['090418_3', '090418_4', '090418_5',
                       '090418_6', '090418_7']
 
-#    dim = exp_generation_and_clustering(new_wik, all_varbs_dict,
-#                                        bout_dict, flag_dict, False)
+    dim = exp_generation_and_clustering(new_wik, all_varbs_dict,
+                                        bout_dict, flag_dict, False)
 # pilot = ['070617_1', '070617_2','072717_1', '072717_2', '072717_5']
 
 # vcp_list = []
