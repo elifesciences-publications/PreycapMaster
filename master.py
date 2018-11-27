@@ -130,11 +130,31 @@ class Hunt_Descriptor:
         self.directory = directory
         self.interp_windows = []
         self.decimated_vids = []
+        self.dec_doubles = []
 
     def exporter(self):
         with open(self.directory + '/hunt_descriptor.pkl', 'wb') as file:
             pickle.dump(self, file)
 
+    def check_for_doubles(self, ind):
+        args_matching_id, = np.where(np.array(self.hunt_ind_list) == ind)
+        if args_matching_id.shape[0] == 1:
+            return False
+        else:
+            d1 = self.decimated_vids[args_matching_id[0]]
+            d2 = self.decimated_vids[args_matching_id[1]]
+            if d1 != d2:
+                self.dec_doubles.append(ind)
+                self.dec_doubles = np.unique(self.dec_doubles)
+                return True
+# This is a check for decimated vids vs. changes of mind            
+            else:
+                return False
+
+# with this T, you choose a _d for this ind
+# in h_p_d and a normal in pvec and para_stim.
+
+            
     def parse_interp_windows(self, exp, poi):
         cont_win = exp.paradata.pcw
         inferred_window_ranges_poi = []
@@ -174,7 +194,7 @@ class Hunt_Descriptor:
         self.exporter()
 
 
-# 	1) Hunted Para. -1 if unknown
+# 	1) Hunted Para. -1 if unknown, -2 if you can see it in non-br sub vid. 
 #       2) Orientation to unknown target = 0
 #          Strike Success = 1,
 # 	   Strike Fail = 2,
@@ -198,12 +218,17 @@ class Hunt_Descriptor:
 
 class ParaEnv:
 
-    def __init__(self, index, directory, filter_sd, *para_coords):
+    def __init__(self, index, directory, filter_sd, dec, *para_coords):
         if para_coords == ():
+            if dec:
+                subscript = '_d'
+            else:
+                subscript = ''
             self.wrth = np.load(
-                directory + '/wrth' + str(index).zfill(2) + '.npy')
+                directory + '/wrth' + str(index).zfill(2) + subscript + '.npy')
             self.para_coords = np.load(
-                directory + '/para3D' + str(index).zfill(2) + '.npy')
+                directory + '/para3D' + str(
+                    index).zfill(2) + subscript + '.npy')
             self.dimensions = 3
 #        self.high_density_coord = np.load('high_density_xyz.npy')
         else:
@@ -344,7 +369,6 @@ class DimensionalityReduce():
                  flag_dict,
                  all_varbs_dict, fish_id_list, exp_bouts_list, exp_flags_list, bout_frames):
         self.fish_id_list = fish_id_list
-        self.recluster = True
         self.directory = os.getcwd()
         self.cluster_input = []
         self.num_dp = len(all_varbs_dict)
@@ -420,6 +444,7 @@ class DimensionalityReduce():
         return interbouts_in_cluster, dyaw_in_cluster
 
     def create_cmem_by_fish(self):
+        self.cmem_by_fish = []
         cumsum_numbouts = np.r_[0, np.cumsum(self.num_bouts_per_fish)]
         self.cmem_by_fish = [self.cluster_membership[
             i[0]:i[1]] for i in sliding_window(2, cumsum_numbouts)]
@@ -472,6 +497,11 @@ class DimensionalityReduce():
         with open(self.directory + '/dim_reduce.pkl', 'wb') as file:
             pickle.dump(self, file)
 
+    def redefine_clustering_params(self, new_bdict, num_clusters):
+        self.cluster_count = num_clusters
+        self.bout_dict = new_bdict
+        self.prepare_records()
+
     def prepare_records(self):
         bt_array = np.array(self.all_bouts)
         std_array = [np.nanstd(
@@ -490,16 +520,14 @@ class DimensionalityReduce():
                 filt_norm = norm_frame[bdict_keys].tolist()
                 norm_bout += filt_norm
             norm_bouts.append(norm_bout)
-        self.cluster_input = norm_bouts
+        self.cluster_input = np.array(norm_bouts)
         print(str(len(self.all_bouts)) + " Bouts Detected")
-        if self.recluster:
-            cluster_model = SpectralClustering(n_clusters=self.cluster_count,
-                                               affinity='nearest_neighbors',
-                                               n_neighbors=10)
+        cluster_model = SpectralClustering(n_clusters=self.cluster_count,
+                                           affinity='nearest_neighbors',
+                                           n_neighbors=10)
         # i believe its only possible for a nan bout to be at the end
         # otherwise a bout won't be called at the beginning.  
-        c_flag = cluster_model.fit_predict(
-            np.array(norm_bouts))
+        c_flag = cluster_model.fit_predict(self.cluster_input)
         self.cluster_membership = c_flag
         num_clusters = np.unique(self.cluster_membership).shape[0]
         new_flags = []
@@ -522,8 +550,7 @@ class DimensionalityReduce():
         for b in self.all_bouts:
             if not np.isfinite(b).all():
                 print('found nan or inf')
-                
-        dim_reduce_data = model.fit_transform(np.array(self.all_bouts))
+        dim_reduce_data = model.fit_transform(self.cluster_input)
         self.dim_reduce_output = dim_reduce_data
 
     def cluster_summary(self, *cluster_id):
@@ -789,7 +816,7 @@ class Experiment():
 # THIS FUNCTION AND FLAGS HAVE TO CHANGE BASED ON WHICH VARIABLES ARE ADDED TO THE CLUSTERING. YOU CANT LEAVE OUT HA B/C 
 # IT CONTROLS BOUT INVERSION.
 
-    def nearwall(self, bout_frame, bout_dur, wall_thresh):
+    def nearwall(self, bout_frame, bout_dur, wall_thresh, ceiling_thresh):
 
         def calc_near_wall(x, y, z, ha, pitch):
             if x < wall_thresh and (90 < ha < 270):
@@ -800,9 +827,9 @@ class Experiment():
                 return True
             elif y > 1888-wall_thresh and (ha < 180):
                 return True
-            elif z < wall_thresh and pitch < 0:
+            elif z < ceiling_thresh and pitch < 0:
                 return True
-            elif z > 1888-wall_thresh and pitch > 0:
+            elif z > 1888-ceiling_thresh and pitch > 0:
                 return True
             else:
                 return False
@@ -980,7 +1007,7 @@ class Experiment():
             # y_init = np.nanmean(self.fishdata.y[bout[0]:bout[0]+5])
             # z_init = np.nanmean(self.fishdata.z[bout[0]:bout[0]+5])
             # pitch_init = np.nanmean(self.fishdata.pitch[bout[0]:bout[0]+5])
-            if self.nearwall(bout[0], bout_duration, 50):
+            if self.nearwall(bout[0], bout_duration, 200, 100):
                 rejected_bouts.append([bindex, 'nearwall'])
                 if filter_walls:
                     continue
@@ -1253,6 +1280,10 @@ class Experiment():
             vid = imageio.get_reader(dirct + 'tailcontvid.AVI', 'ffmpeg')
         elif cont_side == 4:
             vid = imageio.get_reader(dirct + 'sideconts.AVI', 'ffmpeg')
+        elif cont_side == 5:
+            vid = '/Volumes/WIKmovies/' + dirct[-9:-1] + '_cam0.AVI'
+        elif cont_side == 6:
+            vid = '/Volumes/WIKmovies/' + dirct[-9:-1] + '_cam1.AVI'
         else:
             print('unspecified stream')
             return False
@@ -1694,11 +1725,18 @@ class Experiment():
             para_wrt_heading.append(temp_plist_h)
             wrth_xy.append(temp_xypara)
 
-        np.save(self.directory + '/para3D' + str(h_index).zfill(2) + '.npy',
-                self.paradata.para3Dcoords)        
-        np.save(self.directory + '/wrth' + str(h_index).zfill(2) + '.npy',
+        if self.paradata.decimated_vids:
+            subscript = '_d'
+        else:
+            subscript = ''
+        np.save(self.dirfectory + '/para3D' + str(
+            h_index).zfill(2) + subscript + '.npy',
+                self.paradata.para3Dcoords)
+        np.save(self.directory + '/wrth' + str(
+            h_index).zfill(2) + subscript + '.npy',
                 para_wrt_heading)
-        np.save(self.directory + '/wrth_xy' + str(h_index).zfill(2) + '.npy',
+        np.save(self.directory + '/wrth_xy' + str(
+            h_index).zfill(2) + subscript + '.npy',
                 wrth_xy)
         np.save('/Users/nightcrawler2/PreycapMaster/ufish.npy',
                 self.ufish[self.framewindow[0]:self.framewindow[1]])
@@ -1706,7 +1744,8 @@ class Experiment():
                 self.uperp[self.framewindow[0]:self.framewindow[1]])
         np.save('/Users/nightcrawler2/PreycapMaster/ufish_origin.npy',
                 self.ufish_origin[self.framewindow[0]:self.framewindow[1]])
-        np.save('/Users/nightcrawler2/PreycapMaster/para_continuity_window.npy',
+        np.save(
+            '/Users/nightcrawler2/PreycapMaster/para_continuity_window.npy',
                 np.array(self.para_continuity_window))
 
 
@@ -1849,7 +1888,7 @@ def fill_in_nans_prevcoord(arr):
         return rebuilt_array
 
     
-def create_poirec(h_index, two_or_three, directory, para_id):
+def create_poirec(h_index, two_or_three, directory, para_id, dec):
     wrth = []
     poi_wrth = []
     if two_or_three == 2:
@@ -1948,7 +1987,7 @@ def pvec_wrapper(exp, hd, filter_sd):
 
 
 def para_vec_explorer(exp, h_id, p_id, animate, filter_sd):
-    penv = ParaEnv(h_id, exp.directory, filter_sd)
+    penv = ParaEnv(h_id, exp.directory, filter_sd, False)
     penv.find_paravectors(False)
     pvec = []
     non_nan_indices = []
@@ -2062,7 +2101,7 @@ def para_state_plot(hd, exp):
     vels = []
     c_pallete = np.array(sb.color_palette('husl', len(hunt_inds)))
     for hunt, p in zip(hunt_inds, poi):
-        penv = ParaEnv(hunt, exp.directory, 1)
+        penv = ParaEnv(hunt, exp.directory, 1, False)
         penv.find_paravectors(False, p)
         dps.append(np.copy(penv.dotprod))
         vels.append(np.copy(penv.velocity_mags))
@@ -2315,14 +2354,20 @@ def hunted_para_descriptor(exp, hd):
             hd.para_id_list, hd.actions, hd.boutrange, hd.interp_windows):
         print('Hunt ID')
 # this is a catch for not knowing the para
-        if ac == 0:
+        if ac == 0 or hi in hd.dec_doubles:
             continue
+        if hd.check_for_doubles(hi):
+            subscript = '_d'
+            penv_dec = True
+        else:
+            subscript = ''
+            penv_dec = False
         para_xyz = np.load(
             exp.directory + "/para3D" + str(hi).zfill(
-                2) + ".npy")[
+                2) + subscript + ".npy")[
                     hp*3:hp*3 + 3][
                         :, cont_win+int_win-realfish.firstbout_para_intwin:]
-        penv = ParaEnv(hi, exp.directory, 1)
+        penv = ParaEnv(hi, exp.directory, penv_dec, 1)
         penv.find_paravectors(False, hp)
 # raw_para_vel = penv.velocity_mags[0][exp.para_continuity_window / penv.vector_spacing:]
 # can index raw_para_vel with norm_bf / penv.vector_spacing.
@@ -2564,7 +2609,7 @@ def para_stimuli(exp, hd):
             continue
         p3D = np.load(exp.directory + '/para3D' + str(h).zfill(2) + '.npy')
         distmat = make_distance_matrix(p3D)
-        penv = ParaEnv(h, exp.directory, 1)
+        penv = ParaEnv(h, exp.directory, False, 1)
         penv.find_paravectors(False)
         wrth = np.load(
             exp.directory + '/wrth' + str(h).zfill(2) + '.npy')
@@ -3043,7 +3088,7 @@ def validate_experiment(drct):
                                                  False, drct + '/',
                                                  False, 0)
         # 0s are dummy variables b/c no specific reconstruction specified
-        penv3D = ParaEnv(0, 0, 1, (para_validate.para3Dcoords, 3))
+        penv3D = ParaEnv(0, 0, 1, False, (para_validate.para3Dcoords, 3))
         penv3D.find_paravectors(False)
         unpaired_xy = [xyr[2] for xyr in para_validate.unpaired_xy if
                        len(xyr[2]) == len_pwindow]
@@ -3052,7 +3097,7 @@ def validate_experiment(drct):
             x, y = zip(*xyr)
             p_xy_matrix[2*row_id] = np.array(x)
             p_xy_matrix[2*row_id + 1] = np.array(y)
-        penvXY = ParaEnv(0, 0, 1, (p_xy_matrix, 2))
+        penvXY = ParaEnv(0, 0, 1, False, (p_xy_matrix, 2))
         penvXY.find_paravectors(False)
         checkpoint_velocities = []
         checkpoint_xyvelocities = []
@@ -3157,6 +3202,7 @@ def exp_generation_and_clustering(fish_drct_list,
                                   all_varbs, cluster_varbs, flag_varbs, new_exps):
     all_bout_data = []
     all_flags = []
+    all_bout_frames = []
     add_vel_ends = True
     for drct in fish_drct_list:
         if new_exps:
@@ -3182,7 +3228,7 @@ def exp_generation_and_clustering(fish_drct_list,
             except IOError:
                 pass
         rejected_bout_inds = [b[0] for b in
-                              myexp.rejected_bouts if b[1] == 'near_wall']
+                              myexp.rejected_bouts if b[1] == 'nearwall']
         bout_data_no_rejects = []
         bout_flag_no_rejects = []
         non_reject_frames = []
@@ -3194,12 +3240,15 @@ def exp_generation_and_clustering(fish_drct_list,
                 non_reject_frames.append(myexp.bout_frames[b_ind])
         all_bout_data.append(bout_data_no_rejects)
         all_flags.append(bout_flag_no_rejects)
+        all_bout_frames.append(non_reject_frames)
+    myexp = []
     dim = DimensionalityReduce(cluster_varbs, flag_varbs, all_varbs,
                                fish_drct_list, all_bout_data,
-                               all_flags, non_reject_frames)
+                               all_flags, all_bout_frames)
     dim.prepare_records()
-    dim.dim_reduction(2)
     dim.exporter()
+#    dim.dim_reduction(2)
+ #   dim.exporter()
     return dim
 
 
@@ -3211,7 +3260,7 @@ def cluster_call_wrapper(dim, fish_drct_list):
 
 def extract_cluster_calls_to_exp(dim, exp):
     rejected_bout_inds = [b[0] for b in
-                          exp.rejected_bouts if b[1] == 'near_wall']
+                          exp.rejected_bouts if b[1] == 'nearwall']
     cluster_mem = []
     fish_id = dim.fish_id_list.index(exp.directory[-8:])
     cluster_id_deque = deque(dim.cmem_by_fish[fish_id])
@@ -3268,6 +3317,10 @@ if __name__ == '__main__':
 
     abort_dict = {'13': 'Eye Sum'}
 
+    bdict_2 = {'11': 'Eye1 Angle',
+               '12': 'Eye2 Angle'}
+
+
     bout_dict = {
 #        '0': 'Pitch',
         # '1': 'Tail Segment 1',
@@ -3319,8 +3372,8 @@ if __name__ == '__main__':
 
     fish_id = '090418_3'
     drct = os.getcwd() + '/' + fish_id
-    import_exp = True
-    import_dim = False
+    import_exp = False
+    import_dim = True
     if import_exp:
         myexp = pickle.load(open(drct + '/master.pkl', 'rb'))
         try:
@@ -3346,10 +3399,11 @@ if __name__ == '__main__':
                '091318_5', '091318_6', '091418_1', '091418_2', '091418_3',
                '091418_4', '091418_5', '091418_6']
 
-    new_wik_subset = ['090418_3', '090418_4', '090418_5', '090418_6']
+    new_wik_subset = ['090418_3', '090418_4', '090418_5',
+                      '090418_6', '090418_7']
 
-#    dim = exp_generation_and_clustering(new_wik_subset, all_varbs_dict,
-#                                        bout_dict, flag_dict, True)
+#    dim = exp_generation_and_clustering(new_wik, all_varbs_dict,
+#                                        bout_dict, flag_dict, False)
 # pilot = ['070617_1', '070617_2','072717_1', '072717_2', '072717_5']
 
 # vcp_list = []
