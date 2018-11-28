@@ -953,12 +953,14 @@ class ParaMaster():
             if not pairs:
                 pairs, self.corr_mat = checkforhighcorr(
                      self.corr_mat, highcorr, highcorr_length)
-                if not pairs and highcorr > .9:
-                    highcorr -= .045
-                    highcorr_length += 60
-                    continue
-                elif not pairs:
-                    break
+                if not pairs:
+                    if highcorr > .9:
+                        highcorr -= .045
+                    # COMMENT THIS BACK IN IF IT GETS TOO LOOSEY GOOSEY
+                    #    highcorr_length += 60
+                        continue
+                    else:
+                        break
             xyzrecords = createxyzrecords(pairs, xyzrecords, self.long_xy,
                                           self.long_xz)
             recursion_depth = 1
@@ -1104,7 +1106,7 @@ class ParaMaster():
 
 #This function plots all the recs including misses. You can see here how the algorithm is doing and where records might be missed.
 
-    def assign_z(self, xyrec, timewindow, zmax):
+    def assign_z(self, xyrec, timewindow, zmax, skip_3D):
         # invert (i.e. small is higher) b/c not yet inverted
         max_z = zmax
         # 0 is placeholder for x2
@@ -1119,9 +1121,10 @@ class ParaMaster():
             if up_xy[0] == xyrec:
                 del self.unpaired_xy[ind_xy]
                 break
-        self.make_3D_para()
-        self.clear_frames()
-        self.label_para()
+        if not skip_3D:
+            self.make_3D_para()
+            self.clear_frames()
+            self.label_para()
         
     def manual_match(self):
         xy = 0

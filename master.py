@@ -906,12 +906,12 @@ class Experiment():
                 
     def extend_hunt_window(self, numbouts):
         self.hunt_wins[self.current_hunt_ind][1] += numbouts
-        np.save(self.directory + 'hunt_wins.npy', self.hunt_wins)
+        np.save(self.directory + '/hunt_wins.npy', self.hunt_wins)
 
     def reset_hunt_window(self):
         orig = self.hunt_wins[self.current_hunt_ind][0]
         self.hunt_wins[self.current_hunt_ind] = [orig, orig+10]
-        np.save(self.directory + 'hunt_wins.npy', self.hunt_wins)
+        np.save(self.directory + '/hunt_wins.npy', self.hunt_wins)
         
 
 # one bug is deconverge_cluster should be cleared when find_hunts is called        
@@ -919,7 +919,7 @@ class Experiment():
         start_ind = self.hunt_wins[self.current_hunt_ind][0]
         original_end_ind = self.hunt_wins[self.current_hunt_ind][1]
         cluster_mem = self.cluster_membership[
-            start_ind:original_end_ind+1].tolist()
+            start_ind:original_end_ind+1]
         deconverge_inds = [
                 i for i, v in enumerate(
                     cluster_mem) if v in self.deconverge_cluster]
@@ -934,7 +934,7 @@ class Experiment():
         self.watch_hunt(1, 15, self.current_hunt_ind)
         response = raw_input('Cap Window?  ')
         if response == 'y':
-            np.save(self.directory + 'hunt_wins.npy', self.hunt_wins)
+            np.save(self.directory + '/hunt_wins.npy', self.hunt_wins)
         else:
             #            self.hunt_wins[ind] = [start_ind, original_end_ind]
             while(True):
@@ -946,10 +946,10 @@ class Experiment():
                 self.hunt_wins[self.current_hunt_ind] = [start_ind,
                                                          start_ind + new_end]
                 self.watch_hunt(1, 15, self.current_hunt_ind)
-        np.save(self.directory + 'hunt_wins.npy', self.hunt_wins)
+        np.save(self.directory + '/hunt_wins.npy', self.hunt_wins)
         view_bouts = raw_input("View Bouts During Hunt?: ")
         if view_bouts == 'y':
-            bouts_during_hunt(self.current_hunt_ind, dim, self, True)
+            bouts_during_hunt(self.current_hunt_ind, self, True)
             self.watch_hunt(0, 50, self.current_hunt_ind)
 
     def nexthunt(self):
@@ -1311,9 +1311,11 @@ class Experiment():
         elif cont_side == 4:
             vid = imageio.get_reader(dirct + 'sideconts.AVI', 'ffmpeg')
         elif cont_side == 5:
-            vid = '/Volumes/WIKmovies/' + dirct[-9:-1] + '_cam0.AVI'
+            vid = imageio.get_reader(
+                '/Volumes/WIKmovies/' + dirct[-9:-1] + '_cam0.AVI')
         elif cont_side == 6:
-            vid = '/Volumes/WIKmovies/' + dirct[-9:-1] + '_cam1.AVI'
+            vid = imageio.get_reader(
+                '/Volumes/WIKmovies/' + dirct[-9:-1] + '_cam1.AVI')
         else:
             print('unspecified stream')
             return False
@@ -1414,7 +1416,21 @@ class Experiment():
 # syntax is always myexp.paradata.all_xy[xyrec].timestamp or location
 # up to you to figure out proper fill in timestamps according to 1,2,3 above
 
-    def assign_z(self, xyrec, auto, zmax, *xzrec):
+    def assign_z_wrap(self, zval):
+        up_xy_list = copy.deepcopy(self.paradata.unpaired_xy)
+        for up_xy in up_xy_list:
+# puts length threshold on what will be assigned a z coord of 1 second
+            if len(up_xy[1].location) > 60:
+                self.assign_z(up_xy[0], True, zval, True)
+        self.paradata.make_3D_para()
+        self.paradata.clear_frames()
+        self.paradata.label_para()
+        self.map_para_to_heading(self.current_hunt_ind)
+
+# I have to write something that speeds up z_wrap by only
+# making 3D para at the end of z_wrap. 
+        
+    def assign_z(self, xyrec, auto, zmax, wrapped, *xzrec):
         if zmax == 0:
             fish_z = self.fishdata.z[
                 self.paradata.framewindow[
@@ -1461,21 +1477,25 @@ class Experiment():
                     return
 
         t_window = (int(timestamp), int(timestamp) + int(rec_len))
-        self.paradata.assign_z(xyrec, t_window, zmax)
-        self.paradata.watch_event(2)
-        accept = raw_input("Accept Fix?: ")
-        if accept == 'n':
-            new_maxz = raw_input("Enter New Max Z: ")
-            new_maxz = int(new_maxz)
-            del self.paradata.all_xz[-1]
-            del self.paradata.xyzrecords[-1]
-            if xzrec != ():
-                return self.assign_z(xyrec, auto, new_maxz, xzrec)
-            else:
-                return self.assign_z(xyrec, auto, new_maxz)
-        elif accept == 'y':
-            self.map_para_to_heading(self.current_hunt_ind)
-            return
+# assign_z will make 3D para matrix when its 4th arg is True,
+# will simply make a new XYZrec if it's false. 
+        
+        self.paradata.assign_z(xyrec, t_window, zmax, wrapped)
+        if not wrapped:
+            self.paradata.watch_event(2)
+            accept = raw_input("Accept Fix?: ")
+            if accept == 'n':
+                new_maxz = raw_input("Enter New Max Z: ")
+                new_maxz = int(new_maxz)
+                del self.paradata.all_xz[-1]
+                del self.paradata.xyzrecords[-1]
+                if xzrec != ():
+                    return self.assign_z(xyrec, auto, new_maxz, wrapped, xzrec)
+                else:
+                    return self.assign_z(xyrec, auto, new_maxz, wrapped)
+            elif accept == 'y':
+                self.map_para_to_heading(self.current_hunt_ind)
+                return
 
     def manual_remove(self):
         rec = raw_input('Enter Record to Remove: ')
@@ -1759,7 +1779,7 @@ class Experiment():
             subscript = '_d'
         else:
             subscript = ''
-        np.save(self.dirfectory + '/para3D' + str(
+        np.save(self.directory + '/para3D' + str(
             h_index).zfill(2) + subscript + '.npy',
                 self.paradata.para3Dcoords)
         np.save(self.directory + '/wrth' + str(
@@ -1776,8 +1796,7 @@ class Experiment():
                 self.ufish_origin[self.framewindow[0]:self.framewindow[1]])
         np.save(
             '/Users/nightcrawler2/PreycapMaster/para_continuity_window.npy',
-                np.array(self.para_continuity_window))
-
+            np.array(self.para_continuity_window))
 
     def exporter(self):
         with open(self.directory + '/master.pkl', 'wb') as file:
@@ -2241,12 +2260,12 @@ def all_bout_data_to_csv(directories):
 
 # This function will tell you, for all hunts, the typical trajectory of eye convergence and Z traversal. 
             
-def huntbouts_wrapped(hd, dim, exp, med_or_min, plotornot):
+def huntbouts_wrapped(hd, exp, med_or_min, plotornot):
     zstack = []
     philstack = []
     phirstack = []
     for h in hd.hunt_ind_list:
-        yaw, pitch, z, phil, phir = bouts_during_hunt(h, dim, exp, plotornot)
+        yaw, pitch, z, phil, phir = bouts_during_hunt(h, exp, plotornot)
         zstack.append(z)
         philstack.append(phil)
         phirstack.append(phir)
@@ -2280,16 +2299,11 @@ def huntbouts_wrapped(hd, dim, exp, med_or_min, plotornot):
     pl.title('Hunt Ends')
     pl.show()
 
-
-def every_huntbout(dim, exp, hd):
-    for h_id in hd.hunt_ind_list:
-        bouts_during_hunt(h_id, dim, exp, True)
-
-        
-def bouts_during_hunt(hunt_ind, dimred, exp, plotornot):
+    
+def bouts_during_hunt(hunt_ind, exp, plotornot):
     integ_win = exp.integration_window
     firstind = exp.hunt_wins[hunt_ind][0]
-    secondind = exp.hunt_wins[hunt_ind][1]    
+    secondind = exp.hunt_wins[hunt_ind][1]
     indrange = range(firstind, secondind+1, 1)
     #+1 so it includes the secondind
     print('Bout Ids')
@@ -2588,12 +2602,12 @@ def hunted_para_descriptor(exp, hd):
                 break
     sbouts = exp.all_spherical_bouts(False)
     fsb = exp.filtered_spherical_bouts(sbouts)
-    shbs = exp.spherical_huntbouts(fsb, hd, dim)
+    shbs = exp.spherical_huntbouts(fsb, hd)
     # nhbs = [f for f in fsb if f not in shbs]
     realfish.all_spherical_bouts = fsb
     realfish.all_spherical_huntbouts = shbs
-#    velocity_kernel(exp, 'hunts', hd, dim)
-#    yaw_kernel(exp, 'hunts', hd, dim)
+#    velocity_kernel(exp, 'hunts', hd)
+#    yaw_kernel(exp, 'hunts', hd)
     realfish.exporter()
     csv_data(header, bout_descriptor, 'huntingbouts', exp.directory)
     return realfish
@@ -3410,15 +3424,16 @@ if __name__ == '__main__':
 # bout array, matched with a flag array that describes summary statistics for each bout. A new BoutsandFlags object is then created
 # whose only role is to contain the bouts and corresponding flags for each fish. 
 
-    fish_id = '090418_5'
+    fish_id = '091418_1'
     drct = os.getcwd() + '/' + fish_id
     import_exp = True
-    import_dim = True
+    import_dim = False
     if import_exp:
         myexp = pickle.load(open(drct + '/master.pkl', 'rb'))
         try:
-            myexp.hunt_wins = np.load(drct + '/hunt_wins.npy')
+            myexp.hunt_wins = np.load(myexp.directory + '/hunt_wins.npy')
         except IOError:
+            print("no hunt wins")
             pass
         try:
             hd = hd_import(drct)
@@ -3443,7 +3458,7 @@ if __name__ == '__main__':
                       '090418_6', '090418_7']
 
 #    dim = exp_generation_and_clustering(new_wik, all_varbs_dict,
-#                                        bdict_2, flag_dict, False)
+#                                        bdict_2, flag_dict, True)
     
 # pilot = ['070617_1', '070617_2','072717_1', '072717_2', '072717_5']
 
