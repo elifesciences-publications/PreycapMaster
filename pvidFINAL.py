@@ -1297,30 +1297,30 @@ class ParaMaster():
             start_ind = 0
             for ind, x2c in enumerate(x2input):
                 if max_z_stretch:
-                    if x2c != 0:
+                    if x2c != 0 or ind == len(x2input-1):
                         self.interp_indices.append(
-                            [poi, [[start_ind, ind]]])
+                            [poi, 2, [[start_ind, ind]]])
                         max_z_stretch = False
                 else:
                     if x2c == 0:
                         start_ind = ind
                         max_z_stretch = True
 
-        def coord_inference(z_in, para_number):
+        def coord_inference(coords_in, para_number):
             duration_thresh = 200
             nanstretch = False
             nan_start_ind = 0
             nan_end_ind = 0
             nan_windows = []
-            z_out = np.copy(z_in)
+            coords_out = np.copy(coords_in)
             inferred_windows = []
-            for ind, z in enumerate(z_in):
-                if math.isnan(z) and not nanstretch and ind > 0:
-                    if not math.isnan(z_in[ind-1]):
+            for ind, c in enumerate(coords_in):
+                if math.isnan(c) and not nanstretch and ind > 0:
+                    if not math.isnan(coords_in[ind-1]):
                         nan_start_ind = ind
                         nanstretch = True
 
-                elif nanstretch and not math.isnan(z):
+                elif nanstretch and not math.isnan(c):
                     nan_end_ind = ind
                     nan_windows.append([nan_start_ind, nan_end_ind])
                     nanstretch = False
@@ -1329,25 +1329,27 @@ class ParaMaster():
 
             for win in nan_windows:
                 if win[1]-win[0] < duration_thresh:
-                    if win[1] == len(z_in) - 1:
-                        slope = (z_in[win[0]-1] - z_in[win[0]-11]) / 10.0
+                    if win[1] == len(coords_in) - 1:
+                        slope = (
+                            coords_in[win[0]-1] - coords_in[win[0]-11]) / 10.0
                         width = win[1] - win[0]
-                        endpoint = int(slope * width) + z_in[win[0]-1]
+                        endpoint = int(slope * width) + coords_in[win[0]-1]
                         if not math.isnan(slope):
-                            z_out[win[0]:win[1]] = np.linspace(
-                                z_in[win[0]-1],
+                            coords_out[win[0]:win[1]] = np.linspace(
+                                coords_in[win[0]-1],
                                 endpoint,
                                 width).astype(np.int)
                     else:
-                        z_out[win[0]:win[1]] = np.linspace(
-                            z_in[win[0]-1],
-                            z_in[win[1]],
+                        coords_out[win[0]:win[1]] = np.linspace(
+                            coords_in[win[0]-1],
+                            coords_in[win[1]],
                             win[1]-win[0]).astype(np.int)
                     inferred_windows.append(win)
             if inferred_windows:
-                self.interp_indices.append([para_number, inferred_windows])
+                self.interp_indices.append([para_number, 1,
+                                            inferred_windows])
             # so here can have up to 3 entries per para
-            return z_out
+            return coords_out
 
         for recnumber, rec in enumerate(self.xyzrecords):
             x, y, z, x2 = create3dpath(rec)

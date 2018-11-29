@@ -129,8 +129,10 @@ class Hunt_Descriptor:
         self.boutrange = []
         self.directory = directory
         self.interp_windows = []
+        self.inference_label = []
         self.decimated_vids = []
         self.dec_doubles = []
+        self.interp_integration_win_para = []
 
     def exporter(self):
         with open(self.directory + '/hunt_descriptor.pkl', 'wb') as file:
@@ -154,21 +156,38 @@ class Hunt_Descriptor:
 # with this T, you choose a _d for this ind
 # in h_p_d and a normal in pvec and para_stim.
 
-            
     def parse_interp_windows(self, exp, poi):
-        cont_win = exp.paradata.pcw
         inferred_window_ranges_poi = []
+        inference_types = []
+        cont_win = exp.paradata.pcw
         iw = copy.deepcopy(exp.paradata.interp_indices)
         unique_wins = [k for k, a in itertools.groupby(iw)]
-        inferred_windows_poi = [np.array(win[1]) - cont_win
+        inferred_windows_poi = [np.array(win[2]) - cont_win
                                 for win in unique_wins if win[0] == poi]
+# this makes a label for each window of interp for a given poi
         if inferred_windows_poi != []:
             inferred_windows_poi = np.concatenate(inferred_windows_poi)
-            inferred_window_ranges_poi = [
-                    range(win[0], win[1]) for win in inferred_windows_poi]
+            inferred_window_ranges_poi = [range(inwin[0], inwin[1])
+                                          for inwin in inferred_windows_poi]
+            inference_types = [win[1]*np.ones(len(win[2])) for
+                               win in unique_wins if win[0] == poi]
+            inference_types = np.concatenate(inference_types)
+            
         self.interp_windows.append(inferred_window_ranges_poi)
+        self.inference_label.append(inference_types)
         self.decimated_vids.append(exp.paradata.decimated_vids)
 
+        para_ids_interped_in_intwin = []
+        for u_win in unique_wins:
+            window_ranges = [range(wn[0], wn[1])
+                             for wn in (np.array(u_win[2]) - cont_win)]
+            if np.array([np.intersect1d(w_range,
+                                        range(exp.integration_window)).shape[0]
+                         for w_range in window_ranges]).any():
+                para_ids_interped_in_intwin.append(u_win[0])
+        self.interp_integration_win_para.append(
+            np.unique(para_ids_interped_in_intwin))
+        
     def current(self):
         print self.hunt_ind_list
         print self.para_id_list
@@ -183,8 +202,10 @@ class Hunt_Descriptor:
         del self.actions[ind]
         del self.boutrange[ind]
         del self.interp_windows[ind]
+        del self.inference_label[ind]
         del self.decimated_vids[ind]
-
+        del self.interp_integration_win_para[ind]
+        
     def update_hunt_data(self, p, a, br, exp):
         self.hunt_ind_list.append(copy.deepcopy(exp.current_hunt_ind))
         self.para_id_list.append(p)
@@ -2406,9 +2427,10 @@ def hunted_para_descriptor(exp, hd):
                  "Bout Dist", "Bout Delta Pitch", "Bout Delta Yaw"]
     realfish = RealFishControl(exp)
     hd.dec_doubles = []
-    for hi, hp, ac, br, iws in zip(
+    for hi, hp, ac, br, iws, ilabels in zip(
             hd.hunt_ind_list,
-            hd.para_id_list, hd.actions, hd.boutrange, hd.interp_windows):
+            hd.para_id_list, hd.actions,
+            hd.boutrange, hd.interp_windows, hd.inference_label):
         print('Hunt ID')
 # this is a catch for not knowing the para
         if ac == 0 or hi in hd.dec_doubles:
@@ -2473,13 +2495,13 @@ def hunted_para_descriptor(exp, hd):
             norm_frame = norm_bf[hb_ind]
             bout_dur = exp.bout_durations[bout]
             inferred_coordinate = 0
-            for infwin in iws:
+            for infwin, label in zip(iws, ilabels):
                 if np.intersect1d(
                         range(
                             norm_frame-realfish.firstbout_para_intwin,
                             norm_frame),
                         infwin).any():
-                    inferred_coordinate = 1
+                    inferred_coordinate = label
             delta_pitch = exp.bout_dpitch[bout]
             delta_yaw = exp.bout_dyaw[bout]
             para_az = filt_az[norm_frame]
@@ -2560,8 +2582,8 @@ def hunted_para_descriptor(exp, hd):
                 print first_bout_in_hunt_index
                 print("first_bout_in_hunt_index")
                 para_interp_list = [
-                    b[-3] for b in bout_descriptor[
-                        first_bout_in_hunt_index:]]
+                    1 for b in bout_descriptor[
+                        first_bout_in_hunt_index:] if b[-3] != 0]
                 prcnt_para_interp = np.sum(
                     para_interp_list).astype(float) / len(para_interp_list)
                 pararec_present_at_outset = np.isfinite(
@@ -2654,10 +2676,11 @@ def para_stimuli(exp, hd):
     p_list = hd.para_id_list
     actions = hd.actions
     decimation = hd.decimated_vids
+    interp_or_not = hd.interp_integration_win_para
     stim_list = []
 
-    for h, hp, ac, d in zip(hunt_ind_list,
-                            p_list, actions, decimation):
+    for h, hp, ac, d, intrp in zip(hunt_ind_list,
+                                   p_list, actions, decimation, interp_or_not):
         print h
         # here you will create a bout frames list for the entire hunt. once you
         # get to the hunted para,
@@ -2678,8 +2701,9 @@ def para_stimuli(exp, hd):
             # once you figure out when the new hunt starts, just wrth_int = wrth[huntstart:huntstart+int_win]
             
         p_in_intwindow = find_integration_para(wrth_int)
+        interp_calls = [np.int(int_para in intrp) for int_para in p_in_intwindow]
         temp_stim_list = []
-        for vis_para in p_in_intwindow:
+        for p_index, vis_para in enumerate(p_in_intwindow):
             k1, k3, k5 = k_nearest(distmat, vis_para)
             p_wrth = create_poirec(h, 3,
                                    exp.directory, vis_para, False)[0:int_win]
@@ -2708,7 +2732,10 @@ def para_stimuli(exp, hd):
             vel = penv.velocity_mags[vis_para][cont_win:cont_win+int_win]
             avg_dp = np.nanmedian(dp)
             avg_vel = np.nanmedian(vel)
-            p_entry = [az_position,
+            p_entry = [h,
+                       vis_para,
+                       interp_calls[p_index],
+                       az_position,
                        alt_position,
                        distance,
                        delta_az,
@@ -2717,11 +2744,10 @@ def para_stimuli(exp, hd):
                        avg_dp,
                        avg_vel,
                        hunted,
-                       h,
                        k1,
                        k3,
-                       k5,
-                       vis_para]
+                       k5]
+
             if not all(math.isnan(para_val) for para_val in p_entry[0:8]):
                 temp_stim_list.append(p_entry)
 # here will perform your KDEs and get para envirnoment descriptors.
@@ -2811,7 +2837,10 @@ def para_stimuli(exp, hd):
             temp_stim_list = [p + environment_varbs for p in temp_stim_list]
             
         stim_list += temp_stim_list
-    pstim_header = ['Az Coord',
+    pstim_header = ['Hunt ID',
+                    'Para ID',
+                    'Inferred',
+                    'Az Coord',
                     'Alt Coord',
                     'Distance',
                     'Delta Az',
@@ -2820,11 +2849,9 @@ def para_stimuli(exp, hd):
                     'Dot Product',
                     'Raw Velocity',
                     'Hunted Or Not',
-                    'Hunt ID',
                     'Dist_K1',
                     'Dist_K3',
                     'Dist_K5',
-                    'Para ID',
                     'Az_K1',
                     'Az_K3',
                     'Az_K5',
