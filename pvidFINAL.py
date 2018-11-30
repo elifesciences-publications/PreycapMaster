@@ -187,13 +187,13 @@ class ParaMaster():
             if not record_para:
                 if framenum >= pcw:
                     if params_top != []:
-                        cont_top = contrast_frame(paravid_top, 
+                        cont_top = contrast_frame(paravid_top,
                                                   top_br[go_to_frame / 1875],
                                                   go_to_frame,
                                                   params_top)
                         self.topframes.append(cont_top)
                     if params_side != []:
-                        cont_side = contrast_frame(paravid_side, 
+                        cont_side = contrast_frame(paravid_side,
                                                    side_br[go_to_frame / 1875],
                                                    go_to_frame,
                                                    params_side)
@@ -954,7 +954,7 @@ class ParaMaster():
                 pairs, self.corr_mat = checkforhighcorr(
                      self.corr_mat, highcorr, highcorr_length)
                 if not pairs:
-                    if highcorr > .9:
+                    if highcorr > .85:
                         highcorr -= .045
                     # COMMENT THIS BACK IN IF IT GETS TOO LOOSEY GOOSEY
                     #    highcorr_length += 60
@@ -1297,7 +1297,7 @@ class ParaMaster():
             start_ind = 0
             for ind, x2c in enumerate(x2input):
                 if max_z_stretch:
-                    if x2c != 0 or ind == len(x2input-1):
+                    if x2c != 0 or ind == (len(x2input) - 1):
                         self.interp_indices.append(
                             [poi, 2, [[start_ind, ind]]])
                         max_z_stretch = False
@@ -1488,7 +1488,8 @@ class ParaMaster():
                 cv2.imshow('vid', contframe)
                 cv2.waitKey(15)
         cv2.destroyAllWindows()
-
+        cv2.waitKey(1)
+        
     def label_para(self):
         frame_num = self.pcw
         frame_num = int(frame_num)
@@ -1617,9 +1618,10 @@ class ParaMaster():
         pl.close()
         return 1
 
+
 def imcont(image, params):
     thresh, erode_win, dilate_win, med_win = params
-    r,th = cv2.threshold(image, thresh, 255, cv2.THRESH_BINARY) 
+    r, th = cv2.threshold(image, thresh, 255, cv2.THRESH_BINARY)
     ek = np.ones([erode_win, erode_win]).astype(np.uint8)
     dk = np.ones([dilate_win, dilate_win]).astype(np.uint8)
     er = cv2.erode(th, ek)

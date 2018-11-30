@@ -24,6 +24,7 @@ import matplotlib.cm as cm
 from matplotlib import pyplot as pl
 from matplotlib.colors import Normalize, ListedColormap
 import seaborn as sb
+#from PyQt4 import QtCore, QtGui
 import mpl_toolkits.mplot3d.axes3d as p3
 import matplotlib.animation as anim
 from phinalIR_cluster_wik import Variables
@@ -138,20 +139,40 @@ class Hunt_Descriptor:
         with open(self.directory + '/hunt_descriptor.pkl', 'wb') as file:
             pickle.dump(self, file)
 
-    def check_for_doubles(self, ind):
+    def check_for_doubles(self, ind, want_dec_or_not):
         args_matching_id, = np.where(np.array(self.hunt_ind_list) == ind)
         if args_matching_id.shape[0] == 1:
-            return False
+            return [False, np.nan]
         else:
-            d1 = self.decimated_vids[args_matching_id[0]]
-            d2 = self.decimated_vids[args_matching_id[1]]
+            arg1 = args_matching_id[0]
+            arg2 = args_matching_id[1]
+            d1 = self.decimated_vids[arg1]
+            d2 = self.decimated_vids[arg2]
             if d1 != d2:
                 self.dec_doubles.append(ind)
                 self.dec_doubles = np.unique(self.dec_doubles)
-                return True
+                if want_dec_or_not:
+                    if d1:
+                        return [True, [self.para_id_list[arg1],
+                                       self.interp_windows[arg1],
+                                       self.inference_label[arg1]]]
+                    elif d2:
+                        return [True, [self.para_id_list[arg2],
+                                       self.interp_windows[arg2],
+                                       self.inference_label[arg2]]]
+                else:
+                    if d1:
+                        return [True, [self.para_id_list[arg2],
+                                       self.interp_windows[arg2],
+                                       self.inference_label[arg2]]]
+                    elif d2:
+                        return [True, [self.para_id_list[arg1],
+                                       self.interp_windows[arg1],
+                                       self.inference_label[arg1]]]
+
 # This is a check for decimated vids vs. changes of mind            
             else:
-                return False
+                return [False, []]
 
 # with this T, you choose a _d for this ind
 # in h_p_d and a normal in pvec and para_stim.
@@ -516,6 +537,7 @@ class DimensionalityReduce():
                         return
         cv2.destroyAllWindows()
         vid.close()
+        cv2.waitKey(1)
         return
 
     def exporter(self):
@@ -798,6 +820,7 @@ class Experiment():
 
     def watch(self, vid):
         self.paradata.watch_event(vid)
+        cv2.waitKey(1)
 
     def vectVcalc(self, num_dimensions):
 
@@ -1361,18 +1384,14 @@ class Experiment():
                 break
         cv2.destroyAllWindows()
         vid.close()
-        cv2.namedWindow(
-            'Enter 1 for Full Characterization',
-            flags=cv2.WINDOW_NORMAL)
-        cv2.moveWindow('Enter 1 for Full Characterization', 20, 20)
-        key = cv2.waitKey(0)
-        print key
-        if key == 49:
+        key = raw_input('Characterize Para Environment?: ')
+        if key == 'y':
             ret = self.para_during_hunt(h_ind, True, self.hunt_wins)
             cv2.destroyAllWindows()
             if ret:
                 self.paradata.watch_event(1)
         cv2.destroyAllWindows()
+        cv2.waitKey(1)
         return True
 
 # Eye1 is the eye on the side of the direction of the turn.
@@ -2001,8 +2020,10 @@ def plot_hairball(hd, *actionlist):
                        hd.actions):
         if a not in actionlist or h in hd.dec_doubles:
             continue
-        if hd.check_for_doubles(h):
+        doubles_true, dec_para = hd.check_for_doubles(h, 1)
+        if doubles_true:
             dec = True
+            p = dec_para
         else:
             dec = False
         xyz_coords = []
@@ -2435,10 +2456,16 @@ def hunted_para_descriptor(exp, hd):
 # this is a catch for not knowing the para
         if ac == 0 or hi in hd.dec_doubles:
             continue
-        if hd.check_for_doubles(hi):
+        doubles_true, [dec_para, dec_win, dec_label] = hd.check_for_doubles(hi, 1)
+        if doubles_true:
+            print('getting _d')
             subscript = '_d'
             penv_dec = True
+            hp = dec_para
+            iws = dec_win
+            ilabels = dec_label
         else:
+            print('getting whole env')
             subscript = ''
             penv_dec = False
         para_xyz = np.load(
@@ -2582,10 +2609,12 @@ def hunted_para_descriptor(exp, hd):
                 print first_bout_in_hunt_index
                 print("first_bout_in_hunt_index")
                 para_interp_list = [
-                    1 for b in bout_descriptor[
-                        first_bout_in_hunt_index:] if b[-3] != 0]
+                    1 if b[-3] != 0 else 0 for b in bout_descriptor[
+                        first_bout_in_hunt_index:]]
+                print para_interp_list
                 prcnt_para_interp = np.sum(
                     para_interp_list).astype(float) / len(para_interp_list)
+                print prcnt_para_interp
                 pararec_present_at_outset = np.isfinite(
                     bout_descriptor[first_bout_in_hunt_index][7:10]).all()
                 # anything less than 1.5 is stationary
@@ -2711,6 +2740,9 @@ def para_stimuli(exp, hd):
             az = [pr[6] for pr in p_wrth]
             alt = [pr[7] for pr in p_wrth]
             filt_az = gaussian_filter(az, 1)
+            if not np.isfinite(filt_az).any():
+                continue
+
             filt_alt = gaussian_filter(alt, 1)
             filt_dist = gaussian_filter(dist, 1)
             if len(filt_az) < 2 or len(filt_dist) < 2:
