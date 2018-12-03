@@ -1465,18 +1465,29 @@ class Experiment():
 # syntax is always myexp.paradata.all_xy[xyrec].timestamp or location
 # up to you to figure out proper fill in timestamps according to 1,2,3 above
 
-    def assign_z_wrap(self, zval):
+    def assign_z_wrap(self, zval, path_thresh):
+
+        def x_pathlen_thresh(up_xyrec):
+            x_coords = [xy[0] for xy in up_xyrec[1].location]
+            x_filt = gaussian_filter(x_coords, 3)
+            x_absdiff = np.abs(np.diff(x_filt, axis=0))
+            total_x_pathlength = np.sum(x_absdiff)
+            return total_x_pathlength
+        
+        replace_z_count = 0
         time_thresh = 120
         up_xy_list = copy.deepcopy(self.paradata.unpaired_xy)
         for up_xy in up_xy_list:
-# puts length threshold on what will be assigned a z coord of 1 second
-            if len(up_xy[1].location) > time_thresh:
+            if len(
+                    up_xy[1].location) > time_thresh and (
+                        x_pathlen_thresh(up_xy) > path_thresh):
+                replace_z_count += 1
                 self.assign_z(up_xy[0], True, zval, True)
         self.paradata.make_3D_para()
         self.paradata.clear_frames()
         self.paradata.label_para()
         self.map_para_to_heading(self.current_hunt_ind)
-
+        print('Assigned ' + str(replace_z_count) + ' para Z coords')
 # I have to write something that speeds up z_wrap by only
 # making 3D para at the end of z_wrap. 
         

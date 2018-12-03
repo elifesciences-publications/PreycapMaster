@@ -328,7 +328,6 @@ class ParaMaster():
         self.sideframes = copy.deepcopy(self.sideframes_original)
         
     def makecorrmat(self):
-        print('yo my brotha')
         self.corr_mat = np.zeros(
             (len(self.long_xz), len(self.long_xy)),
             dtype=[('coeff', np.float64), ('pval', np.float64), ('time',
