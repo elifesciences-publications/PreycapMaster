@@ -20,11 +20,15 @@ from toolz.itertoolz import sliding_window, partition
 from scipy.spatial.distance import pdist, squareform
 import warnings
 from collections import deque
+from PyQt4 import QtCore, QtGui
+from matplotlib import use
+#use('TkAgg')
+use('Qt4Agg')
+#use('agg')
 import matplotlib.cm as cm
 from matplotlib import pyplot as pl
 from matplotlib.colors import Normalize, ListedColormap
 import seaborn as sb
-#from PyQt4 import QtCore, QtGui
 import mpl_toolkits.mplot3d.axes3d as p3
 import matplotlib.animation as anim
 from phinalIR_cluster_wik import Variables
@@ -935,6 +939,9 @@ class Experiment():
             return init_nearwall
 
 
+# this function must be run after copying the exp, contrasted vids to a new folder
+
+        
     def find_hunts(self, init_inds, abort_inds):
         self.hunt_wins = []
         self.hunt_cluster = init_inds
@@ -1430,11 +1437,13 @@ class Experiment():
         pl.subplots_adjust(top=0.9, hspace=.4, wspace=.4)
         pl.show()
 
-    def manual_fix(self, rec):
-        fix = self.paradata.manual_fix(rec)
+    def manual_add(self, rec):
+        fix = self.paradata.manual_add(rec)
         if fix == 1:
             self.map_para_to_heading(self.current_hunt_ind)
 
+    
+            
     def manual_match(self):
         self.paradata.find_misses(1)
         ret = self.paradata.manual_match()
@@ -1457,10 +1466,11 @@ class Experiment():
 # up to you to figure out proper fill in timestamps according to 1,2,3 above
 
     def assign_z_wrap(self, zval):
+        time_thresh = 120
         up_xy_list = copy.deepcopy(self.paradata.unpaired_xy)
         for up_xy in up_xy_list:
 # puts length threshold on what will be assigned a z coord of 1 second
-            if len(up_xy[1].location) > 60:
+            if len(up_xy[1].location) > time_thresh:
                 self.assign_z(up_xy[0], True, zval, True)
         self.paradata.make_3D_para()
         self.paradata.clear_frames()
@@ -1537,10 +1547,13 @@ class Experiment():
                 self.map_para_to_heading(self.current_hunt_ind)
                 return
 
-    def manual_remove(self):
-        rec = raw_input('Enter Record to Remove: ')
-        rec = int(rec)
-        for xyz_pair in self.paradata.xyzrecords[rec]:
+    def manual_subtract(self, rec_id):
+        fix = self.paradata.manual_subtract(rec_id)
+        if fix == 1:
+            self.map_para_to_heading(self.current_hunt_ind)
+            
+    def manual_remove(self, rec_id):
+        for xyz_pair in self.paradata.xyzrecords[rec_id]:
             xy_id = xyz_pair[0]
             xz_id = xyz_pair[1]
             xypara_obj = self.paradata.all_xy[xy_id]
@@ -1557,7 +1570,7 @@ class Experiment():
             xz_coords[xzpara_obj.timestamp:xzpara_obj.timestamp+len(
                 xzpara_obj.location)] = inv_z
             self.paradata.unpaired_xz.append((xz_id, xzpara_obj, xz_coords))
-        del self.paradata.xyzrecords[rec]
+        del self.paradata.xyzrecords[rec_id]
         self.paradata.make_3D_para()
         self.paradata.clear_frames()
         self.paradata.label_para()
@@ -2341,7 +2354,25 @@ def huntbouts_wrapped(hd, exp, med_or_min, plotornot):
     pl.title('Hunt Ends')
     pl.show()
 
-    
+
+def control_stimuli(directories, nonhunt_clusters):
+    for drct in directories:
+        myexp = pickle.load(open(drct + '/master.pkl', 'rb'))
+        myexp.directory = drct
+        myexp.find_hunts(nonhunt_clusters, [])
+        hd = Hunt_Descriptor(drct)
+        for h_ind in range(len(myexp.hunt_wins)):
+            myexp.current_hunt_ind = h_ind
+            myexp.hunt_wins[h_ind] = [myexp.hunt_wins[h_ind][0],
+                                      myexp.hunt_wins[h_ind][0] + 1]
+            myexp.para_during_hunt(h_ind, True, myexp.hunt_wins)
+            myexp.assign_z_wrap(45)
+            hd.update_hunt_data(-1, 0, [0, -1])
+        myexp.exporter()
+        hd.exporter()
+        para_stimuli(myexp, hd)
+
+        
 def bouts_during_hunt(hunt_ind, exp, plotornot):
     integ_win = exp.integration_window
     firstind = exp.hunt_wins[hunt_ind][0]
@@ -2357,13 +2388,6 @@ def bouts_during_hunt(hunt_ind, exp, plotornot):
     print('Nans in Bouts')
     print [d[9] for d in exp.bout_flags[firstind:secondind+1]]
     filtV = gaussian_filter(exp.fishdata.vectV, 0)
-    # yaw_all_filt = unit_to_angle(
-    #     filter_uvec(
-    #             ang_to_unit(exp.fishdata.headingangle), 1))
-    # yaw_all = unit_to_angle(
-    #     filter_uvec(
-    #             ang_to_unit(exp.fishdata.headingangle), 0))
-
     start = exp.bout_frames[firstind]-integ_win
     end = exp.bout_frames[secondind]+integ_win
     framerange = range(start, end)
@@ -2666,7 +2690,7 @@ def hunted_para_descriptor(exp, hd):
 
 def para_stimuli(exp, hd):
 
-    include_kde = False
+    include_kde = True
     cont_win = exp.para_continuity_window
     int_win = exp.integration_window
     fr_to_avg = 10
@@ -2730,7 +2754,8 @@ def para_stimuli(exp, hd):
             # once you figure out when the new hunt starts, just wrth_int = wrth[huntstart:huntstart+int_win]
             
         p_in_intwindow = find_integration_para(wrth_int)
-        interp_calls = [np.int(int_para in intrp) for int_para in p_in_intwindow]
+        interp_calls = [np.int(
+            int_para in intrp) for int_para in p_in_intwindow]
         temp_stim_list = []
         for p_index, vis_para in enumerate(p_in_intwindow):
             k1, k3, k5 = k_nearest(distmat, vis_para)
@@ -2742,7 +2767,6 @@ def para_stimuli(exp, hd):
             filt_az = gaussian_filter(az, 1)
             if not np.isfinite(filt_az).any():
                 continue
-
             filt_alt = gaussian_filter(alt, 1)
             filt_dist = gaussian_filter(dist, 1)
             if len(filt_az) < 2 or len(filt_dist) < 2:
@@ -2760,8 +2784,10 @@ def para_stimuli(exp, hd):
             # Here would like to make a hairball probably.
             if vis_para == hp:
                 hunted = ac
-            dp = penv.dotprod[vis_para][cont_win:cont_win+int_win]
-            vel = penv.velocity_mags[vis_para][cont_win:cont_win+int_win]
+            dp = penv.dotprod[vis_para][
+                cont_win / penv.vector_spacing:(cont_win+int_win) / penv.vector_spacing]
+            vel = penv.velocity_mags[vis_para][
+                cont_win / penv.vector_spacing:(cont_win+int_win) / penv.vector_spacing]
             avg_dp = np.nanmedian(dp)
             avg_vel = np.nanmedian(vel)
             p_entry = [h,
@@ -2780,8 +2806,7 @@ def para_stimuli(exp, hd):
                        k3,
                        k5]
 
-            if not all(math.isnan(para_val) for para_val in p_entry[0:8]):
-                temp_stim_list.append(p_entry)
+            temp_stim_list.append(p_entry)
 # here will perform your KDEs and get para envirnoment descriptors.
 # idea should be to take only the first 5 or 10  and last 5 or 10
 # position readings as Init_az and Final_az. calculate marginals for
@@ -2789,8 +2814,8 @@ def para_stimuli(exp, hd):
         
         # here do your pairwise az and alt
 
-        env_az_init = np.array([p[0] for p in temp_stim_list])
-        env_alt_init = np.array([p[1] for p in temp_stim_list])
+        env_az_init = np.array([p[3] for p in temp_stim_list])
+        env_alt_init = np.array([p[4] for p in temp_stim_list])
         az_distmat = make_angle_matrix(env_az_init)
         alt_distmat = make_angle_matrix(env_alt_init)
         ts2 = []
@@ -2804,12 +2829,12 @@ def para_stimuli(exp, hd):
         print('Length Temp Stim')
         if include_kde:
             max_contours = []
-            env_dist_init = np.array([p[2] for p in temp_stim_list])
+            env_dist_init = np.array([p[5] for p in temp_stim_list])
             env_dist_final = np.array(
-                [p[2] + int_win*p[5] for p in temp_stim_list])
-            env_az_final = np.array([p[0] + int_win*p[3]
+                [p[5] + int_win*p[8] for p in temp_stim_list])
+            env_az_final = np.array([p[3] + int_win*p[6]
                                      for p in temp_stim_list])
-            env_alt_final = np.array([p[1] + int_win*p[4]
+            env_alt_final = np.array([p[4] + int_win*p[7]
                                       for p in temp_stim_list])
             if env_az_final.shape[0] <= 2 or env_az_init.shape[0] <= 2:
                 environment_varbs = np.full(9, np.nan).tolist()
@@ -2854,7 +2879,11 @@ def para_stimuli(exp, hd):
 
     # EACH KDE IS A SUM OF THE MARGINALS, BUT PAIRWISE. E.G. A 1D + 1D sum IS A 2D PLANE. A 1D+1D+1D is a 3D volume. 
             for kdep in kdeps:
-                max_contours.append(find_density(kdep, [], -1, 0))
+                find_density
+                if len(kdep.collections[-1].get_paths()) != 0:
+                    max_contours.append(find_density(kdep, [], -1, 0))
+                else:
+                    max_contours.append([])
 #        pl.close('all')
             pl.show()
             environment_varbs = [az_max[0],
@@ -2862,10 +2891,10 @@ def para_stimuli(exp, hd):
                                  dist_max[0],
                                  delta_az_max,
                                  delta_alt_max,
-                                 delta_dist_max]
-                 #            max_contours[0],
-                 #            max_contours[1],
-                 #            max_contours[2]]
+                                 delta_dist_max,
+                                 max_contours[0],
+                                 max_contours[1],
+                                 max_contours[2]]
             temp_stim_list = [p + environment_varbs for p in temp_stim_list]
             
         stim_list += temp_stim_list
@@ -2895,10 +2924,10 @@ def para_stimuli(exp, hd):
                     'Env Distance',
                     'Delta Az Env',
                     'Delta Alt Env',
-                    'Delta Dist Env']
-                    # 'Max Contour AltAz',
-                    # 'Max Contour AzDist',
-                    # 'Max Contour AltDist']
+                    'Delta Dist Env',
+                    'Max Contour AltAz',
+                    'Max Contour AzDist',
+                    'Max Contour AltDist']
     csv_data(pstim_header, stim_list, 'stimuli', exp.directory)
 
 

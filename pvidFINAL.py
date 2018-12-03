@@ -118,6 +118,7 @@ class ParaMaster():
         self.long_xy = []
         self.long_xz = []
         self.interp_indices = []
+        self.min_coeff = .9
         
     def exporter(self):
         print('exporting ParaMaster')
@@ -405,8 +406,8 @@ class ParaMaster():
                 if abs(xyavgpos - xzavgpos) > 200:
                     m += 1
                     continue
-#eliminate  analysis of really small records that would be more likely to correlate.
-                elif len(corrwindow_xy) < 30 or len(corrwindow_xz) < 30:
+#eliminate  analysis of really small overlaps that would be more likely to correlate.
+                elif len(corrwindow_xy) < 30:
                     m += 1
                     continue
 
@@ -431,8 +432,7 @@ class ParaMaster():
                     xypathlength = sum([abs(b - a) for a, b in xypathgen])
 #pathlength, not just displacement.
                     xzpathlength = sum([abs(d - c) for c, d in xzpathgen])
-                    if max(xypathlength, xzpathlength) != 0 and min(
-                            xypathlength, xzpathlength) != 0:
+                    if xypathlength != 0 and xzpathlength != 0:
                         if float(min(xypathlength, xzpathlength)) / float(
                                 max(xypathlength, xzpathlength)) < .8:
                             m += 1
@@ -745,7 +745,6 @@ class ParaMaster():
                         self.visited_xy).shape[0] == corrmat.shape[1] or np.unique(
                             self.visited_xz).shape[0] == corrmat.shape[0]:
                     return []
-# Never gets to 34 once 34 actually satisfies the criteria. I.e. it never gets to if ind == 34 checkign for 34. Does do this otherwise.
                 pairs = []
                 for ind in cands:
                     if xz:
@@ -772,14 +771,12 @@ class ParaMaster():
                             pairs.append([orig_query[0], ind])
                         else:
                             pairs.append([ind, orig_query[0]])
-# This call completely stops the function once record 0 has been identified as passing threshold, but then is not a soulmate with record 106.
                     if len(rest) != 0:
                         return pairs + findhit(corrmat,
                                                l_thresh, coeff_sum_thresh,
                                                coeff_thresh,
                                                rest, not xz, [ind])
                     else:
-                        # Bug is here. not xz, but still searching for len corrmat. 
                         if not xz:
                             
                             return pairs + findhit(corrmat,
@@ -798,10 +795,11 @@ class ParaMaster():
                 return []
                     
                         
+# minimum duration starts at 5 seconds.
+# keep looping until you don't get any more records. then drop length threshold.
             min_duration = 500
-#minimum duration starts at 5 seconds. keep looping until you don't get any more records. then drop length threshold.
             min_coeff_sum = .9
-            min_coeff = .9
+            min_coeff = self.min_coeff
             parapairs = []
             while True:
                 if min_coeff_sum < .4:
@@ -820,7 +818,7 @@ class ParaMaster():
                             min_coeff, 2), min_duration])
                 else:
                     min_duration -= 50
-                    if min_duration < 50:  #min_coeff < 0:
+                    if min_duration < 50:
                         min_duration = 500
                         min_coeff_sum -= .2
                     self.visited_xy = []
@@ -947,17 +945,17 @@ class ParaMaster():
         xyzrecords = []
         highcorr = .99
         #  highcorr_length = 100
-        highcorr_length = 60
+        highcorr_length = 30
         while True:
             pairs, self.corr_mat = process_corrmat(self.corr_mat)
             if not pairs:
                 pairs, self.corr_mat = checkforhighcorr(
                      self.corr_mat, highcorr, highcorr_length)
                 if not pairs:
-                    if highcorr > .85:
+                    if highcorr > self.min_coeff * .75:
                         highcorr -= .045
                     # COMMENT THIS BACK IN IF IT GETS TOO LOOSEY GOOSEY
-                    #    highcorr_length += 60
+                        highcorr_length += 10
                         continue
                     else:
                         break
@@ -1591,8 +1589,48 @@ class ParaMaster():
         self.make_3D_para()
         self.clear_frames()
         self.label_para()
-        
-    def manual_fix(self, rec_id):
+
+    def manual_subtract(self, rec_id):
+        print("Manual Subtraction")
+        self.onerec_and_misses(rec_id)
+        self.plotxyzrec(rec_id)
+        fix = raw_input("Fix? ")
+        if fix != 'y':
+            pl.close()
+            return 0
+        xy = raw_input("Enter XY rec ")
+        xz = raw_input("Enter XZ rec ")
+        xy = int(xy)
+        xz = int(xz)
+        temp_xyzrec = []
+        for xyz_pair in self.xyzrecords[rec_id]:
+            xy_id = xyz_pair[0]
+            xz_id = xyz_pair[1]
+            if xy_id == xy and xz_id == xz:
+                xypara_obj = self.all_xy[xy_id]
+                xzpara_obj = self.all_xz[xz_id]
+                xy_coords = [(np.nan, np.nan) for i in range(
+                    self.framewindow[0], self.framewindow[1])]
+                inv_y = [(x, 1888-y) for (x, y) in xypara_obj.location]
+                xy_coords[xypara_obj.timestamp:xypara_obj.timestamp+len(
+                    xypara_obj.location)] = inv_y
+                self.unpaired_xy.append((xy_id, xypara_obj, xy_coords))
+                xz_coords = [(np.nan, np.nan) for i in range(
+                    self.framewindow[0], self.framewindow[1])]
+                inv_z = [(x2, 1888-z) for (x2, z) in xzpara_obj.location]
+                xz_coords[xzpara_obj.timestamp:xzpara_obj.timestamp+len(
+                    xzpara_obj.location)] = inv_z
+                self.unpaired_xz.append((xz_id, xzpara_obj, xz_coords))
+            else:
+                temp_xyzrec.append(xyz_pair)
+        self.xyzrecords[rec_id] = temp_xyzrec
+        print temp_xyzrec
+        self.make_3D_para()
+        self.clear_frames()
+        self.label_para()
+        return 1
+
+    def manual_add(self, rec_id):
         self.onerec_and_misses(rec_id)
         self.plotxyzrec(rec_id)
         fix = raw_input("Fix? ")
