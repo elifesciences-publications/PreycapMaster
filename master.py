@@ -139,7 +139,7 @@ class Hunt_Descriptor:
         self.decimated_vids = []
         self.dec_doubles = []
         self.interp_integration_win_para = []
-        self.hunt_dict_list = []
+        self.hunt_dict = {}
         
     def exporter(self):
         with open(self.directory + '/hunt_descriptor.pkl', 'wb') as file:
@@ -237,36 +237,67 @@ class Hunt_Descriptor:
         mz = raw_input('Assign Max Z?: ')
         if mz == 'y':
             exp.assign_z_wrap(50, 20)
-        self.hunt_ind_list.append(copy.deepcopy(exp.current_hunt_ind))
-        self.para_id_list.append(p)
-        self.actions.append(a)
-        self.boutrange.append(br)
-        self.parse_interp_windows(exp, p)
-        self.exporter()
+            exp.watch(1)
+            exp.watch(2)
+        satisfied = raw_input('Keep Max Z Assignment?: ')
+        if satisfied == 'y':
+            self.hunt_ind_list.append(copy.deepcopy(exp.current_hunt_ind))
+            self.para_id_list.append(p)
+            self.actions.append(a)
+            self.boutrange.append(br)
+            self.parse_interp_windows(exp, p)
+            self.exporter()
 
     def quantify_hunt_types(self, exp):
         total_num_hunts = len(np.unique(self.hunt_ind_list))
         hunts_processed = []
         strikes_at_para = 0
-        collision_quit_known_target = 0
-        collision_quit_unknown_target = 0
-        abort_known_target = 0
-        abort_unknown_target = 0
-        hunt_dict_list = {}
+        self.hunt_dict = {
+            'collision_known_target': 0,
+            'collision_unknown_target': 0,
+            'deconverge_known_target': 0,
+            'no_deconverge_known_target': 0,
+            'deconverge_unknown_target': 0,
+            'no_deconverge_unknown_target': 0,
+            'change_of_mind': 0,
+            'strike hit': 0,
+            'strike miss': 0,
+            'strike at nothing': 0}
         
         for i, hunt_ind in enumerate(self.hunt_ind_list):
             if hunt_ind in hunts_processed:
                 continue
             else:
                 hunts_processed.append(hunt_ind)
-            if self.actions[i] in [1, 2, 5, 6]:
-                if self.para_id_list[i] != -1:
-                    strikes_at_para += 1
-            if self.actions[i] == 3:
-                lasthuntbout = exp.hunt_wins[hunt_ind][1] + 1
+
+            if self.actions[i] in [1, 5]:
+                self.hunt_dict['strike hit'] += 1
+            elif self.actions[i] in [2, 6]:
+                if self.para_id_list[i] == -1:
+                    self.hunt_dict['strike at nothing'] += 1
+# this covers if para_id = -2 (i.e. misses at nonmoving para)
+                else:
+                    self.hunt_dict['strike miss'] += 1
+            elif self.actions[i] == 4:
+                self.hunt_dict['change of mind'] += 1
+            elif self.actions[i] == 3:
+                lasthuntbout = exp.hunt_wins[hunt_ind][1]
                 if exp.cluster_membership[lasthuntbout] == -1:
-                    if 
-                
+                    if self.para_id_list[i] < 0:
+                        self.hunt_dict['collision_unknown_target'] += 1
+                    else:
+                        self.hunt_dict['collision_known_target'] += 1
+                elif exp.cluster_membership[lasthuntbout] == 1:
+                    if self.para_id_list[i] < 0:
+                        self.hunt_dict['deconverge_unknown_target'] += 1
+                    else:
+                        self.hunt_dict['deconverge_known_target'] += 1
+                elif exp.cluster_membership[lasthuntbout] in [0, 2, 4]:
+                    if self.para_id_list[i] < 0:
+                        self.hunt_dict['no_deconverge_unknown_target'] += 1
+                    else:
+                        self.hunt_dict['no_deconverge_known_target'] += 1
+                    
             
             
         
@@ -1811,34 +1842,17 @@ class Experiment():
             pl.show()
         return spherical_bouts
 
-    def map_para_to_heading(self, h_index):
+    def map_para_to_heading(self, h_index, *random_para3Dcoords):
         para_wrt_heading = []
-        wrth_xy = []
-        para_wrt_heading_10sec_prev = []
+        if random_para3Dcoords == ():
+            para3Dcoords = self.paradata.para3Dcoords
+        else:
+            para3Dcoords = random_para3Dcoords[0]
         for frame in range(self.framewindow[0], self.framewindow[1]):
             if frame % 10 == 0:
                 print(frame)
             p_frame = frame - self.framewindow[
                 0] + self.para_continuity_window
-            eye_x = self.fishdata.x[frame]
-            eye_y = self.fishdata.y[frame]
-            temp_xypara = []
-            # xy para coords will require you to start at p_frame
-            for xyp in self.paradata.unpaired_xy:
-                wrt_fish_xy = np.array(
-                    [xyp[2][p_frame][0] - eye_x,
-                     xyp[2][p_frame][1] - eye_y])
-                az_xy = np.arctan(wrt_fish_xy[1] / wrt_fish_xy[0])
-                mag_xy = magvector(wrt_fish_xy)
-                temp_xypara.append([wrt_fish_xy[0],
-                                    wrt_fish_xy[1],
-                                    np.nan,
-                                    xyp[0],
-                                    mag_xy,
-                                    np.nan,
-                                    az_xy,
-                                    np.nan])
-
 
 #  0: x
 #  1: y 
@@ -1863,57 +1877,41 @@ class Experiment():
             #         u_perp[2] * 100)))
 # normal vector input to a Plane object must be an int. if you don't multiply by 100, decimals are meaningless and just get rounded to 1 by int()
             temp_plist_h = []
-            temp_plist_h_10p = []
             for par_index in range(0,
-                                   self.paradata.para3Dcoords.shape[0], 3):
-                para_xyz = self.paradata.para3Dcoords[
+                                   para3Dcoords.shape[0], 3):
+                para_xyz = para3Dcoords[
                     par_index:par_index + 3, p_frame]
-                para_xyz_10sec_prev = self.paradata.para3Dcoords[
-                    par_index:par_index + 3, p_frame - self.para_continuity_window]
                 azimuth, altitude, dist, nb_wrt_heading, ang3d = p_map_to_fish(
                     ufish, ufish_origin, u_perp, u_par, para_xyz, par_index)
-                az_10, alt_10, dist_10, nb_wrt_10, ang3d_10 = pmap_to_fish(
-                    ufish, ufish_origin, u_perp, u_par,
-                    para_xyz_10sec_prev, par_index)
                 nb_wrt_heading.append(dist)
                 nb_wrt_heading.append(ang3d)
                 nb_wrt_heading.append(azimuth)
                 nb_wrt_heading.append(altitude)
-                nb_wrt_10.append(dist_10)
-                nb_wrt_10.append(ang3d_10)
-                nb_wrt_10.append(az_10)
-                nb_wrt_10.append(alt_10)
                 temp_plist_h.append(nb_wrt_heading)
-                temp_plist_h_10p.append(nb_wrt_10)
             para_wrt_heading.append(temp_plist_h)
-            para_wrt_heading_10sec_prev.append(temp_plist_h_10p)
-            wrth_xy.append(temp_xypara)
 
-        if self.paradata.decimated_vids:
-            subscript = '_d'
+        if random_para3Dcoords == ():
+            if self.paradata.decimated_vids:
+                subscript = '_d'
+            else:
+                subscript = ''
+            np.save(self.directory + '/para3D' + str(
+                h_index).zfill(2) + subscript + '.npy',
+                    para3Dcoords)
+            np.save(self.directory + '/wrth' + str(
+                h_index).zfill(2) + subscript + '.npy',
+                    para_wrt_heading)
+            np.save('/Users/nightcrawler2/PreycapMaster/ufish.npy',
+                    self.ufish[self.framewindow[0]:self.framewindow[1]])
+            np.save('/Users/nightcrawler2/PreycapMaster/uperp.npy',
+                    self.uperp[self.framewindow[0]:self.framewindow[1]])
+            np.save('/Users/nightcrawler2/PreycapMaster/ufish_origin.npy',
+                    self.ufish_origin[self.framewindow[0]:self.framewindow[1]])
+            np.save(
+                '/Users/nightcrawler2/PreycapMaster/para_continuity_window.npy',
+                np.array(self.para_continuity_window))
         else:
-            subscript = ''
-        np.save(self.directory + '/para3D' + str(
-            h_index).zfill(2) + subscript + '.npy',
-                self.paradata.para3Dcoords)
-        np.save(self.directory + '/wrth' + str(
-            h_index).zfill(2) + subscript + '.npy',
-                para_wrt_heading)
-        np.save(self.directory + '/10secprev_wrth' + str(
-            h_index).zfill(2) + subscript + '.npy',
-                para_wrt_heading_10sec_prev)
-        np.save(self.directory + '/wrth_xy' + str(
-            h_index).zfill(2) + subscript + '.npy',
-                wrth_xy)
-        np.save('/Users/nightcrawler2/PreycapMaster/ufish.npy',
-                self.ufish[self.framewindow[0]:self.framewindow[1]])
-        np.save('/Users/nightcrawler2/PreycapMaster/uperp.npy',
-                self.uperp[self.framewindow[0]:self.framewindow[1]])
-        np.save('/Users/nightcrawler2/PreycapMaster/ufish_origin.npy',
-                self.ufish_origin[self.framewindow[0]:self.framewindow[1]])
-        np.save(
-            '/Users/nightcrawler2/PreycapMaster/para_continuity_window.npy',
-            np.array(self.para_continuity_window))
+            return para_wrt_heading
 
     def exporter(self):
         with open(self.directory + '/master.pkl', 'wb') as file:
@@ -2054,7 +2052,8 @@ def fill_in_nans_prevcoord(arr):
         return rebuilt_array
 
     
-def create_poirec(h_index, two_or_three, directory, para_id, dec, 10secp):
+def create_poirec(h_index, two_or_three, directory, para_id,
+                  dec, tensecp, *wrth_shuff):
     wrth = []
     poi_wrth = []
     if dec:
@@ -2066,15 +2065,13 @@ def create_poirec(h_index, two_or_three, directory, para_id, dec, 10secp):
             directory + '/wrth_xy' + str(
                 h_index).zfill(2) + subscript + '.npy')
     elif two_or_three == 3:
-        if not 10secp:
+        if not tensecp:
             wrth = np.load(
                 directory + '/wrth' + str(
                     h_index).zfill(2) + subscript + '.npy')
         else:
-            wrth = np.load(
-                directory + '/10secprev_wrth' + str(
-                    h_index).zfill(2) + subscript + '.npy')
-
+            wrth = wrth_shuff[0]
+            
     for all_visible_para in wrth:
         rec_found = False
         for prec in all_visible_para:
@@ -2548,7 +2545,6 @@ def hunted_para_descriptor(exp, hd):
             hd.para_id_list, hd.actions,
             hd.boutrange, hd.interp_windows, hd.inference_label):
 # this is a catch for not knowing the para
-        cluster_membership = [exp.cluster_membership[cmb] for cmb in hunt_bouts]
         if hp < 0 or hi in hd.dec_doubles:
             continue
         print('Hunt ID')
@@ -2598,7 +2594,10 @@ def hunted_para_descriptor(exp, hd):
             continue
         hunt_bouts = range(exp.hunt_wins[hi][0],
                            exp.hunt_wins[hi][1]+1)
-        cluster_membership = [exp.cluster_membership[hbi] for hbi in hunt_bouts]
+        cluster_membership = [
+            exp.cluster_membership[hbi] for hbi in hunt_bouts]
+        if ac == 3 and cluster_membership[-1] == -1 and hp == -1:
+            continue
         nans_in_bouts = [d[9] for d
                          in exp.bout_flags[
                              exp.hunt_wins[hi][0]:exp.hunt_wins[hi][1]+1]]
@@ -2617,7 +2616,9 @@ def hunted_para_descriptor(exp, hd):
                 bout += br[0]
                 print('altered index')
                 print hb_ind
-
+            cmem = cluster_membership[hb_ind]
+            if ac == 3 and cmem == -1 and cluster_membership[-1] == -1:
+                break
             norm_frame = norm_bf[hb_ind]
             bout_dur = exp.bout_durations[bout]
             inferred_coordinate = 0
@@ -2658,7 +2659,7 @@ def hunted_para_descriptor(exp, hd):
             postbout_az = filt_az[norm_frame+bout_dur]
             postbout_alt = filt_alt[norm_frame+bout_dur]
             postbout_dist = filt_dist[norm_frame+bout_dur]
-            cmem = cluster_membership[hb_ind]
+
             if br[1] < 0:
                 if hb_ind == len(hunt_bouts) + br[1]:
                     endhunt = True
@@ -2772,7 +2773,8 @@ def para_stimuli(exp, hd, inc_kde, use_10secprev):
     fr_to_avg = 10
     if use_10secprev:
         suffix = '10secprev'
-
+    else:
+        suffix = ''
     # This function simply gathers up all the IDs of the para during the hunt.
     def make_distance_matrix(pmat3D):
         if use_10secprev:
@@ -2817,23 +2819,42 @@ def para_stimuli(exp, hd, inc_kde, use_10secprev):
     for h, hp, ac, d, intrp in zip(hunt_ind_list,
                                    p_list, actions, decimation, interp_or_not):
         print h
-        # here you will create a bout frames list for the entire hunt. once you
-        # get to the hunted para,
+
+        # here if you are using use_10secprev, run exp.map_para_to_heading
+        # by generating a random hunt_win from hunt_ind_list that is != to h.
+        # 
+
         if d or ac >= 4:
             continue
-        p3D = np.load(exp.directory + '/para3D' + str(h).zfill(2) + '.npy')
+        if use_10secprev:
+            h_ind_list = [huntind for huntind
+                          in hd.hunt_ind_list if huntind != h]
+            rand_h_id = np.random.randint(len(h_ind_list))
+            p3D = np.load(exp.directory + '/para3D' + str(
+                h_ind_list[rand_h_id]).zfill(2) + '.npy')
+            print p3D.shape
+            init_frame = exp.bout_frames[exp.hunt_wins[h][0]]
+            end_frame = exp.bout_frames[exp.hunt_wins[h][0] + 1]
+            window = [init_frame - exp.para_continuity_window -
+                      exp.integration_window,
+                      end_frame]
+            exp.framewindow = [window[0] +
+                               exp.para_continuity_window, window[1]]
+            # SET FRAMEWINDOW FOR EXP HERE!!!!
+            wrth = exp.map_para_to_heading(h, p3D)
+        else:
+            p3D = np.load(exp.directory + '/para3D' + str(h).zfill(2) + '.npy')
+            wrth = np.load(
+                exp.directory + '/wrth' + str(h).zfill(2) + '.npy')
+
         distmat = make_distance_matrix(p3D)
         penv = ParaEnv(h, exp.directory, 1, False)
         penv.find_paravectors(False)
-        if use_10secprev:
-            wrth = np.load(
-                exp.directory + '/10secprev_wrth' + str(h).zfill(2) + '.npy')
-        else:
-            wrth = np.load(
-                exp.directory + '/wrth' + str(h).zfill(2) + '.npy')
         wrth_int = wrth[0:int_win]
-        last_hunt_index = exp.hunt_wins[h][1] + 1
-        last_cluster_membership = exp.cluster_membrship[last_hunt_index]
+        last_hunt_index = exp.hunt_wins[h][1]
+        last_cluster_membership = exp.cluster_membership[last_hunt_index]
+        if ac == 3 and last_cluster_membership == -1 and hp == -1:
+            continue
 
 # HERE IS WHERE THE INTERVAL GETS SET.
 # When this is a function, your flags here will include whether its an init or an abort. 
@@ -2849,7 +2870,7 @@ def para_stimuli(exp, hd, inc_kde, use_10secprev):
             k1, k3, k5 = k_nearest(distmat, vis_para)
             p_wrth = create_poirec(h, 3,
                                    exp.directory, vis_para,
-                                   False, use_10secprev)[0:int_win]
+                                   False, use_10secprev, wrth)[0:int_win]
             dist = [pr[4] for pr in p_wrth]
             az = [pr[6] for pr in p_wrth]
             alt = [pr[7] for pr in p_wrth]
@@ -2873,12 +2894,16 @@ def para_stimuli(exp, hd, inc_kde, use_10secprev):
             # Here would like to make a hairball probably.
             if vis_para == hp:
                 hunted = ac
-            dp = penv.dotprod[vis_para][
-                cont_win / penv.vector_spacing:(cont_win+int_win) / penv.vector_spacing]
-            vel = penv.velocity_mags[vis_para][
-                cont_win / penv.vector_spacing:(cont_win+int_win) / penv.vector_spacing]
-            avg_dp = np.nanmedian(dp)
-            avg_vel = np.nanmedian(vel)
+            if not use_10secprev:
+                dp = penv.dotprod[vis_para][
+                    cont_win / penv.vector_spacing:(cont_win+int_win) / penv.vector_spacing]
+                vel = penv.velocity_mags[vis_para][
+                    cont_win / penv.vector_spacing:(cont_win+int_win) / penv.vector_spacing]
+                avg_dp = np.nanmedian(dp)
+                avg_vel = np.nanmedian(vel)
+            else:
+                avg_dp = np.nan
+                avg_vel = np.nan
             p_entry = [h,
                        vis_para,
                        interp_calls[p_index],
@@ -3023,7 +3048,7 @@ def para_stimuli(exp, hd, inc_kde, use_10secprev):
                     'Max Contour AltAz',
                     'Max Contour AzDist',
                     'Max Contour AltDist']
-    csv_data(pstim_header, stim_list, 'stimuli', exp.directory)
+    csv_data(pstim_header, stim_list, 'stimuli' + suffix, exp.directory)
 
 
 def hd_import(dr):
