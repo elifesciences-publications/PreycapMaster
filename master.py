@@ -249,9 +249,7 @@ class Hunt_Descriptor:
             self.exporter()
 
     def quantify_hunt_types(self, exp):
-        total_num_hunts = len(np.unique(self.hunt_ind_list))
         hunts_processed = []
-        strikes_at_para = 0
         self.hunt_dict = {
             'collision_known_target': 0,
             'collision_unknown_target': 0,
@@ -279,7 +277,7 @@ class Hunt_Descriptor:
                 else:
                     self.hunt_dict['strike miss'] += 1
             elif self.actions[i] == 4:
-                self.hunt_dict['change of mind'] += 1
+                self.hunt_dict['change_of_mind'] += 1
             elif self.actions[i] == 3:
                 lasthuntbout = exp.hunt_wins[hunt_ind][1]
                 if exp.cluster_membership[lasthuntbout] == -1:
@@ -298,10 +296,9 @@ class Hunt_Descriptor:
                     else:
                         self.hunt_dict['no_deconverge_known_target'] += 1
                     
-            
-            
-        
-# 	1) Hunted Para ID. -1 if unknown, -2 if you can see it in non-br sub vid
+# 	1) Hunted Para ID. -1 if unknown,
+#          -2 if you can see it in non-br sub vid or
+#          if invisible to side camera (on sidewall or fish occlude)
 #       2) Strike Success = 1,
 # 	   Strike Fail = 2,
 # 	   Abort = 3,
@@ -311,8 +308,8 @@ class Hunt_Descriptor:
 # 	   Reorientation and abort = 7,
 #          NOTE: action is negative if mistakes in CV after convergence
 #       3) Range of bouts within hunt. Type list. For strikes,
-#          last bout is strike. For action 3, last bout is deconvergence,
-#          best guess quit before -1 cluster, or first -1 cluster_mem bout.
+#          last bout is strike. For action 3, last bout is deconvergence or
+#          best guess quit if not in cluster 1.
 #       4) enter myexp
 
 
@@ -1459,12 +1456,13 @@ class Experiment():
                 break
         cv2.destroyAllWindows()
         vid.close()
-        key = raw_input('Characterize Para Environment?: ')
-        if key == 'y':
-            ret = self.para_during_hunt(h_ind, True, self.hunt_wins)
-            cv2.destroyAllWindows()
-            if ret:
-                self.paradata.watch_event(1)
+        if cont_side != 0:
+            key = raw_input('Characterize Para Environment?: ')
+            if key == 'y':
+                ret = self.para_during_hunt(h_ind, True, self.hunt_wins)
+                cv2.destroyAllWindows()
+                if ret:
+                    self.paradata.watch_event(1)
         cv2.destroyAllWindows()
         cv2.waitKey(1)
         return True
@@ -1876,6 +1874,7 @@ class Experiment():
             #     normal_vector=(int(u_perp[0] * 100), int(u_perp[1] * 100), int(
             #         u_perp[2] * 100)))
 # normal vector input to a Plane object must be an int. if you don't multiply by 100, decimals are meaningless and just get rounded to 1 by int()
+
             temp_plist_h = []
             for par_index in range(0,
                                    para3Dcoords.shape[0], 3):
@@ -2146,6 +2145,11 @@ def pvec_wrapper(exp, hd, filter_sd):
     for h, d in zip(hd.hunt_ind_list, hd.decimated_vids):
         print h
         if d:
+            continue
+        try:
+            np.load(myexp.directory + '/wrth' + str(h).zfill(2) + '.npy')
+        # catches uncharacterized para environments
+        except IOError:
             continue
         while True:
             try:
@@ -2545,7 +2549,7 @@ def hunted_para_descriptor(exp, hd):
             hd.para_id_list, hd.actions,
             hd.boutrange, hd.interp_windows, hd.inference_label):
 # this is a catch for not knowing the para
-        if hp < 0 or hi in hd.dec_doubles:
+        if hp < 0 or hi in hd.dec_doubles or ac < 1:
             continue
         print('Hunt ID')
         print hi
@@ -2775,13 +2779,9 @@ def para_stimuli(exp, hd, inc_kde, use_10secprev):
         suffix = '10secprev'
     else:
         suffix = ''
-    # This function simply gathers up all the IDs of the para during the hunt.
+
     def make_distance_matrix(pmat3D):
-        if use_10secprev:
-            mod = cont_win
-        else:
-            mod = 0
-        pdm = pmat3D[:, cont_win - mod:cont_win-mod+fr_to_avg]
+        pdm = pmat3D[:, cont_win:cont_win+fr_to_avg]
         avg_xyz = np.nanmedian(pdm, axis=1)
         indiv_xyz = [xyz for xyz in partition(3, avg_xyz)]
         distmat = squareform(pdist(indiv_xyz))
@@ -2824,17 +2824,27 @@ def para_stimuli(exp, hd, inc_kde, use_10secprev):
         # by generating a random hunt_win from hunt_ind_list that is != to h.
         # 
 
-        if d or ac >= 4:
+        if d or ac >= 4 or hp == -2:
+            continue
+
+        hunt_cluster_membership = [exp.cluster_membership[hcm]
+                                   for hcm in range(
+                                           exp.hunt_wins[h][0],
+                                           exp.hunt_wins[h][1] + 1)]
+        any_neg_ones = (np.array(hunt_cluster_membership) == -1).any()
+        last_cluster_membership = hunt_cluster_membership[-1]
+        if ac == 3 and any_neg_ones and hp == -1:
             continue
         if use_10secprev:
-            h_ind_list = [huntind for huntind
-                          in hd.hunt_ind_list if huntind != h]
+            h_ind_list = [huntind for hd_i, huntind
+                          in enumerate(hd.hunt_ind_list)
+                          if huntind != h and hd.para_id_list[hd_i] >= 0]
             rand_h_id = np.random.randint(len(h_ind_list))
             p3D = np.load(exp.directory + '/para3D' + str(
                 h_ind_list[rand_h_id]).zfill(2) + '.npy')
             print p3D.shape
             init_frame = exp.bout_frames[exp.hunt_wins[h][0]]
-            end_frame = exp.bout_frames[exp.hunt_wins[h][0] + 1]
+            end_frame = exp.bout_frames[exp.hunt_wins[h][0]] + 10
             window = [init_frame - exp.para_continuity_window -
                       exp.integration_window,
                       end_frame]
@@ -2851,10 +2861,6 @@ def para_stimuli(exp, hd, inc_kde, use_10secprev):
         penv = ParaEnv(h, exp.directory, 1, False)
         penv.find_paravectors(False)
         wrth_int = wrth[0:int_win]
-        last_hunt_index = exp.hunt_wins[h][1]
-        last_cluster_membership = exp.cluster_membership[last_hunt_index]
-        if ac == 3 and last_cluster_membership == -1 and hp == -1:
-            continue
 
 # HERE IS WHERE THE INTERVAL GETS SET.
 # When this is a function, your flags here will include whether its an init or an abort. 
@@ -3541,10 +3547,11 @@ def extract_cluster_calls_to_exp(dim, exp):
 
 
 def finish_experiment(exp, hd):
-    exp.exporter()
+    hd.quantify_hunt_types(exp)
     hd.exporter()
     hunted_para_descriptor(exp, hd)
-    para_stimuli(exp, hd)
+    para_stimuli(exp, hd, True, False)
+    para_stimuli(exp, hd, True, True)
     v, va = pvec_wrapper(exp, hd, 1)
 
 
