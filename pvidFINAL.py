@@ -402,7 +402,7 @@ class ParaMaster():
                 # correlation will find relationships between mutual dynamics of growth and decay of both xy and xz. but also have to make sure they grow and decay on the same scale (i.e. when xy increases by 5, xz also increases by 5). to check this, compare total pathlength. also want to make sure that the actual x positions are close to each other, so that the dynamics aren't just similar, the relative positions are as well.
 
 #this says paras have to be within 100 pixels of each other in x.
-                if abs(xyavgpos - xzavgpos) > 200:
+                if abs(xyavgpos - xzavgpos) > 120:
                     m += 1
                     continue
 #eliminate  analysis of really small overlaps that would be more likely to correlate.
@@ -1443,7 +1443,7 @@ class ParaMaster():
 #Tihs function labels the paramecia videos generated in the findpara method and adds the index of the xyz record to the video in each plane.
 
     def make_id_movies(self):
-        fourcc = cv2.VideoWriter_fourcc('8', 'B', 'P', 'S')
+        fourcc = cv2.VideoWriter_fourcc('M', 'J', 'P', 'G')
         pvid_id_top = cv2.VideoWriter('pvid_id_top.AVI', fourcc, 30,
                                       (1888, 1888), True)
         pvid_id_side = cv2.VideoWriter('pvid_id_side.AVI', fourcc, 30,
@@ -1471,12 +1471,19 @@ class ParaMaster():
                 im = cv2.resize(im, (700, 700))
                 cv2.imshow('vid', im)
 #                cv2.resizeWindow('win', 500, 500)
-                cv2.waitKey(15)
+                key_entered = cv2.waitKey(15)
+                if key_entered == 50:
+                    break
+
         elif top_side_or_cont == 2:
             for im in self.sideframes:
                 im = cv2.resize(im, (700, 700))
                 cv2.imshow('vid', im)
-                cv2.waitKey(15)
+                key_entered = cv2.waitKey(15)
+                if key_entered == 50:
+                    break
+                
+
         elif top_side_or_cont == 0:
             contvid = imageio.get_reader(
                 self.directory + 'conts.AVI', 'ffmpeg')
