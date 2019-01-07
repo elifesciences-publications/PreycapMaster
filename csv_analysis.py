@@ -4,7 +4,7 @@ import copy
 import numpy as np
 import pandas as pd
 import math
-from scipy.stats import pearsonr
+from scipy.stats import pearsonr, ttest_ind
 from matplotlib import use
 import bayeslite as bl
 from iventure.utils_bql import query
@@ -14,13 +14,15 @@ import seaborn as sb
 from matplotlib import pyplot as pl
 from matplotlib.ticker import MaxNLocator
 from matplotlib.colors import Normalize, ListedColormap
-
+from toolz.itertoolz import sliding_window
 
 class BayesDB_Simulator:
+    # use -1 model for no particular model
     def __init__(self, fish_id, file_id, model_num):
         self.bdb_file = bl.bayesdb_open(fish_id + '/' + file_id)
 #        self.bdb_file = bl.bayesdb_open(
 #            '/home/nightcrawler/bayesDB/Bolton_HuntingBouts_Sim_Inverted_optimized.bdb')
+
         self.model_varbs = {"Model Number": model_num,
                             "Row Limit": 5000,
                             "Para Az": "BETWEEN -3.14 AND 3.14",
@@ -123,6 +125,8 @@ class BayesDB_Simulator:
         # here want mean and std for all models...loop over 50 and make a list of means, stds
         sb.distplot(df_real[query_expression], bins=100, color='g')
         sb.distplot(df_sim[query_expression], bins=100, color='m')
+        ttest_results = ttest_ind(df_real[query_expression], df_sim[query_expression])
+        print ttest_results
         pl.show()
 
     def compare_2_queries(self, q_exp, condition1, condition2, real, new_sim):
@@ -137,11 +141,15 @@ class BayesDB_Simulator:
         c1_distribution = c1_result[q_exp.replace('"', '')]
         c2_distribution = c2_result[q_exp.replace('"', '')]
         print(str(c1_distribution.shape[0]) + ' bouts in Blue Query')
+        print('Mean Blue = ' + str(np.mean(c1_distribution)))
         print(str(c2_distribution.shape[0]) + ' bouts in Yellow Query')
+        print('Mean Yellow = ' + str(np.mean(c2_distribution)))
         sb.distplot(c1_distribution, fit_kws={"color": "blue"},
                     fit=norm, kde=False, color='b')
         sb.distplot(c2_distribution, fit_kws={"color": "yellow"},
                     fit=norm, kde=False, color='y')
+        ttest_results = ttest_ind(c1_distribution, c2_distribution)
+        print ttest_results 
         pl.savefig('2query.pdf')
         return fig
         
@@ -509,7 +517,7 @@ def twod_scatter(data, var1, var2):
     return attended1, attended2, ignored1, ignored2
 
 
-def stim_analyzer(data):
+def stim_analyzer(data, *random_stat):
     colorpal = sb.color_palette("husl", 8)
     hittypes = [1, 2, 3, 4]
     attended = []
@@ -523,15 +531,22 @@ def stim_analyzer(data):
             attended.append(val)
         if h == 0:
             ignored.append(val)
-    dp = sb.distplot(ignored + attended, color='b')
+    sb.distplot(ignored + attended, color='b')
     sb.distplot(attended, color=colorpal[3])
-    dp.set_axis_bgcolor('w')
-    dp.tick_params(labelsize=13)
-    dp.set_xlabel(para_variable, fontsize=16)
-    dp.set_ylabel('Probability Density', fontsize=16)
+    if random_stat != ():
+        sb.distplot(random_stat[0], color='r')
     pl.show()
 
-
+def closest_para_per_hunt(data, stat):
+    hunt_id_list = data["Hunt ID"]
+    para_stat = data[stat]
+    hunt_id_limits = np.where(np.diff[hunt_id_list] != 0)[0] + 1
+    stat_per_hunt = []
+    for firstind, secondind in sliding_window(2, hunt_id_limits):
+        minstat = np.min(para_stat[firstind:secondind])
+        stat_per_hunt.append(minstat)
+    return stat_per_hunt
+    
 def huntbouts_plotter(data):
     v1_cond1 = []
     v2_cond1 = []

@@ -191,7 +191,6 @@ class Hunt_Descriptor:
             self.inference_label.append([])
             self.decimated_vids.append(False)
             self.interp_integration_win_para.append([])
-            self.para_stats.append([])
             return
         cont_win = exp.paradata.pcw
         iw = copy.deepcopy(exp.paradata.interp_indices)
@@ -243,9 +242,11 @@ class Hunt_Descriptor:
         del self.decimated_vids[ind]
         del self.interp_integration_win_para[ind]
         del self.para_stats[ind]
+        self.exporter()
         
     def update_hunt_data(self, p, a, br, exp):
         skip_z_interp = raw_input('Para Env Reconstructed?: ')
+        pstats = []
         if skip_z_interp == 'n':
             parse_interp = False
         else:
@@ -256,13 +257,13 @@ class Hunt_Descriptor:
                 xz_misses = exp.validate_xz_misses()
                 exp.watch(1)
                 exp.watch(2)
-                
+                pstats = [zrecs_assigned[0], xz_misses[0]]
         self.hunt_ind_list.append(copy.deepcopy(exp.current_hunt_ind))
         self.para_id_list.append(p)
         self.actions.append(a)
+        self.para_stats.append(pstats)
         self.boutrange.append(br)
         self.parse_interp_windows(exp, p, parse_interp)
-        self.para_stats.append([zrecs_assigned[0], xz_misses[0]])
         self.exporter()
 
     def quantify_hunt_types(self, exp):
@@ -279,7 +280,6 @@ class Hunt_Descriptor:
             'strike miss': 0,
             'strike at nothing': 0,
             'prob not a hunt': 0}
-
         
         for i, hunt_ind in enumerate(self.hunt_ind_list):
             if hunt_ind in hunts_processed:
@@ -290,8 +290,6 @@ class Hunt_Descriptor:
             if abs(self.actions[i]) in [1, 5]:
                 self.hunt_dict['strike hit'] += 1
 
-
-                
             elif abs(self.actions[i]) in [2, 6]:
                 if self.para_id_list[i] == -1:
                     self.hunt_dict['strike at nothing'] += 1
@@ -304,8 +302,8 @@ class Hunt_Descriptor:
                 firsthuntbout = exp.hunt_wins[hunt_ind][0]
                 lasthuntbout = exp.hunt_wins[hunt_ind][1]
                 last_cluster_membership = exp.cluster_membership[lasthuntbout]
-                all_hb_cmem = [exp.cluster_membership[cmi] for cmi in range(
-                    firsthuntbout, lasthuntbout + 1)]
+                all_hb_cmem = np.array([exp.cluster_membership[cmi] for cmi in range(
+                    firsthuntbout, lasthuntbout + 1)])
                 any_neg_ones = (all_hb_cmem == -1).any()
                 if self.para_id_list[i] < 0 and (
                         not any_neg_ones) and last_cluster_membership != 1:
@@ -2855,7 +2853,8 @@ def hunted_para_descriptor(exp, hd):
 def para_stimuli(exp, hd, inc_kde, use_random_env):
 
     para_stats_final = []
-    kdeplot = raw_input('Plot KDEs?: ')
+#    kdeplot = raw_input('Plot KDEs?: ')
+    kdeplot = 'n'
     if kdeplot == 'y':
         plot_kde = True
     else:
@@ -2899,6 +2898,10 @@ def para_stimuli(exp, hd, inc_kde, use_random_env):
         return np.unique(para_in_intwindow).astype(np.int)
                 
     stim_list = []
+    try:
+        ps_test = hd.para_stats
+    except AttributeError:
+        hd.para_stats = [[] for h in hd.hunt_ind_list]
 
     for h, hp, ac, d, intrp, p_stats in zip(hd.hunt_ind_list,
                                             hd.para_id_list, hd.actions,
@@ -2931,7 +2934,8 @@ def para_stimuli(exp, hd, inc_kde, use_random_env):
         if use_random_env:
             h_ind_list = [huntind for hd_i, huntind
                           in enumerate(hd.hunt_ind_list)
-                          if huntind != h and hd.para_id_list[hd_i] >= 0]
+                          if huntind != h and hd.para_id_list[
+                                  hd_i] >= 0 and not hd.decimated_vids[hd_i]]
             rand_h_id = np.random.randint(len(h_ind_list))
             p3D = np.load(exp.directory + '/para3D' + str(
                 h_ind_list[rand_h_id]).zfill(2) + '.npy')
@@ -2965,7 +2969,10 @@ def para_stimuli(exp, hd, inc_kde, use_random_env):
         interp_calls = [np.int(
             int_para in intrp) for int_para in p_in_intwindow]
         temp_stim_list = []
-        para_stats_for_trial = [0, p_stats[0], p_stats[1]]
+        try:
+            para_stats_for_trial = [0, p_stats[0], p_stats[1]]
+        except IndexError:
+            para_stats_for_trial = []
         for p_index, vis_para in enumerate(p_in_intwindow):
             k1, k3, k5 = k_nearest(distmat, vis_para)
             p_wrth = create_poirec(h, 3,
@@ -3007,7 +3014,7 @@ def para_stimuli(exp, hd, inc_kde, use_random_env):
                 avg_dp = np.nan
                 avg_vel = np.nan
             # INTERP CALLS == 0, ADD TO PARA STATS
-            if interp_calls[p_index] == 0:
+            if interp_calls[p_index] == 0 and para_stats_for_trial != []:
                 para_stats_for_trial[0] += 1
                 
             p_entry = [h,
@@ -3159,6 +3166,16 @@ def para_stimuli(exp, hd, inc_kde, use_random_env):
                     'Max Contour AltDist']
     csv_data(pstim_header, stim_list, 'stimuli' + suffix, exp.directory)
 
+
+def quantify_all_hunt_types(drct_list):
+    all_hunt_dict = {}
+    for ind, dr in enumerate(drct_list):
+        hd = hd_import(dr)
+        if ind == 0:
+            all_hunt_dict = hd.hunt_dict
+        else:
+            all_hunt_dict.update(hd.hunt_dict)
+    return all_hunt_dict
 
 def hd_import(dr):
     x = pickle.load(open(dr + '/hunt_descriptor.pkl', 'rb'))
@@ -3656,6 +3673,8 @@ def finish_experiment(exp, hd):
     para_stimuli(exp, hd, True, False)
     para_stimuli(exp, hd, True, True)
     v, va = pvec_wrapper(exp, hd, 1)
+
+
 
 
 if __name__ == '__main__':
