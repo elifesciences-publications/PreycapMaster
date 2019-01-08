@@ -531,13 +531,15 @@ def stim_analyzer(data, para_variable, *random_stat):
         if h == 0:
             ignored.append(val)
     ig_and_att = np.array(ignored + attended)
+    ig_and_att = ig_and_att[~np.isnan(ig_and_att)]
     attended = np.array(attended)
-    sb.distplot(ig_and_att[~np.isnan(ig_and_att)], color=colorpal[5])
-    sb.distplot(attended[~np.isnan(attended)], color=colorpal[3])
+    attended = attended[~np.isnan(attended)]
+    sb.distplot(ig_and_att, color=colorpal[5])
+    sb.distplot(attended, color=colorpal[3])
     if random_stat != ():
         for i, rs in enumerate(random_stat[0]):
             rs = np.array(rs)
-            sb.distplot(rs[~np.isnan(rs)], color=colorpal[i])
+            sb.distplot(rs, color=colorpal[i])
     pl.show()
     return attended, ig_and_att
     
@@ -551,7 +553,8 @@ def stim_conditionals(data, conditioner_stat, stat, n_smallest):
     for firstind, secondind in sliding_window(2, hunt_id_limits):
         minstat_args = np.argsort(para_cstat[firstind:secondind])[0:n_smallest] + firstind
         stat_per_hunt += para_stat[minstat_args].tolist()
-    return stat_per_hunt
+    stat_per_hunt = np.array(stat_per_hunt)
+    return stat_per_hunt[~np.isnan(stat_per_hunt)]
     
 def huntbouts_plotter(data):
     v1_cond1 = []
