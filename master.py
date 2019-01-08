@@ -2417,17 +2417,29 @@ def grab_all_spherical_bouts(fish_directories):
     return spherical_bout_dict
 
             
-def all_bout_data_to_csv(directories):
+def all_data_to_csv(directories, data_type):
+    if data_type == 0:
+        output_filename = 'all_huntbouts.csv'
+        input_filename = 'huntbouts.csv'
+    elif data_type == 1:
+        output_filename = 'all_stimuli.csv'
+        input_filename = 'stimuli.csv'
+    elif data_type == 2:
+        output_filename = 'all_stimuli_random.csv'
+        input_filename = 'stimuli_random.csv'
+    else:
+        print('unrecognized data type')
+        return
     with open(
-            '/Users/nightcrawler2/PreycapMaster/all_huntbouts.csv',
+            '/Users/nightcrawler2/PreycapMaster/' + output_filename,
             'wb') as csvfile:
         output_data = csv.writer(csvfile)
         for d in directories:
             with open(
                     '/Users/nightcrawler2/PreycapMaster/'
-                    + d + '/huntingbouts.csv',
-                    'rb') as huntbouts:
-                reader = csv.reader(huntbouts)
+                    + d + '/' + input_filename,
+                    'rb') as output_temp:
+                reader = csv.reader(output_temp)
                 for ind, row in enumerate(reader):
                     if ind != 0:
                         output_data.writerow(row)
@@ -3174,7 +3186,20 @@ def quantify_all_hunt_types(drct_list):
         if ind == 0:
             all_hunt_dict = hd.hunt_dict
         else:
-            all_hunt_dict.update(hd.hunt_dict)
+            for (key, val) in hd.hunt_dict.iteritems():
+                all_hunt_dict[key] += val
+    fig, (ax1, ax2) = pl.subplots(1, 2)
+    all_hunt_sorted = sorted(all_hunt_dict.items())
+    ax1.bar([k for k, v in all_hunt_sorted],
+            [v for k, v in all_hunt_sorted])
+    props = {"rotation": 90}
+    pl.setp(ax1.get_xticklabels(), **props)
+    all_strikes = np.sum([v for k, v in all_hunt_sorted if 'strike' in k])
+    non_strikes = np.sum(all_hunt_dict.values()) - all_strikes
+    ax2.bar(['Strikes', 'Other'], [all_strikes, non_strikes])
+#    fig.subplots_adjust(bottom=.2)
+    fig.tight_layout()
+    pl.show()
     return all_hunt_dict
 
 def hd_import(dr):
@@ -3796,8 +3821,8 @@ if __name__ == '__main__':
                '091318_5', '091318_6', '091418_1', '091418_2', '091418_3',
                '091418_4', '091418_5', '091418_6']
 
-    new_wik_subset = ['090418_3', '090418_4', '090418_5',
-                      '090418_6', '090418_7']
+    new_wik_subset = ['091418_1', '091418_2', '091418_3',
+                      '091418_4', '091418_6']
 
 #    exp_generation_and_clustering(['091418_1'], all_varbs_dict,
 #                                  bdict_2, flag_dict, True, False)

@@ -517,12 +517,11 @@ def twod_scatter(data, var1, var2):
     return attended1, attended2, ignored1, ignored2
 
 
-def stim_analyzer(data, *random_stat):
+def stim_analyzer(data, para_variable, *random_stat):
     colorpal = sb.color_palette("husl", 8)
     hittypes = [1, 2, 3, 4]
     attended = []
     ignored = []
-    para_variable = "Distance"
     for ind, (h, val) in enumerate(zip(data["Hunted Or Not"],
                                      data[para_variable])):
         if math.isnan(val):
@@ -531,20 +530,27 @@ def stim_analyzer(data, *random_stat):
             attended.append(val)
         if h == 0:
             ignored.append(val)
-    sb.distplot(ignored + attended, color='b')
-    sb.distplot(attended, color=colorpal[3])
+    ig_and_att = np.array(ignored + attended)
+    attended = np.array(attended)
+    sb.distplot(ig_and_att[~np.isnan(ig_and_att)], color=colorpal[5])
+    sb.distplot(attended[~np.isnan(attended)], color=colorpal[3])
     if random_stat != ():
-        sb.distplot(random_stat[0], color='r')
+        for i, rs in enumerate(random_stat[0]):
+            rs = np.array(rs)
+            sb.distplot(rs[~np.isnan(rs)], color=colorpal[i])
     pl.show()
+    return attended, ig_and_att
+    
 
-def closest_para_per_hunt(data, stat):
+def stim_conditionals(data, conditioner_stat, stat, n_smallest):
     hunt_id_list = data["Hunt ID"]
     para_stat = data[stat]
-    hunt_id_limits = np.where(np.diff[hunt_id_list] != 0)[0] + 1
+    para_cstat = data[conditioner_stat]
+    hunt_id_limits = np.where(np.diff(hunt_id_list) != 0)[0] + 1
     stat_per_hunt = []
     for firstind, secondind in sliding_window(2, hunt_id_limits):
-        minstat = np.min(para_stat[firstind:secondind])
-        stat_per_hunt.append(minstat)
+        minstat_args = np.argsort(para_cstat[firstind:secondind])[0:n_smallest] + firstind
+        stat_per_hunt += para_stat[minstat_args].tolist()
     return stat_per_hunt
     
 def huntbouts_plotter(data):
