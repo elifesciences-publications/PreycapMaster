@@ -23,50 +23,58 @@ from astropy.convolution import Gaussian1DKernel, convolve
 # think about whether this severely changes the way we think about
 # inerpolation if the spacing gets too small. 
 
-def divide_arrays(arr1, arr2):
-    divid = arr2 / arr1
-    if np.isfinite(divid).all():
-        return divid
-    else:
-        new_arr = []
-        for a1, a2 in zip(arr1, arr2):
-            if a1 == 0 and a2 == 0:
-                new_arr.append(1)
-            elif a1 == 0:
-                new_arr.append(1)
-            else:
-                new_arr.append(a2 / a1)
-        return np.array(new_arr)
-            
 
+class ParaStateCaller:
+    def __init__(self, directory, pmm):
+        self.directory = directory
+        self.velocities = np.load(directory + '/para_velocity_input.npy')
+        self.vec_addresses = np.load(directory + '/para_vec_address.npy')
+        self.spacing = np.load(directory + '/spacing.npy')
+        self.non_nan_velocity_indices = np.load(directory + '/no_nan_inds.npy')
+        self.model = pmm.model
+        self.accelerations = [[divide_arrays(a, b) for a, b in sliding_window(
+            2, v)] for v in self.velocities]
+        
+    def para_state_predictor(self, plotornot, h_and_p):
+        hunt_index, para_id = h_and_p
+        print("Executing Prediction")
+        p_3d = np.load(
+            self.directory + '/para3D' + str(
+                hunt_index).zfill(2) + '.npy')
+        vec_address = [ind for ind, ad in enumerate(self.vec_addresses)
+                       if ad.tolist() == [hunt_index, para_id]][0]
+        states = self.model.predict(self.accelerations[vec_address])
+        print(states)
+        p_bounds = [
+            self.non_nan_velocity_indices[
+                vec_address][0] * self.spacing,
+            self.non_nan_velocity_indices[vec_address][-1] * self.spacing]
+        print p_bounds[0], p_bounds[1]
+        para_x = p_3d[para_id*3][p_bounds[0]:p_bounds[1]]
+        print len(para_x)
+        para_y = p_3d[(para_id*3) + 1][p_bounds[0]:p_bounds[1]]
+        para_z = p_3d[(para_id*3) + 2][p_bounds[0]:p_bounds[1]]
+        if plotornot:
+            stateplot_3d(para_x, para_y, para_z, states)
+        return states
+    
 
 class ParaMarkovModel:
-    def __init__(self, velocities, vec_addresses, apv, spacing, nn, *model):
-        self.all_para_velocities = apv
-#        self.all_para_accelerations = [np.diff(v, axis=0) for v in apv]
+    def __init__(self, drcts):
+        self.all_para_velocities = concat_para_velocities(drcts)
         self.all_para_accelerations = [[divide_arrays(a, b)
                                         for a, b in sliding_window(
-            2, v)] for v in apv]
-
+            2, v)] for v in self.all_para_velocities]
         self.all_accel_mags = [
             [magvector(a) for a in accs]
             for accs in self.all_para_accelerations]
-        self.vec_addresses = vec_addresses
-        self.spacing = spacing
-        self.non_nan_velocity_indices = nn
         self.velocity_mags = [
-            [magvector(v) for v in vecs] for vecs in apv]
-#        self.accelerations = [np.diff(v, axis=0) for v in velocities]
-        self.accelerations = [[divide_arrays(a, b) for a, b in sliding_window(
-            2, v)] for v in velocities]
+            [magvector(v) for v in vecs] for vecs in self.all_para_velocities]
         self.mag_limit = np.percentile(
             np.concatenate(self.all_accel_mags), 99)
         self.len_simulation = 500
         self.accels_filt = []
-        if model != ():
-            self.model = model[0]
-        else:
-            self.model = []
+        self.model = []
         for ac, ac_m in zip(self.all_para_accelerations, self.all_accel_mags):
             if not (np.array(ac_m) > self.mag_limit).any():
                 self.accels_filt.append(ac)
@@ -100,7 +108,7 @@ class ParaMarkovModel:
                 np.array([1.5, 1.5, 1.5]),
                 .1*np.eye(3) + .1*np.ones([3, 3])), name='3')
         model = pg.HiddenMarkovModel()
-        model.add_states([s0, s1, s2])
+        model.add_states([s0, s1, s2, s3])
         model.add_transition(model.start, s0, .85)
         model.add_transition(model.start, s1, .05)
         model.add_transition(model.start, s2, .05)
@@ -139,7 +147,6 @@ class ParaMarkovModel:
         mean_vec_s3 = np.array(self.model.states[3].distribution.parameters[0])
         cov_mat_s3 = np.array(self.model.states[3].distribution.parameters[1])
 
-        
         def sample_from_state_distribution(mv, cm):
             acc_vector = np.random.multivariate_normal(mv, cm)
             return acc_vector
@@ -206,29 +213,6 @@ class ParaMarkovModel:
             stateplot_3d(para_x, para_y, para_z, gen_states)
         return para_x, para_y, para_z, gen_states, vmax
 
-    def para_state_predictor(self, plotornot, directory, h_and_p):
-        hunt_index, para_id = h_and_p
-        print("Executing Prediction")
-        p_3d = np.load(
-            directory + '/para3D' + str(
-                hunt_index).zfill(2) + '.npy')
-        vec_address = [ind for ind, ad in enumerate(self.vec_addresses)
-                       if ad.tolist() == [hunt_index, para_id]][0]
-        states = self.model.predict(self.accelerations[vec_address])
-        print(states)
-        p_bounds = [
-            self.non_nan_velocity_indices[
-                vec_address][0] * self.spacing,
-            self.non_nan_velocity_indices[vec_address][-1] * self.spacing]
-        print p_bounds[0], p_bounds[1]
-        para_x = p_3d[para_id*3][p_bounds[0]:p_bounds[1]]
-        print len(para_x)
-        para_y = p_3d[(para_id*3) + 1][p_bounds[0]:p_bounds[1]]
-        para_z = p_3d[(para_id*3) + 2][p_bounds[0]:p_bounds[1]]
-        if plotornot:
-            stateplot_3d(para_x, para_y, para_z, states)
-        return states
-
     
 def magvector(vector):
     mag = np.sqrt(np.dot(vector, vector))
@@ -262,19 +246,26 @@ def stateplot_3d(para_x, para_y, para_z, states):
         px = para_x[num]
         py = para_y[num]
         pz = para_z[num]
+        px_hist = para_x[0:num]
+        py_hist = para_y[0:num]
+        pz_hist = para_z[0:num]
         state_x = range(num)
         state_y = states[0:num]
 #        smoothed_state_y = sm_states[0:num]
         plotlist[0].set_data(px, py)
         plotlist[1].set_data(px, pz)
-        plotlist[2].set_data(state_x, state_y)
- #       plotlist[3].set_data(state_x, smoothed_state_y)
+        plotlist[2].set_data(px_hist, py_hist)
+        plotlist[3].set_data(px_hist, pz_hist)
+        plotlist[4].set_data(state_x, state_y)
+#        plotlist[3].set_data(state_x, smoothed_state_y)
         return plotlist
     p_xy_plot, = p_xy_ax.plot([], [], marker='.', ms=15)
     p_xz_plot, = p_xz_ax.plot([], [], marker='.', ms=15)
+    p_xy_line, = p_xy_ax.plot([], [], linewidth=1, color='g')
+    p_xz_line, = p_xz_ax.plot([], [], linewidth=1, color='g')
     state_plot, = state_ax.plot([], [], linewidth=1.0)
   #  sm_state_plot, = state_ax.plot([], [], linewidth=1.0)
-    p_list = [p_xy_plot, p_xz_plot, state_plot]
+    p_list = [p_xy_plot, p_xz_plot, p_xy_line, p_xz_line, state_plot]
   # sm_state_plot]
     line_ani = anim.FuncAnimation(
         fig,
@@ -283,7 +274,7 @@ def stateplot_3d(para_x, para_y, para_z, states):
         fargs=[p_list],
         interval=2,
         repeat=True,
-        blit=False)
+        blit=True)
 #        line_ani.save('test.mp4')
     pl.show()
 
@@ -303,6 +294,22 @@ def concat_para_velocities(directories):
     return all_vels
 
 
+def divide_arrays(arr1, arr2):
+    divid = arr2 / arr1
+    if np.isfinite(divid).all():
+        return divid
+    else:
+        new_arr = []
+        for a1, a2 in zip(arr1, arr2):
+            if a1 == 0 and a2 == 0:
+                new_arr.append(1)
+            elif a1 == 0:
+                new_arr.append(1)
+            else:
+                new_arr.append(a2 / a1)
+        return np.array(new_arr)
+
+    
 def plot_xyz_components(vels_or_accs, *raw_arr):
     x, y, z = zip(*vels_or_accs)
     x = gaussian_filter(x, 2)
@@ -318,32 +325,37 @@ def plot_xyz_components(vels_or_accs, *raw_arr):
         pl.plot(cum_lengths, np.zeros(len(cum_lengths)), marker='.')
     pl.show()
 
-    
-
 
 # model.predict(vecs[hunt_index]) is your posterior on the states given the training data. 
 
 if __name__ == '__main__':
 
-    directory = os.getcwd() + '/091418_1'
-    save_model = True
+#    directories_for_fitting = ['091418_1', '091418_2', '091418_3',
+#                               '091418_4', '091418_6']
+    directories_for_fitting = ['091418_5']
+    new_model = True
     np.random.seed()
     # # Vec Addresses are hunt and para within the hunt.
     # # Vecs are velocity vectors in 3 frame windows
-    apv = concat_para_velocities(['090418_3', '090418_4', '091418_1'])
-    v = np.load(directory + '/para_velocity_input.npy')
-    va = np.load(directory + '/para_vec_address.npy')
-    spacing = np.load(directory + '/spacing.npy')
-    non_nans = np.load(directory + '/no_nan_inds.npy')
-    pmm = ParaMarkovModel(v, va, apv, spacing, non_nans)
-#    pmm = pickle.load(open(os.getcwd() + '/pmm.pkl', 'rb'))
-    pmm.fit_hmm()
-    if save_model:
+    if new_model:
+        pmm = ParaMarkovModel(directories_for_fitting)
+        pmm.fit_hmm()
         pmm.exporter()
-# #    pmm.para_state_predictor(6, 6, 2, directory)
+    else:
+        pmm = pickle.load(open(os.getcwd() + '/pmm.pkl', 'rb'))
+    para_caller = ParaStateCaller('091418_5', pmm)
+    
 
 
+        
+# What needs to be done is to not initialize the ParaMarkovModel
+# with a particular fish. only load in all para velocites and spacings.
+# write a function where the model takes in a particular fish directory
+# from there, set the fish specific variables in ParaMarkovModel
+# so you can look at state calls.
 
-# When you are finished with each fish, call pvec_wrapper to output all
-# para trajectories from hunts
+# Make a second class called ParaStateCaller
+# It will be initialized with a directory for a specific fish.
+# will take in the velocities, addresses, and nonnan indices.
+
 

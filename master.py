@@ -136,6 +136,7 @@ class Hunt_Descriptor:
         self.directory = directory
         self.interp_windows = []
         self.inference_label = []
+        self.all_interpolated_para_per_hunt = []
         self.decimated_vids = []
         self.dec_doubles = []
         self.interp_integration_win_para = []
@@ -187,6 +188,7 @@ class Hunt_Descriptor:
         inferred_window_ranges_poi = []
         inference_types = []
         if not gen_interp_wins:
+            self.all_interpolated_para_per_hunt.append([])
             self.interp_windows.append([])
             self.inference_label.append([])
             self.decimated_vids.append(False)
@@ -195,6 +197,7 @@ class Hunt_Descriptor:
         cont_win = exp.paradata.pcw
         iw = copy.deepcopy(exp.paradata.interp_indices)
         unique_wins = [k for k, a in itertools.groupby(iw)]
+        unique_interpolated_para = [uw[0] for uw in unique_wins]
         inferred_windows_poi = [np.array(win[2]) - cont_win
                                 for win in unique_wins if win[0] == poi]
 # this makes a label for each window of interp for a given poi
@@ -209,7 +212,7 @@ class Hunt_Descriptor:
         self.interp_windows.append(inferred_window_ranges_poi)
         self.inference_label.append(inference_types)
         self.decimated_vids.append(exp.paradata.decimated_vids)
-
+        self.all_interpolated_para_per_hunt.append(unique_interpolated_para)
         para_ids_interped_in_intwin = []
         for u_win in unique_wins:
             window_ranges = [range(wn[0], wn[1])
@@ -238,6 +241,7 @@ class Hunt_Descriptor:
         del self.actions[ind]
         del self.boutrange[ind]
         del self.interp_windows[ind]
+        del self.all_interpolated_para_per_hunt[ind]
         del self.inference_label[ind]
         del self.decimated_vids[ind]
         del self.interp_integration_win_para[ind]
@@ -2189,25 +2193,34 @@ def pvec_wrapper(exp, hd, filter_sd):
         all_lengths = map(lambda a: len(a), veclist)
         all_vecs = reduce(lambda a, b: np.concatenate([a, b]), veclist)
         return all_lengths, all_vecs
-
     vecs = []
     vec_address = []
     nonan_indices = []
     p_id = 0
-    for h, d in zip(hd.hunt_ind_list, hd.decimated_vids):
+    for h, d, interp_para in zip(hd.hunt_ind_list, hd.decimated_vids,
+                                 hd.all_interpolated_para_per_hunt):
         print h
         if d:
             continue
         try:
             np.load(myexp.directory + '/wrth' + str(h).zfill(2) + '.npy')
         # catches uncharacterized para environments
+            p_env = ParaEnv(h, myexp.directory, filter_sd, False)
+            p_env.find_paravectors(False)
         except IOError:
             continue
         while True:
+            # here i'd like to filter out p_id based on whether any interp has occurred
+            # on the para in assigning Z or in general
+            if p_id in interp_para:
+                p_id += 1
+                continue
             try:
-                v, no_nan_inds, spacing = para_vec_explorer(exp,
-                                                            h, p_id,
-                                                            0, filter_sd)
+                v, no_nan_inds = para_vec_explorer(exp,
+                                                   h, p_id,
+                                                   0,
+                                                   filter_sd,
+                                                   p_env)
             except IndexError:
                 p_id = 0
                 break
@@ -2220,46 +2233,34 @@ def pvec_wrapper(exp, hd, filter_sd):
     np.save(exp.directory + '/para_vec_address.npy', vec_address)
     np.save(exp.directory + '/para_velocity_input.npy', vecs)
     np.save(exp.directory + '/no_nan_inds.npy', nonan_indices)
-    np.save(exp.directory + '/spacing.npy', spacing)
+    np.save(exp.directory + '/spacing.npy', p_env.vector_spacing)
     return vecs, vec_address
 
 
-def para_vec_explorer(exp, h_id, p_id, animate, filter_sd):
-    penv = ParaEnv(h_id, exp.directory, filter_sd, False)
-    penv.find_paravectors(False)
+def para_vec_explorer(exp, h_id, p_id, animate, filter_sd, penv):
     pvec = []
     non_nan_indices = []
     dp = []
     # what you might have to do here is define non-nan bounds. only
-    #incorporate non-nan stretches. pomegranate doesn't take nans.
-    p_index = 0
-
-    # ** hunted_para_descriptor doesn't divide out vector spacing...
+    # incorporate non-nan stretches. pomegranate doesn't take nans.
     # my metric says they must go 1.5 pixels per 3 frames to be moving.
     # this is extremely accurate. 
-    # filt_velocity_mags = gaussian_filter(
-    #     penv.velocity_mags[p_id][1:], 1) / penv.vector_spacing
     filt_velocity_mags = gaussian_filter(
         penv.velocity_mags[p_id][1:], 1)
     avg_vel = np.nanmedian(filt_velocity_mags)
-#    top_percentile_vel = np.nanpercentile(filt_velocity_mags, 90)
-#    print top_percentile_vel
-    # accounts for a burst of velocity (i.e. swimming while otherwise still)
-    # or a tumbler (avg vel > 1.5). immobile are all < 1.5. confirmed
-    # many times by watching vids. 
- #   if top_percentile_vel > 3 or avg_vel > 1.5:
+    p_index = 0
     if avg_vel > 2:
-        for dot, vec, vel in zip(
-                penv.dotprod[p_id],
-                penv.paravectors[p_id][0][1:],
-                penv.velocity_mags[p_id][1:]):
+        for dot, vec in zip(
+                penv.dotprod[p_id], penv.paravectors[p_id][0][1:]):
                 if np.isfinite(vec).all():
                     pvec.append(vec)
                     non_nan_indices.append(p_index)
                     dp.append(dot)
                 p_index += 1
     if animate < 1:
-        return pvec, non_nan_indices, penv.vector_spacing
+        if len(pvec) < 100:
+            return [], []
+        return pvec, non_nan_indices
     graph_3D = pl.figure(figsize=(16, 8))
     ax3d = graph_3D.add_subplot(121, projection='3d')
     dp_ax = graph_3D.add_subplot(122)
@@ -3499,7 +3500,7 @@ def validate_experiment(drct):
                                                  False, drct + '/',
                                                  False, 0)
         # 0s are dummy variables b/c no specific reconstruction specified
-        penv3D = ParaEnv(0, 0, 1, False, (para_validate.para3Dcoords, 3))
+        penv3D = ParaEnv(0, drct, 1, False, (para_validate.para3Dcoords, 3))
         penv3D.find_paravectors(False)
         unpaired_xy = [xyr[2] for xyr in para_validate.unpaired_xy if
                        len(xyr[2]) == len_pwindow]
@@ -3508,7 +3509,7 @@ def validate_experiment(drct):
             x, y = zip(*xyr)
             p_xy_matrix[2*row_id] = np.array(x)
             p_xy_matrix[2*row_id + 1] = np.array(y)
-        penvXY = ParaEnv(0, 0, 1, False, (p_xy_matrix, 2))
+        penvXY = ParaEnv(0, drct, 1, False, (p_xy_matrix, 2))
         penvXY.find_paravectors(False)
         checkpoint_velocities = []
         checkpoint_xyvelocities = []
@@ -3790,7 +3791,7 @@ if __name__ == '__main__':
 # bout array, matched with a flag array that describes summary statistics for each bout. A new BoutsandFlags object is then created
 # whose only role is to contain the bouts and corresponding flags for each fish. 
 
-    fish_id = '091418_6'
+    fish_id = '091418_5'
     drct = os.getcwd() + '/' + fish_id
     import_exp = True
     import_dim = False
