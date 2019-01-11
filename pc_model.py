@@ -309,7 +309,7 @@ class PreyCap_Simulation:
             # fish_basis is a 4D vec with origin, ufish, upar, and uperp
             self.fish_bases.append(fish_basis[1])
             if framecounter == len(px):
-                print("hunt epoch complete w/out strike")
+                #print("hunt epoch complete w/out strike")
                 hunt_result = 2
                 break
             
@@ -429,28 +429,9 @@ class PreyCap_Simulation:
                         ykernel = normalize_kernel_interp(self.yaw_kernel,
                                                           self.bout_durations[self.bout_counter])
 
-                        # if self.bout_durations[self.bout_counter] <= len(self.yaw_kernel):
-                        #     ykernel = normalize_kernel(self.yaw_kernel,
-                        #                                self.bout_durations[self.bout_counter])
-                        # else:
-                        #     ykernel_prenorm = self.yaw_kernel.tolist() + [
-                        #         0 for i in range(self.bout_durations[self.bout_counter] - len(self.yaw_kernel))]
-                        #     ykernel = normalize_kernel(ykernel_prenorm, self.bout_durations[self.bout_counter])
-                            
                         x_prog = (np.cumsum(dx * vkernel) + self.fish_xyz[-1][0]).tolist()
                         y_prog = (np.cumsum(dy * vkernel) + self.fish_xyz[-1][1]).tolist()
                         z_prog = (np.cumsum(dz * vkernel) + self.fish_xyz[-1][2]).tolist()
-                        # yp_interp_win = np.min([5, self.bout_durations[self.bout_counter]])
-                        # remainder = self.bout_durations[self.bout_counter] - yp_interp_win
-                        # yaw_prog_int = np.linspace(
-                        #     self.fish_yaw[-1],
-                        #     self.fish_yaw[-1] + fish_bout[4],
-                        #     yp_interp_win).tolist()
-                        # pitch_prog = np.linspace(
-                        #     self.fish_pitch[-1],
-                        #     self.fish_pitch[-1] + fish_bout[3], yp_interp_win).tolist()
-                        # yaw_prog = yaw_prog_int + [yaw_prog_int[-1] for i in range(remainder)]
-                        # pitch_prog += [pitch_prog[-1] for i in range(remainder)]
                         yaw_prog = (np.cumsum(fish_bout[4] * ykernel) + self.fish_yaw[-1]).tolist()
                         pitch_prog = (np.cumsum(fish_bout[3] * vkernel) + self.fish_pitch[-1]).tolist()
 
@@ -478,12 +459,11 @@ class PreyCap_Simulation:
                             self.bout_durations[self.bout_counter]).tolist()
                     bout_xyz = zip(x_prog, y_prog, z_prog)
                     bout_pitch = np.clip(pitch_prog, -np.pi, np.pi).tolist()
-                    bout_yaw = np.mod(yaw_prog, 2*np.pi).tolist()
-                    
-                    self.fish_xyz += bout_xyz
                     # assures fish can't frontflip or backflip over. 
+                    bout_yaw = np.mod(yaw_prog, 2*np.pi).tolist()
+                    # assures yaw coords stay 0 to 2pi w no negatives or > 2pi                    
+                    self.fish_xyz += bout_xyz
                     self.fish_pitch += bout_pitch
-                    # assures yaw coords stay 0 to 2pi w no negatives or > 2pi
                     self.fish_yaw += bout_yaw
                     uf_bout = []
                     fb_init = [self.fish_bases[-1]]
@@ -508,7 +488,6 @@ class PreyCap_Simulation:
             else:
                 if (self.fishmodel.modchoice == 'Real Coords') and (
                         framecounter >= self.fishmodel.rfo.firstbout_para_intwin):
-                    
                     # add 1 b/c of pre-population in model. worked all this out on paper
                     frame_map = framecounter + self.realframes_start + 1
                     if framecounter in self.interbouts:
@@ -555,8 +534,9 @@ class PreyCap_Simulation:
         self.write_bouts_to_csv(csv_row_list)
     
 class FishModel:
-    def __init__(self, model_param, strike_params, rfo, hunt_ind,  *spherical_bouts):
+    def __init__(self, model_param, strike_params, rfo, hunt_ind, *spherical_bouts):
         self.rfo = rfo
+        self.regmod = []
         self.hunt_ind = hunt_ind
         self.model_param = model_param
         self.modchoice = model_param["Model Type"]
@@ -637,8 +617,6 @@ class FishModel:
                      p["Para Az"] > self.strike_means[0] - num_stds * self.strike_std[0])
         in_alt_win = (p["Para Alt"] < self.strike_means[1] + num_stds * self.strike_std[1] and
                      p["Para Alt"] > self.strike_means[1] - num_stds * self.strike_std[1])
-        # in_dist_win = (p["Para Dist"] < self.strike_means[2] + self.strike_std[2] and
-        #               p["Para Dist"] > self.strike_means[2] - self.strike_std[2])
         in_dist_win = p["Para Dist"] <= self.strike_means[2] + num_stds * self.strike_std[2]
         if in_az_win and in_alt_win and in_dist_win:
             return True
@@ -727,38 +705,45 @@ class FishModel:
                                best_bout['Bout Dist'], best_bout['Delta Pitch'], -1*best_bout['Delta Yaw']])
         return bout_array
 
-    # def regression_model(self, para_varbs):
-    #     if self.modchoice == "Multiple Regression Velocity":
-    #         p_input = [para_varbs["Para Az"],
-    #                    para_varbs["Para Alt"],
-    #                    para_varbs["Para Dist"],
-    #                    para_varbs["Para Az Velocity"], 
-    #                    para_varbs["Para Alt Velocity"],
-    #                    para_varbs["Para Dist Velocity"]]
-    #     elif self.modchoice == "Multiple Regression Position":
-    #         p_input = [para_varbs["Para Az"], para_varbs["Para Alt"], para_varbs["Para Dist"]]
-    #     elif self.modchoice == "Independent Regression":
-    #         p_input = [para_varbs["Para Az"], para_varbs["Para Alt"], para_varbs["Para Dist"],
-    #                    para_varbs["Para Alt"], para_varbs["Para Az"]]
-    #     bout = [rm(p_input) for rm in self.regmod]
-    #     # invert bout delta yaw
-    #     bout[-1] *= -1
-    #     return np.array(bout)
-
     def regression_model(self, para_varbs):
-        bout_az = (para_varbs['Para Az'] * 1.36) + .02
-        bout_yaw = -1 * ((.46 * para_varbs['Para Az']) - .02)
-        bout_alt = (1.5 * para_varbs['Para Alt']) + -.37
-        bout_pitch = (.27 * para_varbs['Para Alt']) - .04
-        bout_dist = (.09 * para_varbs['Para Dist']) + 29
-        bout_array = np.array([bout_az,
-                               bout_alt,
-                               bout_dist, bout_pitch, bout_yaw])
-        noise_array = np.ones(5)
-        # noise_array = np.array(
-        # [(np.random.random() * .4) + .8 for i in bout_array])
-        bout = bout_array * noise_array
-        return bout
+        if self.modchoice == "Independent Regression":
+            p_input = [para_varbs["Para Az"], para_varbs["Para Alt"], para_varbs["Para Dist"],
+                       para_varbs["Para Alt"], para_varbs["Para Az"]]
+            bout = [rm.predict([1, p_input[pi]]) for pi, rm in enumerate(self.regmod)]
+
+        else:
+            if self.modchoice == "Multiple Regression Velocity":
+                p_input = [para_varbs["Para Az"],
+                           para_varbs["Para Alt"],
+                           para_varbs["Para Dist"],
+                           para_varbs["Para Az Velocity"], 
+                           para_varbs["Para Alt Velocity"],
+                           para_varbs["Para Dist Velocity"]]
+            elif self.modchoice == "Multiple Regression Position":
+                p_input = [para_varbs["Para Az"],
+                           para_varbs["Para Alt"],
+                           para_varbs["Para Dist"]]
+            # this is for the constant y-intercept 
+            p_input = [1] + p_input
+            bout = [rm.predict(p_input) for rm in self.regmod]
+        # invert bout delta yaw
+        bout[-1] *= -1
+        return np.array(bout)
+
+    # def regression_model(self, para_varbs):
+    #     bout_az = (para_varbs['Para Az'] * 1.36) + .02
+    #     bout_yaw = -1 * ((.46 * para_varbs['Para Az']) - .02)
+    #     bout_alt = (1.5 * para_varbs['Para Alt']) + -.37
+    #     bout_pitch = (.27 * para_varbs['Para Alt']) - .04
+    #     bout_dist = (.09 * para_varbs['Para Dist']) + 29
+    #     bout_array = np.array([bout_az,
+    #                            bout_alt,
+    #                            bout_dist, bout_pitch, bout_yaw])
+    #     noise_array = np.ones(5)
+    #     # noise_array = np.array(
+    #     # [(np.random.random() * .4) + .8 for i in bout_array])
+    #     bout = bout_array * noise_array
+    #     return bout
 
     def bdb_model(self, para_varbs):
         invert = True
@@ -861,7 +846,14 @@ def characterize_strikes(hb_data):
     return [avg_strike_position, std]
 
 # This is a decorator that you can put in front of a function
-# with @. Doesn't work on dicts or pandas dfs b/c not hashable. 
+# with @. Doesn't work on dicts or pandas dfs b/c not hashable.
+# Wanted to use this to memoize the regression models
+# so that you don't have to re_create them every time you
+# make a Fish. I.e. if make_reg_models were called,
+# it would just return the model instead of rerunning it.
+# but since i'm inputting a hunt_db, which isn't hashable,
+# this function can't remember the input.
+# could instead input a container with a label?
 class memoized(object):
     def __init__(self, func):
         self.func = func
@@ -880,15 +872,24 @@ class memoized(object):
     def __get__(self, obj, objtype):
         return functools.partial(self.__call__, obj)
 
+def make_RLM(y, x):
+    # if type(x) == 'list':
+    # else:
+    x = sm.add_constant(x)
+    mod = sm.RLM(y, x, M=sm.robust.norms.HuberT())
+    fit_mod = mod.fit()
+    return fit_mod
+    
+    
 def make_independent_regression_model(hunt_db):
     print('Building Independent Reg Model')
-    mod_list = [sm.OLS(hunt_db["Bout Az"], hunt_db["Para Az"]),
-                sm.OLS(hunt_db["Bout Alt"], hunt_db["Para Alt"]),
-                sm.OLS(hunt_db["Bout Dist"], hunt_db["Para Dist"]),
-                sm.OLS(hunt_db["Bout Delta Pitch"], hunt_db["Para Alt"]),
-                sm.OLS(hunt_db["Bout Delta Yaw"], hunt_db["Para Az"])]
-    reg_lambdas = [lambda pfeature: lm.predict(pfeature) for lm in mod_list] 
-    return reg_lambdas
+    fit_models = [make_RLM(hunt_db["Bout Az"], hunt_db["Para Az"]),
+                  make_RLM(hunt_db["Bout Alt"], hunt_db["Para Alt"]),
+                  make_RLM(hunt_db["Bout Dist"], hunt_db["Para Dist"]),
+                  make_RLM(hunt_db["Bout Delta Pitch"], hunt_db["Para Alt"]),
+                  make_RLM(hunt_db["Bout Delta Yaw"], hunt_db["Para Az"])]
+#    reg_lambdas = [lambda pfeature: fm.predict(pfeature) for fm in fit_models]
+    return fit_models
 
 def make_multiple_regression_model(hunt_db, vel_or_position):
     print('Building Multiple Reg Model')
@@ -901,10 +902,11 @@ def make_multiple_regression_model(hunt_db, vel_or_position):
         para_features = ["Para Az",
                          "Para Alt", "Para Dist"]
     bout_features = ["Bout Az", "Bout Alt", "Bout Dist", "Bout Delta Pitch", "Bout Delta Yaw"]
-    mult_reg_mods = map(lambda bf: sm.OLS(hunt_db[bf], hunt_db[para_features]), bout_features)
-    reg_lambdas = [lambda pfeatures: mlm.predict(pfeatures) for mrm in mult_reg_mods]
-    # this returns a list of functions that take all para features and return each element of a bout
-    return mult_reg_mods, reg_lambdas
+    mult_reg_mods = map(lambda bf: sm.RLM(
+        hunt_db[bf],
+        sm.add_constant(hunt_db[para_features]), M=sm.robust.norms.HuberT()), bout_features)
+    fit_mult_reg_mods = [m.fit() for m in mult_reg_mods]
+    return fit_mult_reg_mods
 
 
 def view_and_sim_hunt(rfo, strike_params, para_model, model_params, hunt_id):
@@ -1098,18 +1100,27 @@ def find_refractory_periods(rfo):
     return median_strike_refract, median_hb_refract
 
 # this will take the paramodel object
+
+def slice_dataframe_for_regmodels(hunt_db):
+    slice_bn_neg = hunt_db['Bout Number'] >= 0
+    hdb_noneg = hunt_db[slice_bn_neg]
+    slice_fails = hdb_noneg['Strike Or Abort'] < 3
+    return hdb_noneg[slice_fails]
     
 
 if __name__ == "__main__":
-#    csv_file = 'huntbouts_rad_pilot_nonan.csv'
     csv_file = '091418_bdb/all_huntbouts_w_lastbout.csv'
     hb = pd.read_csv(csv_file)
     fish_id = '091418_6'
     rfo = pd.read_pickle(
         os.getcwd() + '/' + fish_id + '/RealHuntData_' + fish_id + '.pkl')
-    independent_regression_model = make_independent_regression_model(hb)
-    mod_params_v, multiple_regression_model_velocity = make_multiple_regression_model(hb, 'velocity')
-    mod_params_p, multiple_regression_model_position = make_multiple_regression_model(hb, 'position')
+    # CAN FILTER BASED ON HUNT RESULT IF YOU WANT!
+    regmodel_input = slice_dataframe_for_regmodels(hb)
+    independent_regression_model = make_independent_regression_model(regmodel_input)
+    multiple_regression_model_velocity = make_multiple_regression_model(regmodel_input,
+                                                                        'velocity')
+    multiple_regression_model_position = make_multiple_regression_model(regmodel_input,
+                                                                        'position')
     para_model = pickle.load(open(os.getcwd() + '/pmm.pkl', 'rb'))
     np.random.seed()
     sequence_length = 10000
@@ -1130,19 +1141,21 @@ if __name__ == "__main__":
                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All"},
                {"Model Type": "Independent Regression", "Real or Sim": "Real", "Willie Mays": 10}]
 
-#                {"Model Type": "Real Bouts", "Real or Sim": "Real"},
     modlist4 = [{"Model Type": "Real Coords", "Real or Sim": "Real"},
                 {"Model Type": "Independent Regression", "Real or Sim": "Real"},
                 {"Model Type": "Independent Regression", "Real or Sim": "Real", "Extrapolate Para": 10},
                 {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All"},
                 {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All", "Extrapolate Para": 10}]
 
+    modlist2 = [{"Model Type": "Real Coords", "Real or Sim": "Real"},
+                {"Model Type": "Independent Regression", "Real or Sim": "Real"},
+                {"Model Type": "Multiple Regression Position", "Real or Sim": "Real"},
+                {"Model Type": "Multiple Regression Position", "Real or Sim": "Real"}]
 
-    # modlist4 = [{"Model Type": "Real Coords", "Real or Sim": "Real"},
-    #             {"Model Type": "Real Bouts", "Real or Sim": "Real"}, ]
 
-    simlist = model_wrapper(rfo, strike_params, para_model, modlist4, hb)
-    ms = score_summary(simlist, modlist4, 0)
+    
+    simlist = model_wrapper(rfo, strike_params, para_model, modlist2, hb)
+    ms = score_summary(simlist, modlist2, 0)
     sq = score_query("Result", ms, lambda x: Counter(x))
     print sq
 
