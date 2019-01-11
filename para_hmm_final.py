@@ -252,18 +252,18 @@ def stateplot_3d(para_x, para_y, para_z, states):
         state_x = range(num)
         state_y = states[0:num]
 #        smoothed_state_y = sm_states[0:num]
-        plotlist[0].set_data(px, py)
-        plotlist[1].set_data(px, pz)
         plotlist[2].set_data(px_hist, py_hist)
         plotlist[3].set_data(px_hist, pz_hist)
+        plotlist[0].set_data(px, py)
+        plotlist[1].set_data(px, pz)
         plotlist[4].set_data(state_x, state_y)
 #        plotlist[3].set_data(state_x, smoothed_state_y)
         return plotlist
-    p_xy_plot, = p_xy_ax.plot([], [], marker='.', ms=15)
-    p_xz_plot, = p_xz_ax.plot([], [], marker='.', ms=15)
     p_xy_line, = p_xy_ax.plot([], [], linewidth=1, color='g')
     p_xz_line, = p_xz_ax.plot([], [], linewidth=1, color='g')
-    state_plot, = state_ax.plot([], [], linewidth=1.0)
+    p_xy_plot, = p_xy_ax.plot([], [], marker='.', ms=15, color='m')
+    p_xz_plot, = p_xz_ax.plot([], [], marker='.', ms=15, color='m')
+    state_plot, = state_ax.plot([], [], marker='.', linestyle='None', color='k')
   #  sm_state_plot, = state_ax.plot([], [], linewidth=1.0)
     p_list = [p_xy_plot, p_xz_plot, p_xy_line, p_xz_line, state_plot]
   # sm_state_plot]

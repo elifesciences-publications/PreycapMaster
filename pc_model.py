@@ -366,9 +366,10 @@ class PreyCap_Simulation:
                 self.num_frames_out_of_view += 1
             
             if framecounter % 20 == 0:
-                print framecounter
+                pass
+#                print framecounter
             if framecounter >= 2000:
-                print("EVASIVE PARA!!!!!")
+ #               print("EVASIVE PARA!!!!!")
                 hunt_result = 2
                 self.para_xyz[0] = px
                 self.para_xyz[1] = py
@@ -376,7 +377,7 @@ class PreyCap_Simulation:
                 break
             
             if self.fishmodel.strike(para_varbs):
-                print("STRIKE!!!!!!!!")
+  #              print("STRIKE!!!!!!!!")
                 self.para_xyz[0] = px
                 self.para_xyz[1] = py
                 self.para_xyz[2] = pz
@@ -394,7 +395,7 @@ class PreyCap_Simulation:
                 self.fishmodel.current_fish_xyz = self.fish_xyz[-1]
                 self.fishmodel.current_fish_pitch = self.fish_pitch[-1]
                 self.fishmodel.current_fish_yaw = self.fish_yaw[-1]
-                print para_varbs
+#                print para_varbs
                 if not np.isfinite(self.model_para_xyz).all():
                     # here para record ends before fish catches.
                     # para can't be nan at beginning due to real fish filters in master.py
@@ -439,19 +440,20 @@ class PreyCap_Simulation:
                         x_prog = (np.cumsum(dx * vkernel) + self.fish_xyz[-1][0]).tolist()
                         y_prog = (np.cumsum(dy * vkernel) + self.fish_xyz[-1][1]).tolist()
                         z_prog = (np.cumsum(dz * vkernel) + self.fish_xyz[-1][2]).tolist()
-                        yp_interp_win = np.min([5, self.bout_durations[self.bout_counter]])
-                        remainder = self.bout_durations[self.bout_counter] - yp_interp_win
-                        yaw_prog_int = np.linspace(
-                            self.fish_yaw[-1],
-                            self.fish_yaw[-1] + fish_bout[4],
-                            yp_interp_win).tolist()
+                        # yp_interp_win = np.min([5, self.bout_durations[self.bout_counter]])
+                        # remainder = self.bout_durations[self.bout_counter] - yp_interp_win
+                        # yaw_prog_int = np.linspace(
+                        #     self.fish_yaw[-1],
+                        #     self.fish_yaw[-1] + fish_bout[4],
+                        #     yp_interp_win).tolist()
                         # pitch_prog = np.linspace(
                         #     self.fish_pitch[-1],
                         #     self.fish_pitch[-1] + fish_bout[3], yp_interp_win).tolist()
                         # yaw_prog = yaw_prog_int + [yaw_prog_int[-1] for i in range(remainder)]
                         # pitch_prog += [pitch_prog[-1] for i in range(remainder)]
                         yaw_prog = (np.cumsum(fish_bout[4] * ykernel) + self.fish_yaw[-1]).tolist()
-                        pitch_prog = (np.cumsum(fish_bout[3] * vkernel) + self.fish_pitch[-1]).tolist()                        
+                        pitch_prog = (np.cumsum(fish_bout[3] * vkernel) + self.fish_pitch[-1]).tolist()
+
                         
                     elif self.interpolate == 'linear':
                         x_prog = np.linspace(
@@ -477,6 +479,7 @@ class PreyCap_Simulation:
                     bout_xyz = zip(x_prog, y_prog, z_prog)
                     bout_pitch = np.clip(pitch_prog, -np.pi, np.pi).tolist()
                     bout_yaw = np.mod(yaw_prog, 2*np.pi).tolist()
+                    
                     self.fish_xyz += bout_xyz
                     # assures fish can't frontflip or backflip over. 
                     self.fish_pitch += bout_pitch
@@ -553,7 +556,6 @@ class PreyCap_Simulation:
     
 class FishModel:
     def __init__(self, model_param, strike_params, rfo, hunt_ind,  *spherical_bouts):
-#        self.bdb_file = bl.bayesdb_open('Bolton_HuntingBouts_Sim_inverted.bdb')
         self.rfo = rfo
         self.hunt_ind = hunt_ind
         self.model_param = model_param
@@ -563,7 +565,7 @@ class FishModel:
                 self.spherical_bouts = rfo.all_spherical_bouts
             elif spherical_bouts[0] == 'Hunt':
                 self.spherical_bouts = rfo.all_spherical_huntbouts
-        self.bdb_file = bl.bayesdb_open('bdb_hunts_inverted.bdb')
+        self.bdb_file = bl.bayesdb_open('091418_bdb/bdb_hunts_inverted.bdb')
         if self.modchoice == "Real Bouts":
             self.model = (lambda pv: self.real_fish_bouts(pv))
         elif self.modchoice == "Real Coords":
@@ -986,7 +988,7 @@ def model_wrapper(rfo, strike_params, para_model, model_params, hunt_db, *hunt_i
         sim_created = False
         # Make a variable that copies prevoius interbouts and durations so that each sim has the same ibs and durations
         for mi, model_run in enumerate(model_params):
-            print("Running " + model_run["Model Type"] + " on hunt " + str(hid))
+#            print("Running " + model_run["Model Type"] + " on hunt " + str(hid))
             try:
                 fish = FishModel(model_run, strike_params, rfo, h_ind, model_run["Spherical Bouts"])
             except KeyError:
@@ -1099,19 +1101,15 @@ def find_refractory_periods(rfo):
     
 
 if __name__ == "__main__":
-    csv_file = 'huntbouts_rad_pilot_nonan.csv'
+#    csv_file = 'huntbouts_rad_pilot_nonan.csv'
+    csv_file = '091418_bdb/all_huntbouts_w_lastbout.csv'
     hb = pd.read_csv(csv_file)
-    fish_id = '042318_6'
+    fish_id = '091418_6'
     rfo = pd.read_pickle(
         os.getcwd() + '/' + fish_id + '/RealHuntData_' + fish_id + '.pkl')
     independent_regression_model = make_independent_regression_model(hb)
     mod_params_v, multiple_regression_model_velocity = make_multiple_regression_model(hb, 'velocity')
     mod_params_p, multiple_regression_model_position = make_multiple_regression_model(hb, 'position')
-    
-    # nocut = pd.read_pickle(
-    #     os.getcwd() + '/' + fish_id + '/RealHuntData_' + fish_id + '_nocut.pkl')
-    # fivecut =  pd.read_pickle(
-    #      os.getcwd() + '/' + fish_id + '/RealHuntData_' + fish_id + '_fivecut.pkl')
     para_model = pickle.load(open(os.getcwd() + '/pmm.pkl', 'rb'))
     np.random.seed()
     sequence_length = 10000
@@ -1150,7 +1148,7 @@ if __name__ == "__main__":
 
 
     
-#    fivecut.huntbout_durations = nocut.huntbout_durations
+
     
 #    simlist, bpm = model_wrapper(real_fish_object, strike_params, para_model, modlist4)
 
@@ -1174,11 +1172,6 @@ if __name__ == "__main__":
 #    score_and_view(simlist, 2, 3)
     
     
-        
-
-# Things to do.
-
-# 1. pitch and yaw in the Preycap_Sim object should be maxed out at abs pi and modded to 2pi respectively.   
 
 
 

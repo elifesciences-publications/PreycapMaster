@@ -3416,9 +3416,12 @@ def velocity_kernel(exp, all_or_hb, hd):
 
 
 def normalize_kernel(kernel, length):
-    shortened_kernel = np.array(kernel[0:length])
-    sum_kernel = np.sum(shortened_kernel)
-    normed_kernel = shortened_kernel / sum_kernel
+    if len(kernel) < length:
+        for i in range(length - len(kernel)):
+            kernel = np.append(kernel, kernel[-1])
+    adjusted_kernel = np.array(kernel[0:length])
+    sum_kernel = np.sum(adjusted_kernel)
+    normed_kernel = adjusted_kernel / sum_kernel
 #    pl.plot(normed_kernel)
 #    pl.show()
     return normed_kernel
