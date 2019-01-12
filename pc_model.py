@@ -1,4 +1,5 @@
 import csv
+import gc
 import copy
 import numpy as np
 import pickle
@@ -750,8 +751,8 @@ class FishModel:
     def bdb_model(self, para_varbs):
         invert = True
 #        invert = False
-#        sampling = 'median'
-        sampling = 'sample'
+        sampling = 'median'
+#        sampling = 'sample'
         
         def invert_pvarbs(pvarbs):
             pvcopy = copy.deepcopy(pvarbs)
@@ -781,24 +782,25 @@ class FishModel:
             para_varbs, inv_az, inv_alt = invert_pvarbs(para_varbs)
 
         if sampling == 'median':
-            df_sim = query(self.bdb_file,
-                           ''' SIMULATE "Bout Az", "Bout Alt",
+            print para_varbs
+            df_sim = query(self.bdb_file, '''SIMULATE "Bout Az", "Bout Alt",
                            "Bout Dist", "Bout Delta Pitch", "Bout Delta Yaw"
                            FROM bout_population
                            GIVEN "Para Az" = {Para Az},
                            "Para Alt" = {Para Alt},
                            "Para Dist" = {Para Dist},
                            "Para Az Velocity" = {Para Az Velocity},
-                           "Para Alt Velocity" = {Para Alt Velocity},
+                           "Para Alt Velocity" = {Para Alt Velocity}, 
                            "Para Dist velocity" = {Para Dist Velocity}
---                           USING MODEL 37
-                           LIMIT 500 '''.format(**para_varbs))
+                           LIMIT 5 '''.format(**para_varbs))
             bout_az = df_sim['Bout Az'].median()
             bout_alt = df_sim['Bout Alt'].median()
             bout_dist = df_sim['Bout Dist'].median()
             bout_pitch = df_sim['Bout Delta Pitch'].median()
             bout_yaw = -1*df_sim['Bout Delta Yaw'].median()
-
+            del df_sim
+            gc.collect()
+            
         elif sampling == 'sample':
             # can add a USING MODEL flag if you want a specific model before the LIMIT 
             df_sim = query(self.bdb_file,
@@ -1054,6 +1056,8 @@ def model_wrapper(rfo, strike_params, para_model, model_params, hunt_db, *hunt_i
             prev_interbouts = copy.deepcopy(sim.fishmodel.interbouts)
             prev_boutdurations = copy.deepcopy(sim.fishmodel.bout_durations)                
             sim_list.append(sim)
+            if model_run["Model Type"] == "Bayes":
+                fish.bdb_file.close()
             if pause_wrapper:            
                 r = raw_input('Press Enter to Continue')
     return sim_list
