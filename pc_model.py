@@ -545,7 +545,7 @@ class FishModel:
                 self.spherical_bouts = rfo.all_spherical_bouts
             elif spherical_bouts[0] == 'Hunt':
                 self.spherical_bouts = rfo.all_spherical_huntbouts
-        self.bdb_file = bl.bayesdb_open('091418_bdb/bdb_hunts_inverted.bdb')
+        self.bdb_file = []
         if self.modchoice == "Real Bouts":
             self.model = (lambda pv: self.real_fish_bouts(pv))
         elif self.modchoice == "Real Coords":
@@ -555,6 +555,8 @@ class FishModel:
                                 "Multiple Regression Position"]:
             self.model = (lambda pv: self.regression_model(pv))
         elif self.modchoice == "Bayes":
+            print('loading bdb file')
+            self.bdb_file = bl.bayesdb_open('091418_bdb/bdb_hunts_inverted.bdb')
             self.model = (lambda pv: self.bdb_model(pv))
         elif self.modchoice == "Ideal":
             self.model = (lambda pv: self.ideal_model(pv))
@@ -748,8 +750,8 @@ class FishModel:
     def bdb_model(self, para_varbs):
         invert = True
 #        invert = False
-        sampling = 'median'
-#        sampling = 'sample'
+#        sampling = 'median'
+        sampling = 'sample'
         
         def invert_pvarbs(pvarbs):
             pvcopy = copy.deepcopy(pvarbs)
@@ -798,6 +800,7 @@ class FishModel:
             bout_yaw = -1*df_sim['Bout Delta Yaw'].median()
 
         elif sampling == 'sample':
+            # can add a USING MODEL flag if you want a specific model before the LIMIT 
             df_sim = query(self.bdb_file,
                            ''' SIMULATE "Bout Az", "Bout Alt",
                            "Bout Dist", "Bout Delta Pitch", "Bout Delta Yaw"
@@ -808,7 +811,6 @@ class FishModel:
                            "Para Az Velocity" = {Para Az Velocity},
                            "Para Alt Velocity" = {Para Alt Velocity},
                            "Para Dist velocity" = {Para Dist Velocity}
-  --                         USING MODEL 37
                            LIMIT 1 '''.format(**para_varbs))
             bout_az = df_sim['Bout Az'][0]
             bout_alt = df_sim['Bout Alt'][0]
@@ -828,6 +830,7 @@ class FishModel:
                          b_dict["Bout Dist"],
                          b_dict["Bout Delta Pitch"],
                          b_dict["Bout Delta Yaw"]])
+        print bout
         return bout
 
 
@@ -1114,7 +1117,7 @@ if __name__ == "__main__":
     fish_id = '091418_6'
     rfo = pd.read_pickle(
         os.getcwd() + '/' + fish_id + '/RealHuntData_' + fish_id + '.pkl')
-    # CAN FILTER BASED ON HUNT RESULT IF YOU WANT!
+    # CAN FILTER BASED ON HUNT RESULT IF YOU WANT.
     regmodel_input = slice_dataframe_for_regmodels(hb)
     independent_regression_model = make_independent_regression_model(regmodel_input)
     multiple_regression_model_velocity = make_multiple_regression_model(regmodel_input,
@@ -1150,7 +1153,8 @@ if __name__ == "__main__":
     modlist2 = [{"Model Type": "Real Coords", "Real or Sim": "Real"},
                 {"Model Type": "Independent Regression", "Real or Sim": "Real"},
                 {"Model Type": "Multiple Regression Position", "Real or Sim": "Real"},
-                {"Model Type": "Multiple Regression Position", "Real or Sim": "Real"}]
+                {"Model Type": "Multiple Regression Position", "Real or Sim": "Real"},
+                {"Model Type": "Bayes", "Real or Sim": "Real"}]
 
 
     
