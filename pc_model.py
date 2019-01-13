@@ -798,19 +798,19 @@ class FishModel:
 
         if sampling == 'median':
             print para_varbs
-            bout_az = df_sim['Bout Az'].nanmedian()
-            bout_alt = df_sim['Bout Alt'].nanmedian()
-            bout_dist = df_sim['Bout Dist'].nanmedian()
-            bout_pitch = df_sim['Bout Delta Pitch'].nanmedian()
-            bout_yaw = -1*df_sim['Bout Delta Yaw'].nanmedian()
+            bout_az = np.nanmedian(df_sim['Bout Az'])
+            bout_alt = np.nanmedian(df_sim['Bout Alt'])
+            bout_dist = np.nanmedian(df_sim['Bout Dist'])
+            bout_pitch = np.nanmedian(df_sim['Bout Delta Pitch'])
+            bout_yaw = -1*np.nanmedian(df_sim['Bout Delta Yaw'])
 
         elif sampling == 'mean':
-            bout_az = df_sim['Bout Az'].nanmean()
-            bout_alt = df_sim['Bout Alt'].nanmean()
-            bout_dist = df_sim['Bout Dist'].nanmean()
-            bout_pitch = df_sim['Bout Delta Pitch'].nanmean()
-            bout_yaw = -1*df_sim['Bout Delta Yaw'].nanmean()
-            
+            bout_az = np.nanmean(df_sim['Bout Az'])
+            bout_alt = np.nanmean(df_sim['Bout Alt'])
+            bout_dist = np.nanmean(df_sim['Bout Dist'])
+            bout_pitch = np.nanmean(df_sim['Bout Delta Pitch'])
+            bout_yaw = -1*np.nanmean(df_sim['Bout Delta Yaw'])
+
         elif sampling == 'sample':
             randint = np.random.randint(para_varbs['row_limit'])
             bout_az = df_sim['Bout Az'][randint]
