@@ -781,50 +781,53 @@ class FishModel:
         if invert:
             para_varbs, inv_az, inv_alt = invert_pvarbs(para_varbs)
 
+        para_varbs.update({'row_limit':5})
+        df_sim = query(self.bdb_file,
+                       '''SIMULATE "Bout Az", "Bout Alt",
+                       "Bout Dist", "Bout Delta Pitch", 
+                       "Bout Delta Yaw"
+                       FROM bout_population
+                       GIVEN "Para Az" = {Para Az},
+                       "Para Alt" = {Para Alt},
+                       "Para Dist" = {Para Dist},
+                       "Para Az Velocity" = {Para Az Velocity},
+                       "Para Alt Velocity" = {Para Alt Velocity}, 
+                       "Para Dist velocity" = {Para Dist Velocity}
+                       LIMIT {row_limit} '''.format(**para_varbs))
+            # can add a USING MODEL flag if you want a specific model before the LIMIT
+
         if sampling == 'median':
             print para_varbs
-            df_sim = query(self.bdb_file, '''SIMULATE "Bout Az", "Bout Alt",
-                           "Bout Dist", "Bout Delta Pitch", "Bout Delta Yaw"
-                           FROM bout_population
-                           GIVEN "Para Az" = {Para Az},
-                           "Para Alt" = {Para Alt},
-                           "Para Dist" = {Para Dist},
-                           "Para Az Velocity" = {Para Az Velocity},
-                           "Para Alt Velocity" = {Para Alt Velocity}, 
-                           "Para Dist velocity" = {Para Dist Velocity}
-                           LIMIT 5 '''.format(**para_varbs))
-            bout_az = df_sim['Bout Az'].median()
-            bout_alt = df_sim['Bout Alt'].median()
-            bout_dist = df_sim['Bout Dist'].median()
-            bout_pitch = df_sim['Bout Delta Pitch'].median()
-            bout_yaw = -1*df_sim['Bout Delta Yaw'].median()
-            del df_sim
-            gc.collect()
+            bout_az = df_sim['Bout Az'].nanmedian()
+            bout_alt = df_sim['Bout Alt'].nanmedian()
+            bout_dist = df_sim['Bout Dist'].nanmedian()
+            bout_pitch = df_sim['Bout Delta Pitch'].nanmedian()
+            bout_yaw = -1*df_sim['Bout Delta Yaw'].nanmedian()
+
+        elif sampling == 'mean':
+            bout_az = df_sim['Bout Az'].nanmean()
+            bout_alt = df_sim['Bout Alt'].nanmean()
+            bout_dist = df_sim['Bout Dist'].nanmean()
+            bout_pitch = df_sim['Bout Delta Pitch'].nanmean()
+            bout_yaw = -1*df_sim['Bout Delta Yaw'].nanmean()
             
         elif sampling == 'sample':
-            # can add a USING MODEL flag if you want a specific model before the LIMIT 
-            df_sim = query(self.bdb_file,
-                           ''' SIMULATE "Bout Az", "Bout Alt",
-                           "Bout Dist", "Bout Delta Pitch", "Bout Delta Yaw"
-                           FROM bout_population
-                           GIVEN "Para Az" = {Para Az},
-                           "Para Alt" = {Para Alt},
-                           "Para Dist" = {Para Dist},
-                           "Para Az Velocity" = {Para Az Velocity},
-                           "Para Alt Velocity" = {Para Alt Velocity},
-                           "Para Dist velocity" = {Para Dist Velocity}
-                           LIMIT 1 '''.format(**para_varbs))
-            bout_az = df_sim['Bout Az'][0]
-            bout_alt = df_sim['Bout Alt'][0]
-            bout_dist = df_sim['Bout Dist'][0]
-            bout_pitch = df_sim['Bout Delta Pitch'][0]
-            bout_yaw = -1*df_sim['Bout Delta Yaw'][0]
+            randint = np.random.randint(para_varbs['row_limit'])
+            bout_az = df_sim['Bout Az'][randint]
+            bout_alt = df_sim['Bout Alt'][randint]
+            bout_dist = df_sim['Bout Dist'][randint]
+            bout_pitch = df_sim['Bout Delta Pitch'][randint]
+            bout_yaw = -1*df_sim['Bout Delta Yaw'][randint]
 
         b_dict = {"Bout Az": bout_az,
                   "Bout Alt": bout_alt,
                   "Bout Dist": bout_dist,
                   "Bout Delta Yaw": bout_yaw,
                   "Bout Delta Pitch": bout_pitch}
+
+        del df_sim
+        gc.collect()
+
         if invert:
             b_dict = invert_bout(b_dict, inv_az, inv_alt)
         bout = np.array([b_dict["Bout Az"],
@@ -832,6 +835,10 @@ class FishModel:
                          b_dict["Bout Dist"],
                          b_dict["Bout Delta Pitch"],
                          b_dict["Bout Delta Yaw"]])
+        if not bout.isifnite.all():
+            print('Found nan in bout')
+            return self.bdb_model(para_varbs)
+        
         print bout
         return bout
 
