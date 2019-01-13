@@ -397,13 +397,6 @@ class PreyCap_Simulation:
                 self.fishmodel.current_fish_pitch = self.fish_pitch[-1]
                 self.fishmodel.current_fish_yaw = self.fish_yaw[-1]
 #                print para_varbs
-                if not np.isfinite(self.model_para_xyz).all():
-                    # here para record ends before fish catches.
-                    # para can't be nan at beginning due to real fish filters in master.py
-                    hunt_result = 3
-                    break
-                else:
-                    last_finite_pvarbs = copy.deepcopy(para_varbs)
                 pxyz_temp = [[px[i], py[i], pz[i]] for i in range(
                     framecounter-self.fishmodel.rfo.firstbout_para_intwin, framecounter)]
                 pmap_returns = []
@@ -414,6 +407,13 @@ class PreyCap_Simulation:
                 para_varbs["Para Az Velocity"] = np.mean(gaussian_filter(np.diff([x[0] for x in pmap_returns]), 1)) / .015
                 para_varbs["Para Alt Velocity"] = np.mean(gaussian_filter(np.diff([x[1] for x in pmap_returns]), 1)) / .015
                 para_varbs["Para Dist Velocity"] = np.mean(gaussian_filter(np.diff([x[2] for x in pmap_returns]), 1)) / .015
+                if not np.isfinite(para_varbs.values()).all():
+                    # here para record ends before fish catches.
+                    # para can't be nan at beginning due to real fish filters in master.py
+                    hunt_result = 3
+                    break
+                else:
+                    last_finite_pvarbs = copy.deepcopy(para_varbs)
                 fish_bout = self.fishmodel.model(para_varbs)
                 dx, dy, dz = sphericalbout_to_xyz(fish_bout[0],
                                                   fish_bout[1],
@@ -492,7 +492,7 @@ class PreyCap_Simulation:
                     # add 1 b/c of pre-population in model. worked all this out on paper
                     frame_map = framecounter + self.realframes_start + 1
                     if framecounter in self.interbouts:
-                        if not np.isfinite(self.model_para_xyz).all():
+                        if not np.isfinite(para_varbs.values()).all():
                             hunt_result = 3
                             break
                         else:
@@ -782,6 +782,7 @@ class FishModel:
             para_varbs, inv_az, inv_alt = invert_pvarbs(para_varbs)
 
         para_varbs.update({'row_limit':5})
+        print para_varbs
         df_sim = query(self.bdb_file,
                        '''SIMULATE "Bout Az", "Bout Alt",
                        "Bout Dist", "Bout Delta Pitch", 
@@ -797,7 +798,6 @@ class FishModel:
             # can add a USING MODEL flag if you want a specific model before the LIMIT
 
         if sampling == 'median':
-            print para_varbs
             bout_az = np.nanmedian(df_sim['Bout Az'])
             bout_alt = np.nanmedian(df_sim['Bout Alt'])
             bout_dist = np.nanmedian(df_sim['Bout Dist'])
@@ -835,7 +835,7 @@ class FishModel:
                          b_dict["Bout Dist"],
                          b_dict["Bout Delta Pitch"],
                          b_dict["Bout Delta Yaw"]])
-        if not bout.isifnite.all():
+        if not np.isfinite(bout).all():
             print('Found nan in bout')
             return self.bdb_model(para_varbs)
         
