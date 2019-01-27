@@ -50,7 +50,7 @@ warnings.simplefilter('ignore')
 
 ''' Instructions for using prey cap master code:
 
-To begin, first create an Experiment class and use its bout_detector method to find all bouts. A nanfilter is run over the fish variables to assign values to unknown fish coords. Next, create a bouts and flags (BoutsFlags) instance for every Experiment bout detection. This is used by the DimensionalityReduce class to cluster either single fish behaviors or multiple fish. Finally, use the Experiment class method create_unit_vectors to eventually map all bouts to self-referenced spherical coordinates. 
+To begin, first create an Experiment class and use its bout_detector method to find all bouts. A nanfilter is run over the fish variables to antssign values to unknown fish coords. Next, create a bouts and flags (BoutsFlags) instance for every Experiment bout detection. This is used by the DimensionalityReduce class to cluster either single fish behaviors or multiple fish. Finally, use the Experiment class method create_unit_vectors to eventually map all bouts to self-referenced spherical coordinates. 
 
 Once the Experiment class has been set up, you have the option to cluster behaviors on one or many fish. Start with single fish clustering and see what you can pull out. Create a DimensionalityReduce instance and run dim_reduce(2) on it (3 if you want 3D clustering, which doesn't really help). Based on your choice of clusters, you now enter the hunt_windows into the class by calling find_hunts on your chosen hunt and deconverge clusters. 
 
@@ -283,6 +283,7 @@ class Hunt_Descriptor:
             'strike hit': 0,
             'strike miss': 0,
             'strike at nothing': 0,
+            'strike at immobile object': 0,
             'prob not a hunt': 0}
         
         for i, hunt_ind in enumerate(self.hunt_ind_list):
@@ -298,6 +299,9 @@ class Hunt_Descriptor:
                 if self.para_id_list[i] == -1:
                     self.hunt_dict['strike at nothing'] += 1
 # this covers if para_id = -2 (i.e. misses at nonmoving para)
+
+                elif self.para_id_list[i] == -2:
+                    self.hunt_dict['strike at immobile object'] += 1
                 else:
                     self.hunt_dict['strike miss'] += 1
             elif abs(self.actions[i]) == 4:
@@ -2936,9 +2940,17 @@ def para_stimuli(exp, hd, inc_kde, use_random_env):
                                            exp.hunt_wins[h][1] + 1)]
         any_neg_ones = (np.array(hunt_cluster_membership) == -1).any()
         last_cluster_membership = hunt_cluster_membership[-1]
+
+        # hunting the wall.
         if abs(ac) == 3 and any_neg_ones and hp == -1:
             continue
-        
+
+        # strike at nothing (relfection of a para or itself)
+        # or pursuing an uncharacterized nonmoving spot.
+        if (abs(ac) == 2 and hp < 0) or (abs(ac) == 3 and hp == -2):
+            continue
+
+        # probably not a hunt.
         if abs(ac) == 3 and (
                 hp == -1) and (
                     not any_neg_ones) and last_cluster_membership != 1:
@@ -3693,15 +3705,28 @@ def extract_cluster_calls_to_exp(dim, exp):
             cluster_mem.append(c)
     exp.cluster_membership = cluster_mem
     exp.exporter()
+    
 
-
-def finish_experiment(exp, hd):
+def finish_experiment_wrap(drcts):
+    for drct in drcts:
+        ex = pickle.load(open(drct + '/master.pkl', 'rb'))
+        ex.hunt_wins = np.load(ex.directory + '/hunt_wins.npy')
+        hd = hd_import(drct)
+        finish_experiment(myexp, hd, 1)
+    all_data_to_csv(drcts, 0)
+    all_data_to_csv(drcts, 1)
+    all_data_to_csv(drcts, 2)
+    quantify_all_hunt_types(drcts)
+    
+    
+def finish_experiment(exp, hd, export_para):
     hd.quantify_hunt_types(exp)
     hd.exporter()
     hunted_para_descriptor(exp, hd)
     para_stimuli(exp, hd, True, False)
     para_stimuli(exp, hd, True, True)
-    v, va = pvec_wrapper(exp, hd, 1)
+    if export_para:
+        v, va = pvec_wrapper(exp, hd, 1)
 
 
 
@@ -3794,7 +3819,7 @@ if __name__ == '__main__':
 # bout array, matched with a flag array that describes summary statistics for each bout. A new BoutsandFlags object is then created
 # whose only role is to contain the bouts and corresponding flags for each fish. 
 
-    fish_id = '091418_5'
+    fish_id = '091318_4'
     drct = os.getcwd() + '/' + fish_id
     import_exp = True
     import_dim = False
@@ -3826,7 +3851,8 @@ if __name__ == '__main__':
                '091418_4', '091418_5', '091418_6']
 
     new_wik_subset = ['091418_1', '091418_2', '091418_3',
-                      '091418_4', '091418_6']
+                      '091418_4', '091418_6', '091118_1', '091118_4',
+                      '091118_5']
 
 #    exp_generation_and_clustering(['091418_1'], all_varbs_dict,
 #                                  bdict_2, flag_dict, True, False)
