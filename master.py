@@ -313,7 +313,7 @@ class Hunt_Descriptor:
                 all_hb_cmem = np.array([exp.cluster_membership[cmi] for cmi in range(
                     firsthuntbout, lasthuntbout + 1)])
                 any_neg_ones = (all_hb_cmem == -1).any()
-                if self.para_id_list[i] < 0 and (
+                if self.para_id_list[i] < 0 and len(all_hb_cmem) > 8 and (
                         not any_neg_ones) and last_cluster_membership != 1:
                     self.hunt_dict['prob not a hunt'] += 1
                 elif last_cluster_membership == -1:
@@ -2201,8 +2201,14 @@ def pvec_wrapper(exp, hd, filter_sd):
     vec_address = []
     nonan_indices = []
     p_id = 0
-    for h, d, interp_para in zip(hd.hunt_ind_list, hd.decimated_vids,
-                                 hd.all_interpolated_para_per_hunt):
+
+    try:
+        all_interp_para = hd.all_interpolated_para_per_hunt
+    except AttributeError:
+        all_interp_para = [[] for h in hd.hunt_ind_list]
+    for h, d, interp_para in zip(hd.hunt_ind_list,
+                                 hd.decimated_vids,
+                                 all_interp_para):
         print h
         if d:
             continue
@@ -2425,7 +2431,7 @@ def grab_all_spherical_bouts(fish_directories):
 def all_data_to_csv(directories, data_type):
     if data_type == 0:
         output_filename = 'all_huntbouts.csv'
-        input_filename = 'huntbouts.csv'
+        input_filename = 'huntingbouts.csv'
     elif data_type == 1:
         output_filename = 'all_stimuli.csv'
         input_filename = 'stimuli.csv'
@@ -3711,13 +3717,14 @@ def finish_experiment_wrap(drcts):
     for drct in drcts:
         ex = pickle.load(open(drct + '/master.pkl', 'rb'))
         ex.hunt_wins = np.load(ex.directory + '/hunt_wins.npy')
-        hd = hd_import(drct)
-        finish_experiment(myexp, hd, 1)
+        hd_current = hd_import(drct)
+        finish_experiment(ex, hd_current, 1)
     all_data_to_csv(drcts, 0)
     all_data_to_csv(drcts, 1)
     all_data_to_csv(drcts, 2)
-    quantify_all_hunt_types(drcts)
-    
+    quant = quantify_all_hunt_types(drcts)
+    return quant
+
     
 def finish_experiment(exp, hd, export_para):
     hd.quantify_hunt_types(exp)
@@ -3727,8 +3734,6 @@ def finish_experiment(exp, hd, export_para):
     para_stimuli(exp, hd, True, True)
     if export_para:
         v, va = pvec_wrapper(exp, hd, 1)
-
-
 
 
 if __name__ == '__main__':
@@ -3819,7 +3824,7 @@ if __name__ == '__main__':
 # bout array, matched with a flag array that describes summary statistics for each bout. A new BoutsandFlags object is then created
 # whose only role is to contain the bouts and corresponding flags for each fish. 
 
-    fish_id = '091318_4'
+    fish_id = '091118_3'
     drct = os.getcwd() + '/' + fish_id
     import_exp = True
     import_dim = False
@@ -3850,9 +3855,17 @@ if __name__ == '__main__':
                '091318_5', '091318_6', '091418_1', '091418_2', '091418_3',
                '091418_4', '091418_5', '091418_6']
 
-    new_wik_subset = ['091418_1', '091418_2', '091418_3',
-                      '091418_4', '091418_6', '091118_1', '091118_4',
-                      '091118_5']
+    # new_wik_subset = ['091418_1', '091418_2', '091418_3', '091418_4', '091418_5', '091418_6',
+    #                   '091118_1', '091118_2', '091118_3', '091118_4', '091118_5',
+    #                   '091318_1', '091318_2', '091318_3', '091318_4', '091318_5', '091318_6',
+    #                   '091218_1', '091218_2', '091218_3', '091218_4', '091218_5', '091218_6',
+    #                   '090418_3', '090418_4', '090418_5']
+    
+    new_wik_subset = ['091418_1', '091418_2', '091418_3', '091418_4', '091418_5', '091418_6',
+                      '091118_1', '091118_2', '091118_3', '091118_4', '091118_5',
+                      '091318_1', '091318_2', '091318_3', '091318_4', '091318_5', '091318_6',
+                      '091218_1', '091218_2', '091218_3', '091218_4', '091218_5', '091218_6',
+                      '090418_3', '090418_4']
 
 #    exp_generation_and_clustering(['091418_1'], all_varbs_dict,
 #                                  bdict_2, flag_dict, True, False)
