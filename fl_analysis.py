@@ -6,6 +6,7 @@ from matplotlib import pyplot as pl
 import os
 from phinalIR_cluster_wik import Variables
 from phinalFL_cluster import Fluorescence_Analyzer
+from astropy.convolution import Gaussian1DKernel, interpolate_replace_nans, convolve
 import seaborn as sb
 
 
@@ -16,6 +17,7 @@ def fluor_wrapper(drct_lists_by_condition):
         fl_gutintensity = []
         fl_gutarea = []
         fl_lowres = []
+        gkern = Gaussian1DKernel(.5)
         for drct in drct_list:
             fish_fl = pickle.load(open(
                 drct + '/fluordata.pkl', 'rb'))
@@ -32,10 +34,17 @@ def fluor_wrapper(drct_lists_by_condition):
                 fish_fl.lowres_gut_xy,
                 fish_fl.lowres_gut_xz)]
             fl_lowres.append(g_lowres)
-        # return np.nan_to_num([fl_gutvals, fl_gutintensity,
-        #                       fl_gutarea, fl_lowres])
-        return [fl_gutvals, fl_gutintensity,
-                fl_gutarea, fl_lowres]
+        filt_gutvals = [convolve(flgv, gkern,
+                                 preserve_nan=False) for flgv in fl_gutvals]
+        filt_gutintensity = [convolve(fl_int, gkern,
+                                      preserve_nan=False)
+                             for fl_int in fl_gutintensity]
+        filt_gutarea = [convolve(fla, gkern,
+                                 preserve_nan=False) for fla in fl_gutarea]
+        filt_lowres = [convolve(lr, gkern,
+                                preserve_nan=False) for lr in fl_lowres]
+        return [filt_gutvals, filt_gutintensity,
+                filt_gutarea, filt_lowres]
     
     fl_condition_list = []
     # fl_condition_list will contain lists with 4 elements each
@@ -54,7 +63,10 @@ def fluor_wrapper(drct_lists_by_condition):
         sb.tsplot(fl_instance[1], ax=axes[1, 0])
         sb.tsplot(fl_instance[2], ax=axes[0, 1])
         sb.tsplot(fl_instance[3], ax=axes[1, 1])
+    pl.show()
 
 fl_directory = '020419_1'
 fl_obj = pickle.load(open(
     fl_directory + '/fluordata.pkl', 'rb'))
+
+fluor_wrapper([[fl_directory]])

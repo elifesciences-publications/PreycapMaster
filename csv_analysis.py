@@ -15,6 +15,7 @@ from matplotlib import pyplot as pl
 from matplotlib.ticker import MaxNLocator
 from matplotlib.colors import Normalize, ListedColormap
 from toolz.itertoolz import sliding_window
+from sklearn.feature_selection import mutual_info_classif
 
 class BayesDB_Simulator:
     # use -1 model for no particular model
@@ -77,10 +78,13 @@ class BayesDB_Simulator:
 
     def single_hist(self, query_exp, condition):
         self.set_query_params(query_exp, condition)
-        df = self.rejection_query(1)        
-        hist_data = df[query_exp.replace('"','')]
+        df = self.rejection_query(1)
+        hist_data = df[query_exp.replace('"', '')]
+        print(str(hist_data.shape[0]) + " total bouts")
         p = sb.distplot(hist_data, color='b')
-        return p 
+        print(np.mean(hist_data))
+        print(np.std(hist_data))
+        return p
 
     def rejection_query(self, real):
         if not real:
@@ -108,15 +112,24 @@ class BayesDB_Simulator:
         fig = pl.figure()
         reg_plot = sb.regplot(df_real[v1],
                               df_real[v2],
-                              fit_reg=True, n_boot=100, robust=True, color='g')
+                              fit_reg=True, n_boot=100,
+                              scatter_kws={'alpha':0.3},
+                              robust=True, color='g')
         rx, ry = reg_plot.get_lines()[0].get_data()
         r_slope = np.around((ry[1] - ry[0])/(rx[1] - rx[0]), 2)
         r_yint = np.around(ry[1] - r_slope*rx[1], 2)
         reg_fit = np.around(pearsonr(df_real[v1], df_real[v2])[0], 2)
         reg_plot.text(rx[0], np.max(df_real[v2]), '  ' +
                       str(r_slope) + 'x + ' + str(
-                          r_yint) + ', ' + 'r = ' + str(reg_fit),
+                          r_yint) + ', ' + 'r2 = ' + str(reg_fit**2),
                       color='k', fontsize=14)
+#        mi = calc_MI(df_real[v1], df_real[v2], 100)
+#        mi = normalized_mutual_info_score(df_real[v1], df_real[v2])
+        s1 = (df_real[v1].reshape(-1, 1) * 10000).astype(np.int)
+        s2 = np.array(df_real[v2] * 10000).astype(np.int)
+        mi = mutual_info_classif(s1, s2)
+        print("Mutual Information")
+        print(mi)
         return fig
 
     def compare_sim_to_real(self, query_expression):
@@ -206,6 +219,36 @@ def generate_random_data(raw_data, invert):
 # in the model, you will need to transform backwards...i.e. when you get a left down coord, have to transform it
 # back into a rightward up.
 
+def add_bouts_reversed_label(df):
+    new_bout_ids = []
+    first0 = True
+    counter = 0
+    for ind, b_num in enumerate(df["Bout Number"]):
+        if b_num == 0:
+            if first0:
+                first0 = False
+            else:
+                if df["Strike Or Abort"][ind-1] <= 3 and df[
+                        "Bout Number"][ind-1] < 0:
+                    new_bout_ids += [i - counter for i in range(counter)]
+                else:
+                    new_bout_ids += np.ones(counter).tolist()
+                counter = 0
+        if ind == len(df["Bout Number"]) - 1:
+            if b_num < 0 and df["Strike Or Abort"][ind] <= 3:
+                new_bout_ids += [i - (counter+1) for i in range(counter+1)]
+            else:
+                new_bout_ids += np.ones(counter+1).tolist()
+        counter += 1
+        
+    new_bout_array = np.array(new_bout_ids)
+    print new_bout_array.shape
+    print df["Bout Number"].shape
+    df.insert(1, 'Rev Bout Number', new_bout_array)
+    df.to_csv('revbouts_added.csv')
+    return new_bout_ids
+
+            
 def invert_all_bouts(raw_data, drct):
     new_df = pd.DataFrame(columns=raw_data.columns.tolist())
     for i in range(raw_data.shape[0]):
@@ -225,20 +268,21 @@ def invert_all_bouts(raw_data, drct):
             wtr = csv.writer(result)
             for row in reader:
                 wtr.writerow(row[1:])
+
                 
-                
-    
 def bout_inversion(row):
     inverted_row = copy.deepcopy(row)
     if row["Para Az"] < 0:
         inverted_row["Para Az"] *= -1
         inverted_row["Para Az Velocity"] *= -1
+        inverted_row["Para Az Accel"] *= -1
         inverted_row["Postbout Para Az"] *= -1
         inverted_row["Bout Az"] *= -1
         inverted_row["Bout Delta Yaw"] *= -1
     if row["Para Alt"] < 0:
         inverted_row["Para Alt"] *= -1
         inverted_row["Para Alt Velocity"] *= -1
+        inverted_row["Para Alt Accel"] *= -1
         inverted_row["Postbout Para Alt"] *= -1
         inverted_row["Bout Alt"] *= -1
         inverted_row["Bout Delta Pitch"] *= -1
@@ -336,20 +380,24 @@ def value_over_hunt(data, valstring, actions, f_or_r, absval):
         
 
 def prediction_conditionals(pred):
+
+    def div0check(div):
+        if div[1] == 0:
+            return np.nan
+        else:
+            return div[0] / float(div[1])
+            
     lead_lead_intersect = np.intersect1d(pred[0], pred[2])
     lag_lag_intersect = np.intersect1d(pred[1], pred[3])
     leadaz_lagalt = np.intersect1d(pred[0], pred[3])
     lagaz_leadalt = np.intersect1d(pred[1], pred[2])
-    if (np.array([len(p) for p in pred[0:4]]) == 0).any():
-        return
-    p_leadaz_cond_leadalt = lead_lead_intersect.shape[0] / float(len(pred[2]))
-    p_leadaz_cond_lagalt = leadaz_lagalt.shape[0] / float(len(pred[3]))
-    p_leadalt_cond_leadaz = lead_lead_intersect.shape[0] / float(len(pred[0]))
-    p_leadalt_cond_lagaz = lagaz_leadalt.shape[0] / float(len(pred[1]))
-    print(p_leadaz_cond_leadalt,
-          p_leadaz_cond_lagalt,
-          p_leadalt_cond_leadaz,
-          p_leadalt_cond_lagaz)
+    p_leadaz_cond_leadalt = div0check(
+        [lead_lead_intersect.shape[0], len(pred[2])])
+    p_leadaz_cond_lagalt = div0check(
+        [leadaz_lagalt.shape[0], len(pred[3])])
+    p_leadalt_cond_leadaz = div0check(
+        [lead_lead_intersect.shape[0], len(pred[0])])
+    p_leadalt_cond_lagaz = div0check([lagaz_leadalt.shape[0], len(pred[1])])
     cond_plot = sb.barplot(range(4), [p_leadaz_cond_leadalt,
                                       p_leadaz_cond_lagalt,
                                       p_leadalt_cond_leadaz,
@@ -359,45 +407,85 @@ def prediction_conditionals(pred):
 
 
 def pred_wrapper(data, limits, skip_bout_numbers,
-                 condition, dist_limit, az_or_alt):
+                 condition, dist_limit, absval, vels, norm_az, norm_alt,
+                 az_or_alt):
     ratio_list = []
     total_bouts = []
     for lim in limits:
         pred = prediction_calculator(
-            data, lim, skip_bout_numbers, condition, az_or_alt, dist_limit)
+            data, lim, skip_bout_numbers,
+            condition, az_or_alt, dist_limit,
+            absval, vels, norm_az, norm_alt)
         prediction_conditionals(pred)
         if az_or_alt == 'az':
-            ratio_list.append(len(pred[0]) / float(len(pred[1])))
+            try:
+                ratio_list.append(len(pred[0]) / float(len(pred[1])))
+            except ZeroDivisionError:
+                ratio_list.append(np.nan)
             total_bouts.append(len(pred[0]) + len(pred[1]))
         if az_or_alt == 'alt':
-            ratio_list.append(len(pred[2]) / float(len(pred[3])))
+            try:
+                ratio_list.append(len(pred[2]) / float(len(pred[3])))
+            except ZeroDivisionError:
+                ratio_list.append(np.nan)
             total_bouts.append(len(pred[2]) + len(pred[3]))
     sb.barplot(range(len(ratio_list)), ratio_list, color='g')
     pl.savefig('pred_wrapper.pdf')
     pl.show()
     bout_assignments = pred[-1]
+    print("TOTAL BOUTS")
+    print total_bouts
     return total_bouts, bout_assignments
 
 
-def prediction_calculator(data, limit, skip_bout_numbers, condition, az_or_alt, dist_limit):
+def prediction_calculator(data, limit,
+                          skip_bout_numbers, condition,
+                          az_or_alt, dist_limit, absval, vels,
+                          norm_az, norm_alt):
     leading_az = []
     lagging_az = []
     leading_alt = []
     lagging_alt = []
     bout_assignment = []
     for i in range(len(data["Para Az"])):
-        if az_or_alt == 'az':
-            if not (limit[0] <= np.abs(data["Para Az"][i]) < limit[1]):
-                bout_assignment.append(0)
-                continue
-        if az_or_alt == 'alt':
-            if not (limit[0] <= np.abs(data["Para Alt"][i]) < limit[1]):
-                bout_assignment.append(0)
-                continue
-        if data["Strike Or Abort"][i] not in condition:
+        if absval:
+            if az_or_alt == 'az':
+                if not (limit[0] <= np.abs(data["Para Az"][i]) < limit[1]):
+                    bout_assignment.append(0)
+                    continue
+                if not (vels[0] < data["Para Az Velocity"][i] < vels[1]):
+                    continue
+            if az_or_alt == 'alt':
+                if not (limit[0] <= np.abs(data["Para Alt"][i]) < limit[1]):
+                    bout_assignment.append(0)
+                    continue
+                if not (vels[0] < data["Para Alt Velocity"][i] < vels[1]):
+                    continue
+        else:
+            if az_or_alt == 'az':
+                if not (limit[0] <= data["Para Az"][i] < limit[1]):
+                    bout_assignment.append(0)
+                    continue
+
+                if not (vels[0] < data["Para Az Velocity"][i] < vels[1]):
+                    continue
+            if az_or_alt == 'alt':
+                if not (limit[0] <= data["Para Alt"][i] < limit[1]):
+                    bout_assignment.append(0)
+                    continue
+                if not (vels[0] < data["Para Alt Velocity"][i] < vels[1]):
+                    continue
+
+        if (data["Strike Or Abort"][i] not in condition) or data[
+                "Strike Or Abort"][i] > 3:
             bout_assignment.append(0)
             continue
-        if data["Bout Number"][i] in skip_bout_numbers:
+
+        if skip_bout_numbers[0] == 'forward':
+            bnumber = data["Bout Number"][i]
+        elif skip_bout_numbers[0] == 'reverse':
+            bnumber = data["Rev Bout Number"][i]
+        if bnumber in skip_bout_numbers[1]:
             bout_assignment.append(0)
             continue
         if not (dist_limit[0] <= data["Para Dist"][i] <= dist_limit[1]):
@@ -423,22 +511,25 @@ def prediction_calculator(data, limit, skip_bout_numbers, condition, az_or_alt, 
 # bout assignment of 3 is an undershooting lead.
 # bout assignment of 4 is an overshooting lead
 
-        if np.sign(data["Para Az Velocity"][i]) == np.sign(data["Para Az"][i]):
+        if np.sign(data["Para Az Velocity"][i]) == np.sign(
+                data["Para Az"][i] - norm_az):
             az_sign_same = True
         else:
             az_sign_same = False
         if np.sign(
-                data["Para Alt Velocity"][i]) == np.sign(data["Para Alt"][i]):
+                data["Para Alt Velocity"][i]) == np.sign(
+                    data["Para Alt"][i] - norm_alt):
             alt_sign_same = True
         else:
             alt_sign_same = False
-
-        if np.sign(data["Para Az"][i]) == np.sign(data["Postbout Para Az"][i]):
+        if np.sign(data["Para Az"][i] - norm_az) == np.sign(
+                data["Postbout Para Az"][i] - norm_az):
             az_undershoot = True
         else:
             az_undershoot = False
         if np.sign(
-                data["Para Alt"][i]) == np.sign(data["Postbout Para Alt"][i]):
+                data["Para Alt"][i] - norm_alt) == np.sign(
+                    data["Postbout Para Alt"][i] - norm_alt):
             alt_undershoot = True
         else:
             alt_undershoot = False
@@ -543,6 +634,10 @@ def stim_analyzer(data, para_variable, *random_stat):
     pl.show()
     return attended, ig_and_att
     
+def calc_MI(x, y, bins):
+    c_xy = np.histogram2d(x, y, bins)[0]
+    mi = mutual_info_score(None, None, contingency=c_xy)
+    return mi
 
 def stim_conditionals(data, conditioner_stat, stat, n_smallest):
     hunt_id_list = data["Hunt ID"]

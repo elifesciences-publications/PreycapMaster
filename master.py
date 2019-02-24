@@ -3736,6 +3736,99 @@ def finish_experiment(exp, hd, export_para):
         v, va = pvec_wrapper(exp, hd, 1)
 
 
+def continuous_value_wrap(drct_list):
+    
+    for drct in drct_list:
+        ex = pickle.load(open(drct + '/master.pkl', 'rb'))
+        ex.hunt_wins = np.load(ex.directory + '/hunt_wins.npy')
+        hd_current = hd_import(drct)
+        continuous_value = 
+        
+def continuous_values_over_hunt(exp, hd, actions, f_or_r,
+                                veldir, *h_id_specified):
+
+    def nanfill(f_or_r, huntlist):
+        new_huntlist = []
+        lengths = map(lambda x: len(x), huntlist)
+        print np.mean(lengths)
+#        sb.distplot(lengths, kde=False, color='g')
+#        pl.show()
+        max_length = np.max(lengths)
+        for hunt in huntlist:
+            lh = len(hunt)
+            nanstretch = np.full(max_length - lh, np.nan).tolist()
+            if f_or_r:
+                new_huntlist.append(hunt + nanstretch)
+            else:
+                new_huntlist.append(nanstretch + hunt)
+        return new_huntlist, max_length
+
+    
+    hd.dec_doubles = []
+    az_all = []
+    alt_all = []
+    dist_all = []
+    if h_id_specified == ():
+        h_ids = hd.hunt_ind_list
+    else:
+        h_ids = h_id_specified
+    for hi, hp, ac, d in zip(
+            h_ids, hd.para_id_list, hd.actions, hd.decimated_vids):
+# this is a catch for not knowing the para
+        if hp < 0 or hi in hd.dec_doubles or ac not in actions:
+            continue
+        print('Hunt ID')
+        print hi
+        doubles_true, [dec_para,
+                       dec_win, dec_label] = hd.check_for_doubles(hi, 1)
+        if doubles_true:
+            print(hi)
+            print('getting _d')
+            subscript = '_d'
+            penv_dec = True
+            hp = dec_para
+        else:
+            # this covers the case of ac > 3 and only dec. 
+            if d:
+                subscript = '_d'
+                penv_dec = True
+            else:
+                print('getting whole env')
+                subscript = ''
+                penv_dec = False
+
+        poi_wrth = create_poirec(hi, 3, exp.directory,
+                                 hp, penv_dec, False)
+        dist_all.append([pr[4] for pr in poi_wrth])
+        az_all.append([pr[6] for pr in poi_wrth])
+        alt_all.append([pr[7] for pr in poi_wrth])
+
+    dist_aligned, mx_len = nanfill(f_or_r, dist_all)
+    az_aligned, mx_len = nanfill(f_or_r, az_all)
+    alt_aligned, mx_len = nanfill(f_or_r, az_all)
+    if f_or_r:
+        bout_numbers = range(0, mx_len)
+    else:
+        bout_numbers = range(-mx_len+1, 1)
+    fig, axes = pl.subplots(3, 1)
+    d_plot = sb.tsplot(dist_aligned,
+                       time=bout_numbers,
+                       estimator=np.nanmean, ci=95, ax=axes[0, 0])
+    az_plot = sb.tsplot(az_aligned,
+                        time=bout_numbers,
+                        estimator=np.nanmean, ci=95, ax=axes[1, 0])
+    alt_plot = sb.tsplot(alt_aligned,
+                         time=bout_numbers,
+                         estimator=np.nanmean, ci=95, ax=axes[2, 0])
+
+    # e_plot.set_ylabel(valstring, fontsize=16)
+    # e_plot.set_xlabel('', fontsize=16)
+    # e_plot.xaxis.set_major_locator(MaxNLocator(integer=True))
+    # e_plot.tick_params(labelsize=13)
+    pl.show()
+
+
+
 if __name__ == '__main__':
 
     print('Running Master')
