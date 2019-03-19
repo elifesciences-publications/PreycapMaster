@@ -15,7 +15,10 @@ from matplotlib import pyplot as pl
 from matplotlib.ticker import MaxNLocator
 from matplotlib.colors import Normalize, ListedColormap
 from toolz.itertoolz import sliding_window
-from sklearn.feature_selection import mutual_info_classif
+
+# for two variable regression, compare 2 queries, and single reg,
+# take a color arg. for 2 queries, towards and away
+# will be dark and light, just like in minefield. 
 
 class BayesDB_Simulator:
     # use -1 model for no particular model
@@ -104,45 +107,55 @@ class BayesDB_Simulator:
         return df
 
     # format of query_expression is '"Var1","Var2"'
-    def two_variable_regression(self, query_expression, condition):
+    def two_variable_regression(self, query_expression, condition, color, *labels):
         self.set_query_params(query_expression, condition)
         v1 = query_expression.split(',')[0].replace('"', '')
-        v2 = query_expression.split(',')[1].replace('"', '')           
+        v2 = query_expression.split(',')[1].replace('"', '')
         df_real = self.rejection_query(1)
         fig = pl.figure()
-        reg_plot = sb.regplot(df_real[v1],
-                              df_real[v2],
+        nanfilt_varbs = np.array([vrb for vrb in zip(df_real[v1],
+                                                     df_real[v2]) if
+                                  np.isfinite(vrb).all()])
+        reg_plot = sb.regplot(nanfilt_varbs[:, 0],
+                              nanfilt_varbs[:, 1],
                               fit_reg=True, n_boot=100,
-                              scatter_kws={'alpha':0.3},
-                              robust=True, color='g')
+                              scatter_kws={'alpha': 0.15},
+                              robust=False, color=color)
         rx, ry = reg_plot.get_lines()[0].get_data()
         r_slope = np.around((ry[1] - ry[0])/(rx[1] - rx[0]), 2)
         r_yint = np.around(ry[1] - r_slope*rx[1], 2)
-        reg_fit = np.around(pearsonr(df_real[v1], df_real[v2])[0], 2)
-        reg_plot.text(rx[0], np.max(df_real[v2]), '  ' +
+        reg_fit = np.around(pearsonr(nanfilt_varbs[:, 0],
+                                     nanfilt_varbs[:, 1])[0], 2)
+        reg_plot.text(rx[0], 2, '  ' +
                       str(r_slope) + 'x + ' + str(
-                          r_yint) + ', ' + 'r2 = ' + str(reg_fit**2),
-                      color='k', fontsize=14)
-#        mi = calc_MI(df_real[v1], df_real[v2], 100)
-#        mi = normalized_mutual_info_score(df_real[v1], df_real[v2])
-        s1 = (df_real[v1].reshape(-1, 1) * 10000).astype(np.int)
-        s2 = np.array(df_real[v2] * 10000).astype(np.int)
-        mi = mutual_info_classif(s1, s2)
-        print("Mutual Information")
-        print(mi)
-        return fig
+                          r_yint) + ', ' + '$r^{2}$ = ' + str(reg_fit**2),
+                      color=color, fontsize=16)
+        if v2 != "Bout Distance" and v2 != "Postbout Para Distance":
+            reg_plot.set_ylim([-2.5, 2.5])
+        if labels != ():
+            labels = labels[0]
+            reg_plot.set_xlabel(labels[0], fontsize=16)
+            reg_plot.set_ylabel(labels[1], fontsize=16)
+        print(str(len(nanfilt_varbs[:, 0])) + " Bouts")
+        sb.despine()
+        sb.axes_style({'ytick.right': False})
+        return fig, nanfilt_varbs[:, 0], nanfilt_varbs[:, 1]
+        
 
-    def compare_sim_to_real(self, query_expression):
+    def compare_sim_to_real(self, query_expression, colors):
         df_real = self.rejection_query(1)
         df_sim = self.rejection_query(0)
         # here want mean and std for all models...loop over 50 and make a list of means, stds
-        sb.distplot(df_real[query_expression], bins=100, color='g')
-        sb.distplot(df_sim[query_expression], bins=100, color='m')
+        sb.distplot(df_real[query_expression], bins=100, color=colors[0])
+        sb.distplot(df_sim[query_expression], bins=100, color=colors[1])
         ttest_results = ttest_ind(df_real[query_expression], df_sim[query_expression])
         print ttest_results
         pl.show()
 
-    def compare_2_queries(self, q_exp, condition1, condition2, real, new_sim):
+    def compare_2_queries(self, q_exp, condition1,
+                          condition2, real, new_sim, color):
+        colors = [(np.array(color) * 1 / np.max(color)).tolist(),
+                  (np.array(color) * .6).tolist()]
         if not real:
             if new_sim:
                 self.setup_rejection_query()
@@ -153,17 +166,19 @@ class BayesDB_Simulator:
         fig = pl.figure()
         c1_distribution = c1_result[q_exp.replace('"', '')]
         c2_distribution = c2_result[q_exp.replace('"', '')]
-        print(str(c1_distribution.shape[0]) + ' bouts in Blue Query')
-        print('Mean Blue = ' + str(np.mean(c1_distribution)))
-        print(str(c2_distribution.shape[0]) + ' bouts in Yellow Query')
-        print('Mean Yellow = ' + str(np.mean(c2_distribution)))
-        sb.distplot(c1_distribution, fit_kws={"color": "blue"},
-                    fit=norm, kde=False, color='b')
-        sb.distplot(c2_distribution, fit_kws={"color": "yellow"},
-                    fit=norm, kde=False, color='y')
+        print(str(c1_distribution.shape[0]) + ' bouts in Query 1')
+        print('Mean Q1 = ' + str(np.mean(c1_distribution)))
+        print(str(c2_distribution.shape[0]) + ' bouts in Query 2')
+        print('Mean Q2 = ' + str(np.mean(c2_distribution)))
+        sb.distplot(c1_distribution, fit_kws={"color": colors[0]},
+                    fit=norm, kde=False, color=colors[0], hist_kws={"alpha": .8})
+        sb.distplot(c2_distribution, fit_kws={"color": colors[1]},
+                    fit=norm, kde=False, color=colors[1], hist_kws={"alpha": .8})
         ttest_results = ttest_ind(c1_distribution, c2_distribution)
-        print ttest_results 
+        print ttest_results
+        sb.despine()
         pl.savefig('2query.pdf')
+        pl.show()
         return fig
         
                         
@@ -289,40 +304,48 @@ def bout_inversion(row):
     return inverted_row
         
 
-def make_regression_plots(x1, y1, x2, y2, labels):
-    colorpal = sb.color_palette("husl", 8)
-    c_red = colorpal[0]
-    c_green = colorpal[4]
-    redplot = sb.regplot(np.array(x1),
-                         np.array(y1), fit_reg=True,
-                         n_boot=100, robust=True, color=c_red)
-    greenplot = sb.regplot(np.array(x2),
-                           np.array(y2), fit_reg=True,
-                           n_boot=100,  robust=True, color=c_green)
-    greenplot.set_xlabel(labels[0], fontsize=16)
-    greenplot.set_ylabel(labels[1], fontsize=16)
-    greenplot.set_axis_bgcolor('w')
-#    pl.show()
-    maxpos = np.max([np.max(y1), np.max(y1)])
-    greenplot.set_axis_bgcolor('white')
-    rx, ry = redplot.get_lines()[0].get_data()
-    gx, gy = greenplot.get_lines()[1].get_data()
-    r_slope = np.around((ry[1] - ry[0])/(rx[1] - rx[0]), 2)
-    g_slope = np.around((gy[1] - gy[0])/(gx[1] - gx[0]), 2)
-    r_yint = np.around(ry[1] - r_slope*rx[1], 2)
-    g_yint = np.around(gy[1] - g_slope*gx[1], 2)
-    coeff_red = np.around(pearsonr(x1, y1)[0], 2)
-    coeff_green = np.around(pearsonr(x2, y2)[0], 2)
-    greenplot.text(rx[0], maxpos, '  ' +
-                   str(r_slope) + 'x + ' + str(
-                   r_yint) + ', ' + 'r = ' + str(coeff_red),
-                   color=c_red, fontsize=14)
-    greenplot.text(rx[0], 1.2*maxpos, '  ' +
-                   str(g_slope) + 'x + ' + str(
-                   g_yint) + ', ' + 'r = ' + str(coeff_green),
-                   color=c_green, fontsize=14)
+def make_regression_plots(x1, y1, x2, y2, labels, colors):
+    fig = pl.figure()
+    plot1 = sb.regplot(np.array(x1),
+                       np.array(y1), fit_reg=True,
+                       n_boot=100, robust=False,
+                       scatter_kws={'alpha': 0.15},
+                       color=colors[0])
+    plot2 = sb.regplot(np.array(x2),
+                       np.array(y2), fit_reg=True,
+                       n_boot=100,  robust=False,
+                       scatter_kws={'alpha': 0.15},
+                       color=colors[1])
+    plot1.set_xlabel(labels[0], fontsize=16)
+    plot1.set_ylabel(labels[1], fontsize=16)
+    p1x, p1y = plot1.get_lines()[1].get_data()
+    p2x, p2y = plot2.get_lines()[0].get_data()
+    slope1 = np.around((p1y[1] - p1y[0])/(p1x[1] - p1x[0]), 2)
+    slope2 = np.around((p2y[1] - p2y[0])/(p2x[1] - p2x[0]), 2)
+    yint1 = np.around(p1y[1] - slope1*p1x[1], 2)
+    yint2 = np.around(p2y[1] - slope2*p2x[1], 2)
+    coeff1_nanfilt = np.array(
+        [c1 for c1 in zip(x2, y2) if np.isfinite(c1).all()])
+    coeff2_nanfilt = np.array([c2 for c2 in zip(
+        x1, y1) if np.isfinite(c2).all()])
+    coeff1 = np.around(pearsonr(coeff1_nanfilt[:, 0],
+                                coeff1_nanfilt[:, 1])[0], 2)
+    coeff2 = np.around(pearsonr(coeff2_nanfilt[:, 0],
+                                coeff2_nanfilt[:, 1])[0], 2)
+    xinit = np.min(p1x[0], p2x[0])
+    plot1.text(xinit, 2.1, '  ' +
+               str(slope2) + 'x + ' + str(
+                   yint2) + ', ' + '$r^{2}$ = ' + str(coeff2**2),
+               color=colors[1], fontsize=14)
+    plot1.text(xinit, 1.7, '  ' +
+               str(slope1) + 'x + ' + str(
+                   yint1) + ', ' + '$r^{2}$ = ' + str(coeff1**2),
+               color=colors[0], fontsize=14)
 #    greenplot.set_ylim([-1, 1])
+    if labels[1] != "Bout Distance" and labels[1] != "Postbout Para Distance":
+        plot1.set_ylim([-2.5, 2.5])
     pl.show()
+    return fig
 
 
 def value_over_hunt(data, valstring, actions, f_or_r, absval):
@@ -634,10 +657,10 @@ def stim_analyzer(data, para_variable, *random_stat):
     pl.show()
     return attended, ig_and_att
     
-def calc_MI(x, y, bins):
-    c_xy = np.histogram2d(x, y, bins)[0]
-    mi = mutual_info_score(None, None, contingency=c_xy)
-    return mi
+# def calc_MI(x, y, bins):
+#     c_xy = np.histogram2d(x, y, bins)[0]
+#     mi = mutual_info_score(None, None, contingency=c_xy)
+#     return mi
 
 def stim_conditionals(data, conditioner_stat, stat, n_smallest):
     hunt_id_list = data["Hunt ID"]

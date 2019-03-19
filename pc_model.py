@@ -709,11 +709,14 @@ class FishModel:
         return bout_array
 
     def regression_model(self, para_varbs):
+        if self.num_bouts_generated == 0:
+            regmod = self.regmod[0]
+        else:
+            regmod = self.regmod[1]
         if self.modchoice == "Independent Regression":
             p_input = [para_varbs["Para Az"], para_varbs["Para Alt"], para_varbs["Para Dist"],
                        para_varbs["Para Alt"], para_varbs["Para Az"]]
-            bout = [rm.predict([1, p_input[pi]]) for pi, rm in enumerate(self.regmod)]
-
+            bout = [rm.predict([1, p_input[pi]]) for pi, rm in enumerate(regmod)]
         else:
             if self.modchoice == "Multiple Regression Velocity":
                 p_input = [para_varbs["Para Az"],
@@ -728,9 +731,10 @@ class FishModel:
                            para_varbs["Para Dist"]]
             # this is for the constant y-intercept 
             p_input = [1] + p_input
-            bout = [rm.predict(p_input) for rm in self.regmod]
+            bout = [rm.predict(p_input) for rm in regmod]
         # invert bout delta yaw
         bout[-1] *= -1
+        self.num_bouts_generated += 1
         return np.array(bout)
 
     # def regression_model(self, para_varbs):
@@ -979,7 +983,7 @@ def score_similarity_and_view(simlist, ind1, ind2):
     sim1.score_model_similarity(plot_or_not, sim2)
     make_vr_movies(sim1, sim2)
     
-def model_wrapper(rfo, strike_params, para_model, model_params, hunt_db, *hunt_id):
+def model_wrapper(rfo, strike_params, para_model, model_params, hunt_db, actions, *hunt_id):
     print("Executing Models")
     sim_list = []
     prev_interbouts = []
@@ -996,11 +1000,14 @@ def model_wrapper(rfo, strike_params, para_model, model_params, hunt_db, *hunt_i
         hunt_ids = hunt_id
 #        pause_wrapper = True
         
-    for h_ind, hid in enumerate(hunt_ids):
+    for h_ind, (hid, action) in enumerate(zip(hunt_ids, rfo.hunt_results)):
         if hunt_id != ():
             h_ind = np.argwhere(np.array(rfo.hunt_ids) == hunt_id[0])[0][0]
+            action = rfo.hunt_results[h_ind]
         sim_created = False
         # Make a variable that copies prevoius interbouts and durations so that each sim has the same ibs and durations
+        if action not in actions:
+            continue
         for mi, model_run in enumerate(model_params):
 #            print("Running " + model_run["Model Type"] + " on hunt " + str(hid))
             try:
@@ -1011,19 +1018,20 @@ def model_wrapper(rfo, strike_params, para_model, model_params, hunt_db, *hunt_i
                 if model_run["Extrapolate Para"]:
                     fish.linear_predict_para = True
                     fish.predict_forward_frames = model_run["Extrapolate Para"]
-            except KeyError: pass
+            except KeyError:
+                pass
             try: 
                 if model_run["Willie Mays"]:
                     fish.boutbound_prediction = True
                     fish.predict_forward_frames = model_run["Willie Mays"]
-            except KeyError: pass
-
+            except KeyError:
+                pass
             if model_run["Model Type"] == "Independent Regression":
-                fish.regmod = independent_regression_model
+                fish.regmod = [ir_bout0, independent_regression_model]
             elif model_run["Model Type"] == "Multiple Regression Velocity":
-                fish.regmod = multiple_regression_model_velocity
+                fish.regmod = [mv_bout0, multiple_regression_model_velocity]
             elif model_run["Model Type"] == "Multiple Regression Position":
-                fish.regmod = multiple_regression_model_position
+                fish.regmod = [mp_bout0, multiple_regression_model_position]
             else:
                 fish.regmod = []
             
@@ -1120,21 +1128,61 @@ def slice_dataframe_for_regmodels(hunt_db):
     hdb_noneg = hunt_db[slice_bn_neg]
     slice_fails = hdb_noneg['Strike Or Abort'] < 3
     return hdb_noneg[slice_fails]
-    
+
+def slice_dataframe_for_bout0(hunt_db):
+    slice_bout_0 = hunt_db['Bout Number'] == 0
+    hdb_bout0 = hunt_db[slice_bout_0]
+    slice_fails = hdb_bout0['Strike Or Abort'] < 3
+    return hdb_bout0[slice_fails]
+
+
+
+# have to wrap all fish.
+
+# have to make bout 0 model.
+
+# write out algorithms as lisp programs
+
+# make a plot for the algorithm of alt / postbout alt.
+
+
+# do 1 fish every 2 days until whole dataset is done. at least 1 para per 3 minutes. 
+
+# filter based on hunt result (i.e. 1s and 2s). this is a member variable of RealFishControl
+
+# don't include bout 1 in the hunt. give models the first bout excellence
+# this can be done via messing with realfishcontrol input in hunted_para_descriptor
+
+# don't output a csv file output a set of seaborn plots just like with minefield
+
+
+
 
 if __name__ == "__main__":
-    csv_file = '091418_bdb/all_huntbouts_w_lastbout.csv'
+    csv_file = 'wik_bdb/all_huntbouts_rev.csv'
     hb = pd.read_csv(csv_file)
     fish_id = '091418_6'
     rfo = pd.read_pickle(
         os.getcwd() + '/' + fish_id + '/RealHuntData_' + fish_id + '.pkl')
     # CAN FILTER BASED ON HUNT RESULT IF YOU WANT.
     regmodel_input = slice_dataframe_for_regmodels(hb)
-    independent_regression_model = make_independent_regression_model(regmodel_input)
-    multiple_regression_model_velocity = make_multiple_regression_model(regmodel_input,
-                                                                        'velocity')
-    multiple_regression_model_position = make_multiple_regression_model(regmodel_input,
-                                                                        'position')
+    bout0regmodel_input = slice_dataframe_for_bout0(hb)
+    independent_regression_model = make_independent_regression_model(
+        regmodel_input)
+    ir_bout0 = make_independent_regression_model(bout0regmodel_input)
+    multiple_regression_model_velocity = make_multiple_regression_model(
+        regmodel_input,
+        'velocity')
+    mv_bout0 = make_multiple_regression_model(
+        bout0regmodel_input,
+        'velocity')
+    multiple_regression_model_position = make_multiple_regression_model(
+        regmodel_input,
+        'position')
+    mp_bout0 = make_multiple_regression_model(
+        bout0regmodel_input,
+        'position')
+
     para_model = pickle.load(open(os.getcwd() + '/pmm.pkl', 'rb'))
     np.random.seed()
     sequence_length = 10000
@@ -1164,12 +1212,14 @@ if __name__ == "__main__":
     modlist2 = [{"Model Type": "Real Coords", "Real or Sim": "Real"},
                 {"Model Type": "Independent Regression", "Real or Sim": "Real"},
                 {"Model Type": "Multiple Regression Position", "Real or Sim": "Real"},
-                {"Model Type": "Multiple Regression Position", "Real or Sim": "Real"},
-                {"Model Type": "Bayes", "Real or Sim": "Real"}]
+                {"Model Type": "Multiple Regression Velocity", "Real or Sim": "Real"}]
+           #     {"Model Type": "Bayes", "Real or Sim": "Real"}]
 
 
+    modlist_bayes = [{"Model Type": "Bayes", "Real or Sim": "Real"}]
+    actions = [1, 2]
     
-    simlist = model_wrapper(rfo, strike_params, para_model, modlist2, hb)
+    simlist = model_wrapper(rfo, strike_params, para_model, modlist2, hb, actions)
     ms = score_summary(simlist, modlist2, 0)
     sq = score_query("Result", ms, lambda x: Counter(x))
     print sq

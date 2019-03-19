@@ -2700,8 +2700,8 @@ def hunted_para_descriptor(exp, hd):
         # filtering here with 2 b/c velocities can be created by noise.
         # 2 suffices but scipy gaussian can't handle nans, and drops
         # para once it disappears too early. used astropy filter instead
-        # which interpolates, but it interpolates to infinity. so have to
-        # list comp the nans. 
+        # which interpolates, but it interpolates to infinity. have to 
+        # preserve_nans. 
         filter_sd = 2
         kernel = Gaussian1DKernel(filter_sd)
         filt_az = convolve(az, kernel, preserve_nan=True)
@@ -2723,6 +2723,8 @@ def hunted_para_descriptor(exp, hd):
         norm_bf = map(lambda(x): x+int_win, norm_bf_raw)
         # these are normed to the hunting bout so that first bout is 0.
         endhunt = False
+
+        # br is bout range from hd. 
         for hb_ind, bout in enumerate(hunt_bouts):
             if br[0] != 0:
                 hb_ind += br[0]
@@ -3736,23 +3738,13 @@ def finish_experiment(exp, hd, export_para):
         v, va = pvec_wrapper(exp, hd, 1)
 
 
-def continuous_value_wrap(drct_list):
-    
-    for drct in drct_list:
-        ex = pickle.load(open(drct + '/master.pkl', 'rb'))
-        ex.hunt_wins = np.load(ex.directory + '/hunt_wins.npy')
-        hd_current = hd_import(drct)
-        continuous_value = 
-        
-def continuous_values_over_hunt(exp, hd, actions, f_or_r,
-                                veldir, *h_id_specified):
+def cval_align_and_plot(val_list, f_or_r):
 
+    dist, az_p, alt_p, az_n, alt_n = val_list
+    
     def nanfill(f_or_r, huntlist):
         new_huntlist = []
         lengths = map(lambda x: len(x), huntlist)
-        print np.mean(lengths)
-#        sb.distplot(lengths, kde=False, color='g')
-#        pl.show()
         max_length = np.max(lengths)
         for hunt in huntlist:
             lh = len(hunt)
@@ -3763,11 +3755,100 @@ def continuous_values_over_hunt(exp, hd, actions, f_or_r,
                 new_huntlist.append(nanstretch + hunt)
         return new_huntlist, max_length
 
+    dist_aligned, mx_len_d = nanfill(f_or_r, dist)
+    az_posv_aligned, mx_len_azp = nanfill(f_or_r, az_p)
+    az_negv_aligned, mx_len_azn = nanfill(f_or_r, az_n)
+    alt_posv_aligned, mx_len_altp = nanfill(f_or_r, alt_p)
+    alt_negv_aligned, mx_len_altn = nanfill(f_or_r, alt_n)
+    if f_or_r:
+        time_d = np.arange(0, mx_len_d) / 62.5
+        time_azp = np.arange(0, mx_len_azp) / 62.5
+        time_azn = np.arange(0, mx_len_azn) / 62.5
+        time_altp = np.arange(0, mx_len_altp) / 62.5
+        time_altn = np.arange(0, mx_len_altn) / 62.5
+    else:
+        time_d = np.arange(-mx_len_d+1, 1) / 62.5
+        time_azp = np.arange(-mx_len_azp+1, 1) / 62.5
+        time_azn = np.arange(-mx_len_azn+1, 1) / 62.5
+        time_altp = np.arange(-mx_len_altp+1, 1) / 62.5
+        time_altn = np.arange(-mx_len_altn+1, 1) / 62.5
+
+    fig, axes = pl.subplots(3, 2, sharex=True)
+    # d_plot = sb.tsplot(dist_aligned,
+    #                    time=time_d,
+    #                    estimator=np.nanmean, ci=95, ax=axes[0, 0])
+    # az_pos_plot = sb.tsplot(az_posv_aligned,
+    #                         time=time_azp,
+    #                         estimator=np.nanmean, ci=95, ax=axes[1, 0])
+    # alt_pos_plot = sb.tsplot(alt_posv_aligned,
+    #                          time=time_altp,
+    #                          estimator=np.nanmean, ci=95, ax=axes[2, 0])
+    # az_neg_plot = sb.tsplot(az_negv_aligned,
+    #                         time=time_azn,
+    #                         estimator=np.nanmean, ci=95, ax=axes[1, 1])
+    # alt_neg_plot = sb.tsplot(alt_negv_aligned,
+    #                          time=time_altn,
+    #                          estimator=np.nanmean, ci=95, ax=axes[2, 1])
+    sb.tsplot(dist_aligned,
+              time=time_d,
+              estimator=np.nanmean, ax=axes[0, 0])
+    axes[0, 0].set_title('Distance')
+    sb.tsplot(az_posv_aligned,
+              time=time_azp,
+              estimator=np.nanmean, ax=axes[1, 0])
+    axes[1, 0].set_title('Az Pos Velocity')
+    sb.tsplot(alt_posv_aligned,
+              time=time_altp,
+              estimator=np.nanmean, ax=axes[2, 0])
+    axes[2, 0].set_title('Alt Pos Velocity')
+    sb.tsplot(az_negv_aligned,
+              time=time_azn,
+              estimator=np.nanmean, ax=axes[1, 1])
+    axes[1, 1].set_title('Az Neg Velocity')
+    sb.tsplot(alt_negv_aligned,
+              time=time_altn,
+              estimator=np.nanmean, ax=axes[2, 1])
+    axes[2, 1].set_title('Alt Neg Velocity')
+    pl.tight_layout()
+    pl.show()
     
+    
+def continuous_value_wrap(drct_list, actions):
+
+    dist = []
+    az_p = []
+    alt_p = []
+    az_n = []
+    alt_n = []
+    
+    for drct in drct_list:
+        ex = pickle.load(open(drct + '/master.pkl', 'rb'))
+        ex.hunt_wins = np.load(ex.directory + '/hunt_wins.npy')
+        hd_current = hd_import(drct)
+        continuous_values = continuous_values_over_hunt(ex,
+                                                        hd_current, actions)
+        dist += continuous_values[0]
+        az_p += continuous_values[1]
+        alt_p += continuous_values[2]
+        az_n += continuous_values[3]
+        alt_n += continuous_values[4]
+
+    plotlist = [dist, az_p, alt_p, az_n, alt_n]
+    np.save('continuous_vals', plotlist)
+    cval_align_and_plot(plotlist, 1)
+    cval_align_and_plot(plotlist, 0)
+
+    
+def continuous_values_over_hunt(exp, hd, actions, *h_id_specified):
+    use_bout_velocity = True
     hd.dec_doubles = []
-    az_all = []
-    alt_all = []
+    az_posv = []
+    az_negv = []
+    alt_posv = []
+    alt_negv = []
     dist_all = []
+    bouts_for_velocity_calc = [-2, -1]
+    df = pd.read_csv(exp.directory + '/huntingbouts.csv')
     if h_id_specified == ():
         h_ids = hd.hunt_ind_list
     else:
@@ -3797,34 +3878,57 @@ def continuous_values_over_hunt(exp, hd, actions, f_or_r,
                 subscript = ''
                 penv_dec = False
 
+        df_inds_for_hunt = np.where(df['Hunt ID'] == hi)[0]
+
         poi_wrth = create_poirec(hi, 3, exp.directory,
                                  hp, penv_dec, False)
-        dist_all.append([pr[4] for pr in poi_wrth])
-        az_all.append([pr[6] for pr in poi_wrth])
-        alt_all.append([pr[7] for pr in poi_wrth])
+        win_for_strike = exp.bout_durations[exp.hunt_wins[hi][1]] + 1
+        az = [pr[6] for pr in poi_wrth[0:-win_for_strike]]
+        alt = [pr[7] for pr in poi_wrth[0:-win_for_strike]]
+        velocity_win = [-win_for_strike-5, -win_for_strike]
+# May be too strict. assess at -5 from bout end.
+        if use_bout_velocity:
+            av_az_velocity = np.nanmean(
+                [df['Para Az Velocity'][df_inds_for_hunt[
+                    bi]] for bi in bouts_for_velocity_calc])
+            av_alt_velocity = np.nanmean(
+                [df['Para Alt Velocity'][df_inds_for_hunt[
+                    bi]] for bi in bouts_for_velocity_calc])
 
-    dist_aligned, mx_len = nanfill(f_or_r, dist_all)
-    az_aligned, mx_len = nanfill(f_or_r, az_all)
-    alt_aligned, mx_len = nanfill(f_or_r, az_all)
-    if f_or_r:
-        bout_numbers = range(0, mx_len)
-    else:
-        bout_numbers = range(-mx_len+1, 1)
-    fig, axes = pl.subplots(3, 1)
-    d_plot = sb.tsplot(dist_aligned,
-                       time=bout_numbers,
-                       estimator=np.nanmean, ci=95, ax=axes[0, 0])
-    az_plot = sb.tsplot(az_aligned,
-                        time=bout_numbers,
-                        estimator=np.nanmean, ci=95, ax=axes[1, 0])
-    alt_plot = sb.tsplot(alt_aligned,
-                         time=bout_numbers,
-                         estimator=np.nanmean, ci=95, ax=axes[2, 0])
+        if np.nanmean(az[0:exp.integration_window]) < 0:
+            az = [-1 * x for x in az]
+            if use_bout_velocity:
+                av_az_velocity *= -1
+        if np.nanmean(alt[0:exp.integration_window]) < 0:
+            alt = [-1 * x for x in alt]
+            if use_bout_velocity:
+                av_alt_velocity *= -1
 
-    # e_plot.set_ylabel(valstring, fontsize=16)
-    # e_plot.set_xlabel('', fontsize=16)
-    # e_plot.xaxis.set_major_locator(MaxNLocator(integer=True))
-    # e_plot.tick_params(labelsize=13)
+        if not use_bout_velocity:
+            av_az_velocity = np.nanmean(
+                np.diff(az[velocity_win[0]:velocity_win[1]]))
+            av_alt_velocity = np.nanmean(
+                np.diff(alt[velocity_win[0]:velocity_win[1]]))
+            
+        if math.isnan(
+                av_az_velocity) or math.isnan(
+                    np.nanmean(az[0:exp.integration_window])):
+            continue
+
+        if not (.1 < np.abs(av_az_velocity) < .6):
+            continue
+        
+        dist_all.append([pr[4] for pr in poi_wrth[0:-win_for_strike]])
+        if av_az_velocity > 0:
+            az_posv.append(az)
+        else:
+            az_negv.append(az)
+        if av_alt_velocity > 0:
+            alt_posv.append(alt)
+        else:
+            alt_negv.append(alt)
+
+    return [dist_all, az_posv, alt_posv, az_negv, alt_negv]
     pl.show()
 
 
@@ -3917,7 +4021,7 @@ if __name__ == '__main__':
 # bout array, matched with a flag array that describes summary statistics for each bout. A new BoutsandFlags object is then created
 # whose only role is to contain the bouts and corresponding flags for each fish. 
 
-    fish_id = '091118_3'
+    fish_id = '091218_6'
     drct = os.getcwd() + '/' + fish_id
     import_exp = True
     import_dim = False
@@ -3954,10 +4058,10 @@ if __name__ == '__main__':
     #                   '091218_1', '091218_2', '091218_3', '091218_4', '091218_5', '091218_6',
     #                   '090418_3', '090418_4', '090418_5']
     
-    new_wik_subset = ['091418_1', '091418_2', '091418_3', '091418_4', '091418_5', '091418_6',
-                      '091118_1', '091118_2', '091118_3', '091118_4', '091118_5',
+    new_wik_subset = ['091418_1', '091418_2', '091418_3', '091418_4', '091418_6',
                       '091318_1', '091318_2', '091318_3', '091318_4', '091318_5', '091318_6',
                       '091218_1', '091218_2', '091218_3', '091218_4', '091218_5', '091218_6',
+                      '091118_1', '091118_2', '091118_3', '091118_4', '091118_5',
                       '090418_3', '090418_4']
 
 #    exp_generation_and_clustering(['091418_1'], all_varbs_dict,
