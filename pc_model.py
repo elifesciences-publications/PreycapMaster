@@ -178,7 +178,6 @@ class PreyCap_Simulation:
             ax1.plot(bout_ends, [ry[bt] for bt in bout_ends], 'm', marker='.', linestyle='None')
             ax1.plot(bout_ends, [rz[bt] for bt in bout_ends], 'm', marker='.', linestyle='None')
             ax1.set_title('XYZ vs T')
-
             ax4.plot(m1_yaw, 'r', linewidth=1)
             ax4.plot(self.fish_yaw, 'r', linewidth=1, alpha=.5)
             ax4.plot(m1_pitch, 'y', linewidth=1)
@@ -192,15 +191,12 @@ class PreyCap_Simulation:
             ax2.plot(mx, my, '.5', linewidth=.5)
             ax3.plot(rx, rz, '.5', linewidth=.5)
             ax3.plot(mx, mz, '.5', linewidth=.5)
-
             for i in range(len(rx)):
                 ax2.plot(rx[i], ry[i], color=rgba_vals1[i], marker='.')
                 ax3.plot(rx[i], rz[i], color=rgba_vals1[i], marker='.')
             for j in range(len(mx)):
                 ax2.plot(mx[j], my[j], color=rgba_vals2[j], marker='^', ms=3)
                 ax3.plot(mx[j], mz[j], color=rgba_vals2[j], marker='^', ms=3)
-
-                
             ax2.set_title('XY')
             ax3.set_title('XZ')
             pl.tight_layout()
@@ -525,8 +521,10 @@ class PreyCap_Simulation:
                     framecounter += 1
 
         self.last_pvarbs = last_finite_pvarbs
-        self.pcoords = [px[0:framecounter], py[0:framecounter], pz[0:framecounter]]
-        if hunt_result == 1:
+        self.pcoords = [px[0:framecounter],
+                        py[0:framecounter], pz[0:framecounter]]
+        # if framecounter <= 1, fish catches it immediately and theres no bout
+        if hunt_result == 1 and framecounter > 1:
             self.strikelist = np.zeros(framecounter-1).tolist() + [1]
         else:
             self.strikelist = np.zeros(framecounter)
@@ -927,7 +925,7 @@ def make_multiple_regression_model(hunt_db, vel_or_position):
 
 def view_and_sim_hunt(rfo, strike_params, para_model, model_params, hunt_id):
     realhunt_allframes(rfo, hunt_id)
-    simlist = model_wrapper(rfo, strike_params, para_model, model_params, hunt_id)
+    simlist = execute_models(rfo, strike_params, para_model, model_params, hunt_id)
     return simlist
     
 def realhunt_allframes(rfo, hunt_id):
@@ -976,18 +974,35 @@ def calculate_bout_energy(bout_xyz, uf_vector, bout_yaw, bout_pitch):
                 angular_pitch_vel**2 * moment_of_inertia)))
     return total_bout_energy
 
+
 def score_similarity_and_view(simlist, ind1, ind2):
     sim1 = simlist[ind1]
     sim2 = simlist[ind2]
     plot_or_not = True
     sim1.score_model_similarity(plot_or_not, sim2)
     make_vr_movies(sim1, sim2)
-    
-def model_wrapper(rfo, strike_params, para_model, model_params, hunt_db, actions, *hunt_id):
+
+
+def model_wrapper(drct_list, strike_params, para_model,
+                  model_params, hunt_db, actions):
+    for dc_ind, fish_id in enumerate(drct_list):
+        rfo = pd.read_pickle(
+            os.getcwd() + '/' + fish_id + '/RealHuntData_' + fish_id + '.pkl')
+        simlist = execute_models(rfo, strike_params,
+                                 para_model, model_params, hb, actions)
+        if dc_ind == 0:
+            ms = score_summary(simlist, model_params, 0)
+        else:
+            ms_2 = score_summary(simlist, model_params, 0)
+            ms = [a + b for a, b in zip(ms, ms_2)]
+    return ms
+
+
+def execute_models(rfo, strike_params, para_model,
+                   model_params, hunt_db, actions, *hunt_id):
     print("Executing Models")
     sim_list = []
     prev_interbouts = []
-    prev_bout_durations = []
     sequence_length = 10000
     p_xyz = []
     pause_wrapper = False
@@ -999,7 +1014,6 @@ def model_wrapper(rfo, strike_params, para_model, model_params, hunt_db, actions
     else:
         hunt_ids = hunt_id
 #        pause_wrapper = True
-        
     for h_ind, (hid, action) in enumerate(zip(hunt_ids, rfo.hunt_results)):
         if hunt_id != ():
             h_ind = np.argwhere(np.array(rfo.hunt_ids) == hunt_id[0])[0][0]
@@ -1100,6 +1114,21 @@ def score_summary(simlist, modlist, by_hunt_or_model):
     return model_scores
 
 
+
+def plot_query(model_summary):
+    var_keys = model_summary[0][0].keys()
+    var_keys.remove("Para Position at Term")
+    barfig, barax = pl.subplots(1, 5, figsize=[16, 5])
+    for var_ind, variable in enumerate(var_keys):
+        mapped_values = score_query(variable, model_summary)
+        if variable == "Result":
+            mapped_values = [[a.count(1)] for a in mapped_values]
+        barax[var_ind].set_title(variable)
+        print variable
+        sb.barplot(data=mapped_values, ax=barax[var_ind])
+    return barfig
+
+        
 def score_query(variable, ms, *func):
     f = lambda y: map(lambda x: x[variable], y)
     if func != ():
@@ -1108,6 +1137,9 @@ def score_query(variable, ms, *func):
     else:
         return map(f, ms)
 
+
+
+    
 #def success_summary(model_scores, modlist):
         
 def find_refractory_periods(rfo):
@@ -1146,6 +1178,9 @@ def slice_dataframe_for_bout0(hunt_db):
 # make a plot for the algorithm of alt / postbout alt.
 
 
+# wonder if number of bouts and time to catch should be plucked from result == 1. 
+
+
 # do 1 fish every 2 days until whole dataset is done. at least 1 para per 3 minutes. 
 
 # filter based on hunt result (i.e. 1s and 2s). this is a member variable of RealFishControl
@@ -1161,9 +1196,6 @@ def slice_dataframe_for_bout0(hunt_db):
 if __name__ == "__main__":
     csv_file = 'wik_bdb/all_huntbouts_rev.csv'
     hb = pd.read_csv(csv_file)
-    fish_id = '091418_6'
-    rfo = pd.read_pickle(
-        os.getcwd() + '/' + fish_id + '/RealHuntData_' + fish_id + '.pkl')
     # CAN FILTER BASED ON HUNT RESULT IF YOU WANT.
     regmodel_input = slice_dataframe_for_regmodels(hb)
     bout0regmodel_input = slice_dataframe_for_bout0(hb)
@@ -1215,12 +1247,16 @@ if __name__ == "__main__":
                 {"Model Type": "Multiple Regression Velocity", "Real or Sim": "Real"}]
            #     {"Model Type": "Bayes", "Real or Sim": "Real"}]
 
-
     modlist_bayes = [{"Model Type": "Bayes", "Real or Sim": "Real"}]
     actions = [1, 2]
-    
-    simlist = model_wrapper(rfo, strike_params, para_model, modlist2, hb, actions)
-    ms = score_summary(simlist, modlist2, 0)
+    new_wik_subset = ['091418_1', '091418_2', '091418_3', '091418_4', '091418_6',
+                      '091318_1', '091318_2', '091318_3', '091318_4', '091318_5', '091318_6',
+                      '091218_1', '091218_2', '091218_3', '091218_4', '091218_5', '091218_6',
+                      '091118_1', '091118_2', '091118_3', '091118_4', '091118_5',
+                      '090418_3', '090418_4']
+
+    ms = model_wrapper(new_wik_subset, strike_params,
+                       para_model, modlist2, hb, actions)
     sq = score_query("Result", ms, lambda x: Counter(x))
     print sq
 
