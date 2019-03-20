@@ -38,6 +38,7 @@ class PreyCap_Simulation:
 #        self.velocity_kernel = gaussian_filter(self.velocity_kernel, 1)
         self.sim_length = simlen
         self.para_states = []
+        self.marrcount = 0
         self.model_para_xyz = []
         self.simulate_para = simulate_para
         # + 1 is b/c init condition is already in fish_xyz, pitch, yaw
@@ -47,7 +48,7 @@ class PreyCap_Simulation:
             fishmodel.hunt_ind][1]
         if para_input == ():
             self.para_xyz = [fishmodel.real_hunt["Para XYZ"][0],
-                             fishmodel.real_hunt["Para XYZ"][1],                             
+                             fishmodel.real_hunt["Para XYZ"][1],
                              fishmodel.real_hunt["Para XYZ"][2]]
             self.create_para_trajectory()
         else:
@@ -58,8 +59,8 @@ class PreyCap_Simulation:
         self.fish_xyz = [fishmodel.real_hunt["Initial Conditions"][0]]
         self.fish_bases = []
         self.fish_pitch = [fishmodel.real_hunt["Initial Conditions"][1]]
-        self.fish_yaw = [fishmodel.real_hunt["Initial Conditions"][2]]        
-        self.interbouts= self.fishmodel.interbouts
+        self.fish_yaw = [fishmodel.real_hunt["Initial Conditions"][2]]
+        self.interbouts = self.fishmodel.interbouts
         self.bout_durations = self.fishmodel.bout_durations
         self.bout_energy = []
         self.bout_counter = 0
@@ -99,17 +100,37 @@ class PreyCap_Simulation:
                 for row in rowlist:
                     writer.writerow(row)
 
+    def marr2algorithm(self, para_varbs, boutcounter):
+        if boutcounter > 20:
+            return np.nan
+        if self.fishmodel.strike(para_varbs):
+            return boutcounter + 1
+        if boutcounter == 0:
+            pb_az = .29 * para_varbs["Para Az"]
+            pb_dist = .87 * para_varbs["Para Dist"] - 27.5
+            pb_alt = .48 * para_varbs["Para Alt"] + .15
+        else:
+            pb_az = .54 * para_varbs["Para Az"]
+            pb_dist = .88 * para_varbs["Para Dist"] - 8
+            if para_varbs["Para Alt"] >= 0:
+                pb_alt = .56 * para_varbs["Para Alt"] + .14
+            else:
+                pb_alt = 1.1 * para_varbs["Para Alt"] + .15
+        para_varbs = {"Para Az": pb_az,
+                      "Para Alt": pb_alt,
+                      "Para Dist": pb_dist}
+        return self.marr2algorithm(para_varbs, boutcounter+1)
 
     def score_model(self):
         score_dict = {"Number of Bouts": self.bout_counter,
-                      "Time to Catch": self.framecounter * .015,
+                      "Hunt Duration": self.framecounter * .015,
                       "Result": self.hunt_result,
                       "Para Position at Term": self.last_pvarbs,
-                      "Energy Expended": np.mean(self.bout_energy), 
-                      "Frames Out Of View": self.num_frames_out_of_view}
+                      "Energy Expended": np.mean(self.bout_energy),
+                      "Frames Out Of View": self.num_frames_out_of_view,
+                      "Marr Algorithm Count": self.marrcount}
         return score_dict
 
-                    
     def score_model_similarity(self, plot_or_not, sim):
         # call this with flag that para is REAL (b/c have real fish record to compare to)
         # if flag is sim, avoid the real parts or ignore them. 
@@ -117,10 +138,10 @@ class PreyCap_Simulation:
         m1_pitch = np.array(sim.fish_pitch)
         m1_xyz = [np.array(xyz) for xyz in sim.fish_xyz]
         m2_xyz = [np.array(xyz) for xyz in self.fish_xyz]
-        m2_numbouts = self.bout_counter
         mag_diff_xyz = np.array([np.linalg.norm(r-m) for r,m in zip(m1_xyz, m2_xyz)])
         diff_pitch = [b-a for a, b in zip(np.around(m1_pitch, 3), np.around(np.array(self.fish_pitch), 3))]
-        dy_raw = [b-a for a, b in zip(np.around(m1_yaw, 3), np.around(np.array(self.fish_yaw), 3))]
+        dy_raw = [b-a for a, b in zip(np.around(m1_yaw, 3),
+                                      np.around(np.array(self.fish_yaw), 3))]
         diff_yaw = yaw_fix(dy_raw)
         if np.sum(mag_diff_xyz) != 0:
             norm_md = mag_diff_xyz / np.std(mag_diff_xyz)
@@ -346,6 +367,9 @@ class PreyCap_Simulation:
                           "Para Az Velocity": 0,
                           "Para Alt Velocity": 0, 
                           "Para Dist Velocity": 0}
+
+            if framecounter == 0:
+                self.marrcount = self.marr2algorithm(para_varbs, 0)
             
             if first_postbout_frame:
                 csv_row += [para_varbs["Para Az"], para_varbs["Para Alt"], para_varbs["Para Dist"]]
@@ -420,18 +444,17 @@ class PreyCap_Simulation:
                 
                 if self.interpolate != 'none':
                     if self.interpolate == 'kernel':
-                        vkernel = normalize_kernel(self.velocity_kernel,
-                                                   self.bout_durations[self.bout_counter])
-
-                        ykernel = normalize_kernel_interp(self.yaw_kernel,
-                                                          self.bout_durations[self.bout_counter])
-
+                        vkernel = normalize_kernel(
+                            self.velocity_kernel,
+                            self.bout_durations[self.bout_counter])
+                        ykernel = normalize_kernel_interp(
+                            self.yaw_kernel,
+                            self.bout_durations[self.bout_counter])
                         x_prog = (np.cumsum(dx * vkernel) + self.fish_xyz[-1][0]).tolist()
                         y_prog = (np.cumsum(dy * vkernel) + self.fish_xyz[-1][1]).tolist()
                         z_prog = (np.cumsum(dz * vkernel) + self.fish_xyz[-1][2]).tolist()
                         yaw_prog = (np.cumsum(fish_bout[4] * ykernel) + self.fish_yaw[-1]).tolist()
                         pitch_prog = (np.cumsum(fish_bout[3] * vkernel) + self.fish_pitch[-1]).tolist()
-
                         
                     elif self.interpolate == 'linear':
                         x_prog = np.linspace(
@@ -506,7 +529,9 @@ class PreyCap_Simulation:
                         self.fish_yaw += bout_yaw.tolist()
                         self.fish_bases += uf_bout
                         uf_bout = fb_init + uf_bout
-                        self.bout_energy.append(calculate_bout_energy(bout_xyz, uf_bout, bout_yaw, bout_pitch))
+                        self.bout_energy.append(calculate_bout_energy(
+                            bout_xyz,
+                            uf_bout, bout_yaw, bout_pitch))
                         framecounter += self.bout_durations[self.bout_counter]
                         self.bout_counter += 1
                     else:
@@ -966,7 +991,7 @@ def calculate_bout_energy(bout_xyz, uf_vector, bout_yaw, bout_pitch):
     angular_yaw_vel = np.array(yaw_fix(np.diff(bout_yaw)))
     angular_pitch_vel = np.diff(bout_pitch)
     # 1 mg from avella et al. 2012, dpf10. wet mass. dry mass is ~.2mg
-    fish_mass = .001 
+    fish_mass = .001
     moment_of_inertia = fish_mass * (head_to_com_distance)**2
     total_bout_energy = np.sum(.5*(
         (velocity_com**2 * fish_mass) + (
@@ -1091,7 +1116,7 @@ def execute_models(rfo, strike_params, para_model,
                 r = raw_input('Press Enter to Continue')
     return sim_list
 
-    
+
 def yaw_fix(dy_input):
     dyaw = []
     for dy in dy_input:
@@ -1104,7 +1129,7 @@ def yaw_fix(dy_input):
                 dyaw.append(2*np.pi - dy)
     return np.array(dyaw)
 
-    
+
 def score_summary(simlist, modlist, by_hunt_or_model):
     num_models = len(modlist)
     model_scores = [[] for i in range(num_models)]
@@ -1114,22 +1139,48 @@ def score_summary(simlist, modlist, by_hunt_or_model):
     return model_scores
 
 
+def plot_query(model_summary, *filter_result):
 
-def plot_query(model_summary):
+    def result_filter(modsum, result):
+        results_lists = score_query("Result", modsum)
+        args_matching_result = [np.where(
+            np.array(rs) == result)[0] for rs in results_lists]
+        return args_matching_result
+
+    res_args = []
+    if filter_result != ():
+        filter_result = filter_result[0]
+        res_args = result_filter(model_summary, filter_result)
+    else:
+        res_args = [np.arange(len(ms)) for ms in model_summary]
     var_keys = model_summary[0][0].keys()
     var_keys.remove("Para Position at Term")
+    var_keys.remove("Marr Algorithm Count")
     barfig, barax = pl.subplots(1, 5, figsize=[16, 5])
     for var_ind, variable in enumerate(var_keys):
-        mapped_values = score_query(variable, model_summary)
+        mapped_values = [np.array(mv)[res_args[i]] for i, mv in enumerate(
+            score_query(variable, model_summary))]
+        marr_values = [np.array(mr)[res_args[i]] for i, mr in enumerate(
+            score_query("Marr Algorithm Count", model_summary))][0]
         if variable == "Result":
-            mapped_values = [[a.count(1)] for a in mapped_values]
+            mapped_values = [np.array(np.count_nonzero(a==1)) for a in mapped_values]
+            marr_results = np.sum(
+                [1 for ma in marr_values if not math.isnan(ma)])
+            mapped_values.append(np.array(marr_results))
+        if variable == "Number of Bouts":
+            mapped_values.append(marr_values)
         barax[var_ind].set_title(variable)
-        print variable
+        print([mv.shape for mv in mapped_values])
         sb.barplot(data=mapped_values, ax=barax[var_ind])
     return barfig
 
         
 def score_query(variable, ms, *func):
+
+    # want to change this so it takes a result.
+    # want to query on results where fish catches and compare to when other models dont
+    # could also query on whenever any model succeeds
+    
     f = lambda y: map(lambda x: x[variable], y)
     if func != ():
         func = func[0]
@@ -1257,6 +1308,7 @@ if __name__ == "__main__":
 
     ms = model_wrapper(new_wik_subset, strike_params,
                        para_model, modlist2, hb, actions)
+    np.save('ms.npy', ms)
     sq = score_query("Result", ms, lambda x: Counter(x))
     print sq
 

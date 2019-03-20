@@ -123,15 +123,25 @@ class BayesDB_Simulator:
                               robust=False, color=color)
         rx, ry = reg_plot.get_lines()[0].get_data()
         r_slope = np.around((ry[1] - ry[0])/(rx[1] - rx[0]), 2)
-        r_yint = np.around(ry[1] - r_slope*rx[1], 2)
+        r_yint = np.around(ry[1] - r_slope*rx[1], 3)
         reg_fit = np.around(pearsonr(nanfilt_varbs[:, 0],
                                      nanfilt_varbs[:, 1])[0], 2)
-        reg_plot.text(rx[0], 2, '  ' +
-                      str(r_slope) + 'x + ' + str(
+        if v2 == "Bout Distance" or v2 == "Postbout Para Dist":
+            reg_plot.set_ylim([0, 1200])
+            reg_plot.set_xlim([0, 1200])
+            reg_plot.text(100, 1000, '  ' +
+                          str(r_slope) + 'x + ' + str(
                           r_yint) + ', ' + '$r^{2}$ = ' + str(reg_fit**2),
-                      color=color, fontsize=16)
-        if v2 != "Bout Distance" and v2 != "Postbout Para Distance":
+                          color=color, fontsize=16)
+
+        else:
+            reg_plot.set_xlim([-2.5, 2.5])
             reg_plot.set_ylim([-2.5, 2.5])
+            reg_plot.text(-2, 2, '  ' +
+                          str(r_slope) + 'x + ' + str(
+                          r_yint) + ', ' + '$r^{2}$ = ' + str(reg_fit**2),
+                          color=color, fontsize=16)
+
         if labels != ():
             labels = labels[0]
             reg_plot.set_xlabel(labels[0], fontsize=16)
