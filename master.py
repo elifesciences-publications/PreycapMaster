@@ -2763,11 +2763,11 @@ def hunted_para_descriptor(exp, hd):
                                                   ufish_origin,
                                                   uperp, upar, p_xyz, 0))
             para_daz = gaussian_filter(np.diff(
-                [x[0] for x in pmap_returns]), 1) / .015
+                [x[0] for x in pmap_returns]), 1) / .016
             para_dalt = gaussian_filter(
-                np.diff([x[1] for x in pmap_returns]), 1) / .015
+                np.diff([x[1] for x in pmap_returns]), 1) / .016
             para_ddist = gaussian_filter(
-                np.diff([x[2] for x in pmap_returns]), 1) / .015
+                np.diff([x[2] for x in pmap_returns]), 1) / .016
             para_az_accel = np.diff(para_daz)
             para_alt_accel = np.diff(para_dalt)
             para_dist_accel = np.diff(para_ddist)

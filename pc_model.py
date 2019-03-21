@@ -23,12 +23,68 @@ from iventure.utils_bql import query
 from iventure.utils_bql import subsample_table_columns
 from collections import deque, Counter
 from master import fishxyz_to_unitvecs, sphericalbout_to_xyz, p_map_to_fish, RealFishControl, normalize_kernel, normalize_kernel_interp
-from toolz.itertoolz import sliding_window, partition
+from toolz.itertoolz import sliding_window
 from scipy.ndimage import gaussian_filter
 
 # Next steps: make sure bayesDB runs look like real bouts. see what regression does too. 
 
 
+class Marr2Algorithms:
+    def __init__(self, para_positions):
+        self.para_positions = para_positions
+        self.bouts_static = []
+        self.bouts_bayes = []
+        self.marr_bdb_file = bl.bayesdb_open('wik_bdb/bdb_hunts_marr.bdb')
+        
+    def marr2algorithm(self, para_varbs, boutcounter):
+        if boutcounter > 20:
+            return np.nan
+        if self.fishmodel.strike(para_varbs):
+            return boutcounter + 1
+        if boutcounter == 0:
+            pb_az = .29 * para_varbs["Para Az"]
+            pb_dist = .87 * para_varbs["Para Dist"] - 27.5
+            pb_alt = .48 * para_varbs["Para Alt"] + .15
+        else:
+            pb_az = .54 * para_varbs["Para Az"]
+            pb_dist = .88 * para_varbs["Para Dist"] - 8
+            if para_varbs["Para Alt"] >= 0:
+                pb_alt = .56 * para_varbs["Para Alt"] + .14
+            else:
+                pb_alt = 1.1 * para_varbs["Para Alt"] + .15
+        para_varbs = {"Para Az": pb_az,
+                      "Para Alt": pb_alt,
+                      "Para Dist": pb_dist}
+        return self.marr2algorithm(para_varbs, boutcounter+1)
+
+    def marr2bayes(self, para_varbs, boutcounter):
+        if boutcounter > 20:
+            return np.nan
+        if self.fishmodel.strike(para_varbs):
+            return boutcounter + 1
+        df_sim = query(self.marr_bdb_file,
+                       '''SIMULATE "Postbout Para Az", "Postbout Para Alt",
+                       "Postbout Para Dist"
+                       FROM bout_population
+                       GIVEN "Para Az" = {Para Az},
+                       "Para Alt" = {Para Alt},
+                       "Para Dist" = {Para Dist}
+                       LIMIT 1 '''.format(**para_varbs))
+        para_varbs = {"Para Az": df_sim["Postbout Para Az"][0],
+                      "Para Alt": df_sim["Postbout Para Alt"][0],
+                      "Para Dist": df_sim["Postbout Para Dist"][0]}
+        return self.marr2bayes(para_varbs, boutcounter+1)
+
+    def run_marr2_models(self, static_or_bayes):
+        if static_or_bayes == 'static':
+            self.bouts_static = map(lambda para_position:
+                                    self.marr2algorithm(para_position, 0),
+                                    self.para_positions)
+        elif static_or_bayes == 'bayes':
+            self.bouts_bayes = map(lambda para_position:
+                                   self.marr2bayes(para_position, 0),
+                                   self.para_positions)
+    
 class PreyCap_Simulation:
     def __init__(self, fishmodel, paramodel, simlen, simulate_para, *para_input):
         self.fishmodel = fishmodel
@@ -38,7 +94,6 @@ class PreyCap_Simulation:
 #        self.velocity_kernel = gaussian_filter(self.velocity_kernel, 1)
         self.sim_length = simlen
         self.para_states = []
-        self.marrcount = 0
         self.model_para_xyz = []
         self.simulate_para = simulate_para
         # + 1 is b/c init condition is already in fish_xyz, pitch, yaw
@@ -55,7 +110,6 @@ class PreyCap_Simulation:
             self.para_xyz = para_input[0]
             self.create_para_trajectory()
             # want to generate new interbouts only once per simhunt
-        self.para_spherical = []
         self.fish_xyz = [fishmodel.real_hunt["Initial Conditions"][0]]
         self.fish_bases = []
         self.fish_pitch = [fishmodel.real_hunt["Initial Conditions"][1]]
@@ -71,7 +125,8 @@ class PreyCap_Simulation:
         self.last_pvarbs = []
         self.num_frames_out_of_view = 0
         self.pcoords = []
-
+        self.para_initial_position = {}
+        
     def write_bouts_to_csv(self, rowlist):
         header = ["Bout Az", "Bout Alt", "Bout Dist", "Bout Delta Pitch", "Bout Delta Yaw",
                   "Para Az", "Para Alt", "Para Dist", "Para Az Velocity", "Para Alt Velocity",
@@ -100,35 +155,13 @@ class PreyCap_Simulation:
                 for row in rowlist:
                     writer.writerow(row)
 
-    def marr2algorithm(self, para_varbs, boutcounter):
-        if boutcounter > 20:
-            return np.nan
-        if self.fishmodel.strike(para_varbs):
-            return boutcounter + 1
-        if boutcounter == 0:
-            pb_az = .29 * para_varbs["Para Az"]
-            pb_dist = .87 * para_varbs["Para Dist"] - 27.5
-            pb_alt = .48 * para_varbs["Para Alt"] + .15
-        else:
-            pb_az = .54 * para_varbs["Para Az"]
-            pb_dist = .88 * para_varbs["Para Dist"] - 8
-            if para_varbs["Para Alt"] >= 0:
-                pb_alt = .56 * para_varbs["Para Alt"] + .14
-            else:
-                pb_alt = 1.1 * para_varbs["Para Alt"] + .15
-        para_varbs = {"Para Az": pb_az,
-                      "Para Alt": pb_alt,
-                      "Para Dist": pb_dist}
-        return self.marr2algorithm(para_varbs, boutcounter+1)
-
     def score_model(self):
         score_dict = {"Number of Bouts": self.bout_counter,
-                      "Hunt Duration": self.framecounter * .015,
+                      "Hunt Duration": self.framecounter * .016,
                       "Result": self.hunt_result,
                       "Para Position at Term": self.last_pvarbs,
                       "Energy Expended": np.mean(self.bout_energy),
-                      "Frames Out Of View": self.num_frames_out_of_view,
-                      "Marr Algorithm Count": self.marrcount}
+                      "Frames Out Of View": self.num_frames_out_of_view}
         return score_dict
 
     def score_model_similarity(self, plot_or_not, sim):
@@ -352,7 +385,6 @@ class PreyCap_Simulation:
                 self.model_para_xyz = [px[framecounter], py[framecounter], pz[framecounter]]
 
             self.fishmodel.current_target_xyz = self.model_para_xyz
-
             
             para_spherical = p_map_to_fish(fish_basis[1],
                                            fish_basis[0],
@@ -369,9 +401,7 @@ class PreyCap_Simulation:
                           "Para Dist Velocity": 0}
 
             if framecounter == self.fishmodel.rfo.firstbout_para_intwin:
-                if math.isnan(para_varbs["Para Az"]):
-                    print('nan in para')
-                self.marrcount = self.marr2algorithm(para_varbs, 0)
+                self.para_initial_position = para_varbs
             
             if first_postbout_frame:
                 csv_row += [para_varbs["Para Az"], para_varbs["Para Alt"], para_varbs["Para Dist"]]
@@ -426,9 +456,12 @@ class PreyCap_Simulation:
                     pmap_returns.append(p_map_to_fish(fish_basis[1],
                                                       fish_basis[0],
                                                       fish_basis[3], fish_basis[2], p_xyz, 0))
-                para_varbs["Para Az Velocity"] = np.mean(gaussian_filter(np.diff([x[0] for x in pmap_returns]), 1)) / .015
-                para_varbs["Para Alt Velocity"] = np.mean(gaussian_filter(np.diff([x[1] for x in pmap_returns]), 1)) / .015
-                para_varbs["Para Dist Velocity"] = np.mean(gaussian_filter(np.diff([x[2] for x in pmap_returns]), 1)) / .015
+                para_varbs["Para Az Velocity"] = np.mean(gaussian_filter(
+                    np.diff([x[0] for x in pmap_returns]), 1)) / .016
+                para_varbs["Para Alt Velocity"] = np.mean(gaussian_filter(
+                    np.diff([x[1] for x in pmap_returns]), 1)) / .016
+                para_varbs["Para Dist Velocity"] = np.mean(gaussian_filter(
+                    np.diff([x[2] for x in pmap_returns]), 1)) / .016
                 if not np.isfinite(para_varbs.values()).all():
                     # here para record ends before fish catches.
                     # para can't be nan at beginning due to real fish filters in master.py
@@ -985,7 +1018,25 @@ def single_hunt_results(rfo, bpm, hunt_id, modlist):
     results_pretty = [m for m in zip(modlist, results)]
     return results_pretty
 
-def calculate_bout_energy(bout_xyz, uf_vector, bout_yaw, bout_pitch):
+def calculate_bout_energy(bout_xyz,
+                          uf_vector, bout_yaw, bout_pitch):
+    bout_duration = len(bout_xyz)
+    head_to_com_distance = 50
+    com_xyz_init = np.array(bout_xyz[0]) - (head_to_com_distance * uf_vector[0])
+    com_xyz_end = np.array(bout_xyz[-1]) - (head_to_com_distance * uf_vector[-1])
+    velocity_com = np.linalg.norm(com_xyz_end - com_xyz_init) / (bout_duration * .016)
+    angular_yaw_vel = yaw_fix([bout_yaw[-1] - bout_yaw[0]])[0] / (bout_duration * .016)
+    angular_pitch_vel = bout_pitch[-1] - bout_pitch[0] / (bout_duration * .016)
+    # 1 mg from avella et al. 2012, dpf10. wet mass. dry mass is ~.2mg
+    fish_mass = .001
+    moment_of_inertia = fish_mass * (head_to_com_distance)**2
+    total_bout_energy = .5*((velocity_com**2 * fish_mass) + (
+            angular_yaw_vel**2 * moment_of_inertia) + (
+                angular_pitch_vel**2 * moment_of_inertia))
+    return total_bout_energy
+
+def calculate_bout_energy_nonlin(bout_xyz,
+                                 uf_vector, bout_yaw, bout_pitch):
     bout_xyz = np.array(bout_xyz)
     head_to_com_distance = 50
     com_xyz = [xyz - (head_to_com_distance * uf) for xyz, uf in zip(bout_xyz, uf_vector)]
@@ -1012,23 +1063,26 @@ def score_similarity_and_view(simlist, ind1, ind2):
 
 def model_wrapper(drct_list, strike_params, para_model,
                   model_params, hunt_db, actions):
+    para_initial_positions = []
     for dc_ind, fish_id in enumerate(drct_list):
         rfo = pd.read_pickle(
             os.getcwd() + '/' + fish_id + '/RealHuntData_' + fish_id + '.pkl')
-        simlist = execute_models(rfo, strike_params,
-                                 para_model, model_params, hb, actions)
+        simlist, ppos_list = execute_models(rfo, strike_params,
+                                            para_model, model_params, hb, actions)
         if dc_ind == 0:
             ms = score_summary(simlist, model_params, 0)
         else:
             ms_2 = score_summary(simlist, model_params, 0)
             ms = [a + b for a, b in zip(ms, ms_2)]
-    return ms
+        para_initial_positions += ppos_list
+    return ms, para_initial_positions
 
 
 def execute_models(rfo, strike_params, para_model,
                    model_params, hunt_db, actions, *hunt_id):
     print("Executing Models")
     sim_list = []
+    para_init_positions = []
     prev_interbouts = []
     sequence_length = 10000
     p_xyz = []
@@ -1110,13 +1164,15 @@ def execute_models(rfo, strike_params, para_model,
             sim.run_simulation()
             p_xyz = copy.deepcopy(sim.para_xyz)
             prev_interbouts = copy.deepcopy(sim.fishmodel.interbouts)
-            prev_boutdurations = copy.deepcopy(sim.fishmodel.bout_durations)                
+            prev_boutdurations = copy.deepcopy(sim.fishmodel.bout_durations)
+            if mi == 0:
+                para_init_positions.append(copy.deepcopy(sim.para_initial_position))
             sim_list.append(sim)
             if model_run["Model Type"] == "Bayes":
                 fish.bdb_file.close()
             if pause_wrapper:            
                 r = raw_input('Press Enter to Continue')
-    return sim_list
+    return sim_list, para_init_positions
 
 
 def yaw_fix(dy_input):
@@ -1158,6 +1214,7 @@ def plot_query(model_summary, p_type, *filter_result):
     var_keys = model_summary[0][0].keys()
     var_keys.remove("Para Position at Term")
     var_keys.remove("Marr Algorithm Count")
+    var_keys.remove("Hunt Duration")
     barfig, barax = pl.subplots(1, 5, figsize=[16, 5])
     for var_ind, variable in enumerate(var_keys):
         mapped_values = [np.array(mv)[res_args[i]] for i, mv in enumerate(
@@ -1225,29 +1282,11 @@ def slice_dataframe_for_bout0(hunt_db):
     return hdb_bout0[slice_fails]
 
 
-
-# have to wrap all fish.
-
-# have to make bout 0 model.
-
 # write out algorithms as lisp programs
 
 # make a plot for the algorithm of alt / postbout alt.
 
-
-# wonder if number of bouts and time to catch should be plucked from result == 1. 
-
-
 # do 1 fish every 2 days until whole dataset is done. at least 1 para per 3 minutes. 
-
-# filter based on hunt result (i.e. 1s and 2s). this is a member variable of RealFishControl
-
-# don't include bout 1 in the hunt. give models the first bout excellence
-# this can be done via messing with realfishcontrol input in hunted_para_descriptor
-
-# don't output a csv file output a set of seaborn plots just like with minefield
-
-
 
 
 if __name__ == "__main__":
@@ -1301,7 +1340,8 @@ if __name__ == "__main__":
     modlist2 = [{"Model Type": "Real Coords", "Real or Sim": "Real"},
                 {"Model Type": "Independent Regression", "Real or Sim": "Real"},
                 {"Model Type": "Multiple Regression Position", "Real or Sim": "Real"},
-                {"Model Type": "Multiple Regression Velocity", "Real or Sim": "Real"}]
+                {"Model Type": "Multiple Regression Velocity", "Real or Sim": "Real"},
+                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All"}]
            #     {"Model Type": "Bayes", "Real or Sim": "Real"}]
 
     modlist_bayes = [{"Model Type": "Bayes", "Real or Sim": "Real"}]
@@ -1312,8 +1352,8 @@ if __name__ == "__main__":
                       '091118_1', '091118_2', '091118_3', '091118_4', '091118_5',
                       '090418_3', '090418_4']
 
-    ms = model_wrapper(new_wik_subset, strike_params,
-                       para_model, modlist2, hb, actions)
+    ms, p_inits = model_wrapper(new_wik_subset, strike_params,
+                                para_model, modlist2, hb, actions)
     np.save('ms.npy', ms)
     sq = score_query("Result", ms, lambda x: Counter(x))
     print sq
