@@ -368,7 +368,9 @@ class PreyCap_Simulation:
                           "Para Alt Velocity": 0, 
                           "Para Dist Velocity": 0}
 
-            if framecounter == 0:
+            if framecounter == self.fishmodel.rfo.firstbout_para_intwin:
+                if math.isnan(para_varbs["Para Az"]):
+                    print('nan in para')
                 self.marrcount = self.marr2algorithm(para_varbs, 0)
             
             if first_postbout_frame:
@@ -638,7 +640,7 @@ class FishModel:
             self.bout_durations.append(filt_bdur[r])
 
     def strike(self, p):
-        num_stds = 1.2
+        num_stds = 1.5
         in_az_win = (p["Para Az"] < self.strike_means[0] + num_stds * self.strike_std[0] and
                      p["Para Az"] > self.strike_means[0] - num_stds * self.strike_std[0])
         in_alt_win = (p["Para Alt"] < self.strike_means[1] + num_stds * self.strike_std[1] and
@@ -874,7 +876,7 @@ def characterize_strikes(hb_data):
     strike_characteristics = []
     for i in range(len(hb_data["Bout Number"])):
         if hb_data["Bout Number"][i] == -1:
-            if hb_data["Strike Or Abort"][i] < 3:
+            if hb_data["Strike Or Abort"][i] == 1:
                 strike = np.array([hb_data["Para Az"][i],
                                    hb_data["Para Alt"][i],
                                    hb_data["Para Dist"][i]])
@@ -1139,7 +1141,7 @@ def score_summary(simlist, modlist, by_hunt_or_model):
     return model_scores
 
 
-def plot_query(model_summary, *filter_result):
+def plot_query(model_summary, p_type, *filter_result):
 
     def result_filter(modsum, result):
         results_lists = score_query("Result", modsum)
@@ -1171,7 +1173,11 @@ def plot_query(model_summary, *filter_result):
             mapped_values.append(marr_values)
         barax[var_ind].set_title(variable)
         print([mv.shape for mv in mapped_values])
-        sb.barplot(data=mapped_values, ax=barax[var_ind])
+        if p_type == 'bar' or variable == "Result":
+            sb.barplot(data=mapped_values, ax=barax[var_ind])
+        elif p_type == 'violin':
+            sb.violinplot(data=mapped_values, ax=barax[var_ind])
+#            sb.boxplot(data=mapped_values, ax=barax[var_ind])
     return barfig
 
         
