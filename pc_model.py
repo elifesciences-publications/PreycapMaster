@@ -8,6 +8,7 @@ from matplotlib.colors import Normalize, ListedColormap
 from matplotlib import pyplot as pl
 from matplotlib import gridspec
 import statsmodels.api as sm
+from scipy.stats import norm
 import matplotlib.cm as cm
 import seaborn as sb
 import pandas as pd
@@ -26,20 +27,27 @@ from master import fishxyz_to_unitvecs, sphericalbout_to_xyz, p_map_to_fish, Rea
 from toolz.itertoolz import sliding_window
 from scipy.ndimage import gaussian_filter
 
-# Next steps: make sure bayesDB runs look like real bouts. see what regression does too. 
 
+# Notes: bayesdb, regardless of the seed you provide at opening,
+# will yield the same result each time if you re-create the
+# class. If you run marr2bayes on the same instance,
+# a second time, it will produce a different result.
 
 class Marr2Algorithms:
-    def __init__(self, para_positions):
-        self.para_positions = para_positions
+    def __init__(self, para_positions, strike_params):
+        self.para_positions = para_positions.tolist()
         self.bouts_static = []
         self.bouts_bayes = []
-        self.marr_bdb_file = bl.bayesdb_open('wik_bdb/bdb_hunts_marr.bdb')
-        
+        self.marr_bdb_file = bl.bayesdb_open('wik_bdb/bdb_hunts_marr.bdb',
+                                             seed=np.random.seed())
+        self.strike_params = strike_params
+        self.strike_means = strike_params[0]
+        self.strike_std = strike_params[1]
+
     def marr2algorithm(self, para_varbs, boutcounter):
         if boutcounter > 20:
             return np.nan
-        if self.fishmodel.strike(para_varbs):
+        if strike(para_varbs, self.strike_means, self.strike_std):
             return boutcounter + 1
         if boutcounter == 0:
             pb_az = .29 * para_varbs["Para Az"]
@@ -60,7 +68,7 @@ class Marr2Algorithms:
     def marr2bayes(self, para_varbs, boutcounter):
         if boutcounter > 20:
             return np.nan
-        if self.fishmodel.strike(para_varbs):
+        if strike(para_varbs, self.strike_means, self.strike_std):
             return boutcounter + 1
         df_sim = query(self.marr_bdb_file,
                        '''SIMULATE "Postbout Para Az", "Postbout Para Alt",
@@ -73,14 +81,18 @@ class Marr2Algorithms:
         para_varbs = {"Para Az": df_sim["Postbout Para Az"][0],
                       "Para Alt": df_sim["Postbout Para Alt"][0],
                       "Para Dist": df_sim["Postbout Para Dist"][0]}
+        print para_varbs
         return self.marr2bayes(para_varbs, boutcounter+1)
 
-    def run_marr2_models(self, static_or_bayes):
-        if static_or_bayes == 'static':
+    def run_marr2_models(self, *static_or_bayes):
+        if static_or_bayes != ():
+            static_or_bayes = static_or_bayes[0]
+        if static_or_bayes == 'static' or static_or_bayes == ():
             self.bouts_static = map(lambda para_position:
                                     self.marr2algorithm(para_position, 0),
                                     self.para_positions)
-        elif static_or_bayes == 'bayes':
+        if static_or_bayes == 'bayes' or static_or_bayes == ():
+            print('in bayes')
             self.bouts_bayes = map(lambda para_position:
                                    self.marr2bayes(para_position, 0),
                                    self.para_positions)
@@ -164,104 +176,6 @@ class PreyCap_Simulation:
                       "Frames Out Of View": self.num_frames_out_of_view}
         return score_dict
 
-    def score_model_similarity(self, plot_or_not, sim):
-        # call this with flag that para is REAL (b/c have real fish record to compare to)
-        # if flag is sim, avoid the real parts or ignore them. 
-        m1_yaw = np.array(sim.fish_yaw)
-        m1_pitch = np.array(sim.fish_pitch)
-        m1_xyz = [np.array(xyz) for xyz in sim.fish_xyz]
-        m2_xyz = [np.array(xyz) for xyz in self.fish_xyz]
-        mag_diff_xyz = np.array([np.linalg.norm(r-m) for r,m in zip(m1_xyz, m2_xyz)])
-        diff_pitch = [b-a for a, b in zip(np.around(m1_pitch, 3), np.around(np.array(self.fish_pitch), 3))]
-        dy_raw = [b-a for a, b in zip(np.around(m1_yaw, 3),
-                                      np.around(np.array(self.fish_yaw), 3))]
-        diff_yaw = yaw_fix(dy_raw)
-        if np.sum(mag_diff_xyz) != 0:
-            norm_md = mag_diff_xyz / np.std(mag_diff_xyz)
-        else:
-            norm_md = mag_diff_xyz
-        if np.sum(diff_pitch) != 0:
-            norm_pitch = np.array(diff_pitch) / np.std(diff_pitch)
-        else:
-            norm_pitch = diff_pitch
-        if np.sum(diff_yaw) != 0:
-            norm_yaw = np.array(diff_yaw) / np.std(diff_yaw)         
-        else:
-            norm_yaw = diff_yaw
-        score = np.sum(norm_md + np.abs(norm_pitch) + np.abs(norm_yaw))
-
-        # MAKE SURE YOU IMPLEMENT MAX AND MIN ALT IN MODEL.
-        # CAN ALSO MAKE YAW A MOD NP.PI
-        if plot_or_not:
-            # zip keeps the scales the same
-            rx = [r[0] for r, m in zip(m1_xyz, m2_xyz)]
-            ry = [r[1] for r, m in zip(m1_xyz, m2_xyz)]
-            rz = [r[2] for r, m in zip(m1_xyz, m2_xyz)]
-            mx = [m[0] for r, m in zip(m1_xyz, m2_xyz)]
-            my = [m[1] for r, m in zip(m1_xyz, m2_xyz)]
-            mz = [m[2] for r, m in zip(m1_xyz, m2_xyz)]
-            cmap1 = pl.get_cmap('seismic')
-            norm1 = Normalize(vmin=0, vmax=len(rx))
-            scalarMap1 = cm.ScalarMappable(norm=norm1, cmap=cmap1)
-            rgba_vals1 = scalarMap1.to_rgba(range(len(rx)))
-            cmap2 = pl.get_cmap('seismic')
-            norm2 = Normalize(vmin=0, vmax=len(mx))
-            scalarMap2 = cm.ScalarMappable(norm=norm2, cmap=cmap2)
-            rgba_vals2 = scalarMap2.to_rgba(range(len(mx)))
-            bout_times = self.interbouts[self.interbouts < len(rx)]
-            bout_ends = self.bout_durations + self.interbouts
-            bout_ends = bout_ends[bout_ends < len(rx)]
-            fig = pl.figure(figsize=(6,6))
-            fig.suptitle(
-                'Transparent and Triangles = Model 1, Solid and Circles = Model 2')
-            gs = gridspec.GridSpec(4, 4)
-            ax1 = fig.add_subplot(gs[0:2,0:2])
-            ax2 = fig.add_subplot(gs[2:, 0:2])
-            ax3 = fig.add_subplot(gs[2:, 2:])
-            ax4 = fig.add_subplot(gs[0:2,2:])
-            ax1.plot(rx, 'r', linewidth=1)
-            ax1.plot(mx, 'r', alpha=.5, linewidth=1)
-            ax1.plot(ry, 'g', linewidth=1) 
-            ax1.plot(my, 'g', alpha =.5, linewidth=1)
-            ax1.plot(rz, 'b', linewidth=1) 
-            ax1.plot(mz, 'b', alpha=.5, linewidth=1)
-            ax1.plot(bout_times, [rx[bt] for bt in bout_times], 'c', marker='.', linestyle='None')
-            ax1.plot(bout_times, [ry[bt] for bt in bout_times], 'c', marker='.', linestyle='None')
-            ax1.plot(bout_times, [rz[bt] for bt in bout_times], 'c', marker='.', linestyle='None')
-            ax1.plot(bout_ends, [rx[bt] for bt in bout_ends], 'm', marker='.', linestyle='None')
-            ax1.plot(bout_ends, [ry[bt] for bt in bout_ends], 'm', marker='.', linestyle='None')
-            ax1.plot(bout_ends, [rz[bt] for bt in bout_ends], 'm', marker='.', linestyle='None')
-            ax1.set_title('XYZ vs T')
-            ax4.plot(m1_yaw, 'r', linewidth=1)
-            ax4.plot(self.fish_yaw, 'r', linewidth=1, alpha=.5)
-            ax4.plot(m1_pitch, 'y', linewidth=1)
-            ax4.plot(self.fish_pitch, 'y', linewidth=1, alpha=.5)
-            ax4.plot(bout_times, [self.fish_yaw[bt] for bt in bout_times], 'c', marker='.', linestyle='None')
-            ax4.plot(bout_times, [self.fish_pitch[bt] for bt in bout_times], 'c', marker='.', linestyle='None')
-            ax4.plot(bout_ends, [self.fish_yaw[bt] for bt in bout_ends], 'm', marker='.', linestyle='None')
-            ax4.plot(bout_ends, [self.fish_pitch[bt] for bt in bout_ends], 'm', marker='.', linestyle='None')
-            ax4.set_title('Yaw (Red), Pitch (Yellow)')
-            ax2.plot(rx, ry, '.5', linewidth=.5)
-            ax2.plot(mx, my, '.5', linewidth=.5)
-            ax3.plot(rx, rz, '.5', linewidth=.5)
-            ax3.plot(mx, mz, '.5', linewidth=.5)
-            for i in range(len(rx)):
-                ax2.plot(rx[i], ry[i], color=rgba_vals1[i], marker='.')
-                ax3.plot(rx[i], rz[i], color=rgba_vals1[i], marker='.')
-            for j in range(len(mx)):
-                ax2.plot(mx[j], my[j], color=rgba_vals2[j], marker='^', ms=3)
-                ax3.plot(mx[j], mz[j], color=rgba_vals2[j], marker='^', ms=3)
-            ax2.set_title('XY')
-            ax3.set_title('XZ')
-            pl.tight_layout()
-            pl.savefig('mod_comparision.pdf')
-            pl.subplots_adjust(top=.9, wspace=.8)
-#            pl.savefig('xyz_' + self.fishmodel.modchoice + '_' + str(
-#                self.fishmodel.hunt_ind) + '.pdf')                        
-
-            pl.close()
-            
-        return score
         
     def create_para_trajectory(self):
 
@@ -400,9 +314,10 @@ class PreyCap_Simulation:
                           "Para Alt Velocity": 0, 
                           "Para Dist Velocity": 0}
 
-            if framecounter == self.fishmodel.rfo.firstbout_para_intwin:
-                self.para_initial_position = para_varbs
-            
+            if framecounter <= self.fishmodel.rfo.firstbout_para_intwin:
+                if not math.isnan(para_varbs["Para Az"]):
+                    self.para_initial_position = para_varbs
+
             if first_postbout_frame:
                 csv_row += [para_varbs["Para Az"], para_varbs["Para Alt"], para_varbs["Para Dist"]]
                 # write row function
@@ -429,7 +344,8 @@ class PreyCap_Simulation:
                 self.para_xyz[2] = pz
                 break
             
-            if self.fishmodel.strike(para_varbs):
+            if strike(para_varbs,
+                      self.fishmodel.strike_means, self.fishmodel.strike_std):
   #              print("STRIKE!!!!!!!!")
                 self.para_xyz[0] = px
                 self.para_xyz[1] = py
@@ -608,14 +524,14 @@ class FishModel:
         if self.modchoice == "Real Bouts":
             self.model = (lambda pv: self.real_fish_bouts(pv))
         elif self.modchoice == "Real Coords":
-            self.model = (lambda pv: self.real_fish_coords(pv))            
+            self.model = (lambda pv: self.real_fish_coords(pv))
         elif self.modchoice in ["Independent Regression",
                                 "Multiple Regression Velocity",
                                 "Multiple Regression Position"]:
             self.model = (lambda pv: self.regression_model(pv))
         elif self.modchoice == "Bayes":
             print('loading bdb file')
-            self.bdb_file = bl.bayesdb_open('091418_bdb/bdb_hunts_inverted.bdb')
+            self.bdb_file = bl.bayesdb_open('wik_bdb/bdb_hunts_strikes.bdb')
             self.model = (lambda pv: self.bdb_model(pv))
         elif self.modchoice == "Ideal":
             self.model = (lambda pv: self.ideal_model(pv))
@@ -671,18 +587,6 @@ class FishModel:
         for r in rand_intlist:
             self.interbouts.append(filt_ibs[r])
             self.bout_durations.append(filt_bdur[r])
-
-    def strike(self, p):
-        num_stds = 1.5
-        in_az_win = (p["Para Az"] < self.strike_means[0] + num_stds * self.strike_std[0] and
-                     p["Para Az"] > self.strike_means[0] - num_stds * self.strike_std[0])
-        in_alt_win = (p["Para Alt"] < self.strike_means[1] + num_stds * self.strike_std[1] and
-                     p["Para Alt"] > self.strike_means[1] - num_stds * self.strike_std[1])
-        in_dist_win = p["Para Dist"] <= self.strike_means[2] + num_stds * self.strike_std[2]
-        if in_az_win and in_alt_win and in_dist_win:
-            return True
-        else:
-            return False
 
     def real_fish_coords(self, para_varbs):
         bout = np.zeros(5)
@@ -811,10 +715,10 @@ class FishModel:
     #     return bout
 
     def bdb_model(self, para_varbs):
-        invert = True
-#        invert = False
-        sampling = 'median'
-#        sampling = 'sample'
+#        invert = True
+        invert = False
+#        sampling = 'median'
+        sampling = 'sample'
         
         def invert_pvarbs(pvarbs):
             pvcopy = copy.deepcopy(pvarbs)
@@ -843,21 +747,26 @@ class FishModel:
         if invert:
             para_varbs, inv_az, inv_alt = invert_pvarbs(para_varbs)
 
-        para_varbs.update({'row_limit':5})
+        if sampling == 'sample':
+            para_varbs.update({'row_limit': 1})
+        else:
+            para_varbs.update({'row_limit': 50})
+            
         print para_varbs
         df_sim = query(self.bdb_file,
                        '''SIMULATE "Bout Az", "Bout Alt",
-                       "Bout Dist", "Bout Delta Pitch", 
+                       "Bout Dist", "Bout Delta Pitch",
                        "Bout Delta Yaw"
                        FROM bout_population
                        GIVEN "Para Az" = {Para Az},
                        "Para Alt" = {Para Alt},
                        "Para Dist" = {Para Dist},
                        "Para Az Velocity" = {Para Az Velocity},
-                       "Para Alt Velocity" = {Para Alt Velocity}, 
+                       "Para Alt Velocity" = {Para Alt Velocity},
                        "Para Dist velocity" = {Para Dist Velocity}
                        LIMIT {row_limit} '''.format(**para_varbs))
-            # can add a USING MODEL flag if you want a specific model before the LIMIT
+        # can add a USING MODEL flag if you want a
+        # specific model before the LIMIT
 
         if sampling == 'median':
             bout_az = np.nanmedian(df_sim['Bout Az'])
@@ -874,12 +783,11 @@ class FishModel:
             bout_yaw = -1*np.nanmean(df_sim['Bout Delta Yaw'])
 
         elif sampling == 'sample':
-            randint = np.random.randint(para_varbs['row_limit'])
-            bout_az = df_sim['Bout Az'][randint]
-            bout_alt = df_sim['Bout Alt'][randint]
-            bout_dist = df_sim['Bout Dist'][randint]
-            bout_pitch = df_sim['Bout Delta Pitch'][randint]
-            bout_yaw = -1*df_sim['Bout Delta Yaw'][randint]
+            bout_az = df_sim['Bout Az'][0]
+            bout_alt = df_sim['Bout Alt'][0]
+            bout_dist = df_sim['Bout Dist'][0]
+            bout_pitch = df_sim['Bout Delta Pitch'][0]
+            bout_yaw = -1*df_sim['Bout Delta Yaw'][0]
 
         b_dict = {"Bout Az": bout_az,
                   "Bout Alt": bout_alt,
@@ -900,7 +808,7 @@ class FishModel:
         if not np.isfinite(bout).all():
             print('Found nan in bout')
             return self.bdb_model(para_varbs)
-        
+
         print bout
         return bout
 
@@ -915,6 +823,11 @@ def characterize_strikes(hb_data):
                                    hb_data["Para Dist"][i]])
                 if np.isfinite(strike).all():
                     strike_characteristics.append(strike)
+    # mu_az, std_az = norm.fit(strike_characteristics[0])
+    # mu_alt, std_alt = norm.fit(strike_characteristics[1])
+    # mu_d, std_d = norm.fit(strike_characteristics[2])
+    # avg_strike_position = np.array([mu_az, mu_alt, mu_d])
+    # std = np.array([std_az, std_alt, std_d])
     avg_strike_position = np.mean(strike_characteristics, axis=0)
     std = np.std(strike_characteristics, axis=0)
     return [avg_strike_position, std]
@@ -981,6 +894,7 @@ def make_multiple_regression_model(hunt_db, vel_or_position):
         sm.add_constant(hunt_db[para_features]), M=sm.robust.norms.HuberT()), bout_features)
     fit_mult_reg_mods = [m.fit() for m in mult_reg_mods]
     return fit_mult_reg_mods
+
 
 
 def view_and_sim_hunt(rfo, strike_params, para_model, model_params, hunt_id):
@@ -1064,18 +978,24 @@ def score_similarity_and_view(simlist, ind1, ind2):
 def model_wrapper(drct_list, strike_params, para_model,
                   model_params, hunt_db, actions):
     para_initial_positions = []
+    sim_list_allfish = []
     for dc_ind, fish_id in enumerate(drct_list):
         rfo = pd.read_pickle(
             os.getcwd() + '/' + fish_id + '/RealHuntData_' + fish_id + '.pkl')
         simlist, ppos_list = execute_models(rfo, strike_params,
                                             para_model, model_params, hb, actions)
+        sim_list_allfish += simlist
         if dc_ind == 0:
             ms = score_summary(simlist, model_params, 0)
         else:
             ms_2 = score_summary(simlist, model_params, 0)
             ms = [a + b for a, b in zip(ms, ms_2)]
         para_initial_positions += ppos_list
-    return ms, para_initial_positions
+    sim_list_by_model = [sim_list_allfish[i::len(model_params)]
+                         for i in range(len(model_params))]
+    sim_list_by_hunt = [p for p in partition(len(model_params),
+                                             sim_list_allfish)]
+    return ms, para_initial_positions, sim_list_by_model, sim_list_by_hunt
 
 
 def execute_models(rfo, strike_params, para_model,
@@ -1197,7 +1117,8 @@ def score_summary(simlist, modlist, by_hunt_or_model):
     return model_scores
 
 
-def plot_query(model_summary, p_type, *filter_result):
+def plot_query(model_summary, para_positions,
+               strike_params, plot_type, *filter_result):
 
     def result_filter(modsum, result):
         results_lists = score_query("Result", modsum)
@@ -1213,37 +1134,49 @@ def plot_query(model_summary, p_type, *filter_result):
         res_args = [np.arange(len(ms)) for ms in model_summary]
     var_keys = model_summary[0][0].keys()
     var_keys.remove("Para Position at Term")
-    var_keys.remove("Marr Algorithm Count")
-    var_keys.remove("Hunt Duration")
     barfig, barax = pl.subplots(1, 5, figsize=[16, 5])
+    marralgs = Marr2Algorithms(para_positions, strike_params)
+    marralgs.run_marr2_models()
+    #note this should change if real fish is not arg 0. just make sure it
+    #always is.
+    marr_static_boutcount = np.array(marralgs.bouts_static)[res_args[0]]
+    marr_bayes_boutcount = np.array(marralgs.bouts_bayes)[res_args[0]]
+
     for var_ind, variable in enumerate(var_keys):
         mapped_values = [np.array(mv)[res_args[i]] for i, mv in enumerate(
             score_query(variable, model_summary))]
-        marr_values = [np.array(mr)[res_args[i]] for i, mr in enumerate(
-            score_query("Marr Algorithm Count", model_summary))][0]
         if variable == "Result":
             mapped_values = [np.array(np.count_nonzero(a==1)) for a in mapped_values]
-            marr_results = np.sum(
-                [1 for ma in marr_values if not math.isnan(ma)])
-            mapped_values.append(np.array(marr_results))
+            marr_static_results = np.sum(
+                [1 for ma in marr_static_boutcount if not math.isnan(ma)])
+            marr_bayes_results = np.sum(
+                [1 for ma in marr_bayes_boutcount if not math.isnan(ma)])
+            mapped_values.append(np.array(marr_static_results))
+            mapped_values.append(np.array(marr_bayes_results))
         if variable == "Number of Bouts":
-            mapped_values.append(marr_values)
+            # so mapped values has 4 entries, one for each model
+            mapped_values.append(np.array(marr_static_boutcount))
+            mapped_values.append(np.array(marr_bayes_boutcount))
         barax[var_ind].set_title(variable)
         print([mv.shape for mv in mapped_values])
-        if p_type == 'bar' or variable == "Result":
+        if plot_type == 'bar' or variable == "Result":
             sb.barplot(data=mapped_values, ax=barax[var_ind])
-        elif p_type == 'violin':
+        elif plot_type == 'violin':
             sb.violinplot(data=mapped_values, ax=barax[var_ind])
+        elif plot_type == 'box':
+            sb.boxplot(data=mapped_values, ax=barax[var_ind], whis=[5, 95],
+                       showfliers=False)
+
 #            sb.boxplot(data=mapped_values, ax=barax[var_ind])
     return barfig
 
-        
+
 def score_query(variable, ms, *func):
 
     # want to change this so it takes a result.
     # want to query on results where fish catches and compare to when other models dont
     # could also query on whenever any model succeeds
-    
+
     f = lambda y: map(lambda x: x[variable], y)
     if func != ():
         func = func[0]
@@ -1282,11 +1215,160 @@ def slice_dataframe_for_bout0(hunt_db):
     return hdb_bout0[slice_fails]
 
 
+def static_strike(p, strike_means, strike_std):
+    num_stds = 1.5
+    in_az_win = (p["Para Az"] < strike_means[0] + num_stds * strike_std[0] and
+                 p["Para Az"] > strike_means[0] - num_stds * strike_std[0])
+    in_alt_win = (p["Para Alt"] < strike_means[1] + num_stds * strike_std[1] and
+                 p["Para Alt"] > strike_means[1] - num_stds * strike_std[1])
+    in_dist_win = p["Para Dist"] <= strike_means[2] + num_stds * strike_std[2]
+    if in_az_win and in_alt_win and in_dist_win:
+        return True
+    else:
+        return False
+
+
+def strike_dist_probabilistic(p, strike_means, strike_std):
+    prob_az = norm.cdf(p["Para Az"], strike_means[0], strike_std[0])
+    prob_alt = norm.cdf(p["Para Alt"], strike_means[1], strike_std[1])
+    prob_dist = norm.cdf(p["Para Dist"], strike_means[2], strike_std[2])
+    if p["Para Az"] > strike_means[0]:
+        prob_az = 1 - prob_az
+    if p["Para Alt"] > strike_means[1]:
+        prob_alt = 1 - prob_alt
+    if p["Para Dist"] > strike_means[2]:
+        prob_dist = 1 - prob_dist
+
+    # max prob when multiplying all cdfs together is .5**3. normalize. 
+    normalize_prob = prob_alt * prob_az * prob_dist * (1 / .125)
+    if normalize_prob > .05:
+        return True
+    else:
+        return False
+
+def score_model_similarity(plot_or_not, sim1, sim2):
+    # call this with flag that para is REAL (b/c have real fish record to compare to)
+    # if flag is sim, avoid the real parts or ignore them. 
+    m1_yaw = np.array(sim1.fish_yaw)
+    m1_pitch = np.array(sim1.fish_pitch)
+    m1_xyz = [np.array(xyz) for xyz in sim1.fish_xyz]
+    m2_yaw = np.array(sim2.fish_yaw)
+    m2_pitch = np.array(sim2.fish_pitch)
+    m2_xyz = [np.array(xyz) for xyz in sim2.fish_xyz]
+    mag_diff_xyz = np.array([np.linalg.norm(r-m) for r,m in zip(m1_xyz, m2_xyz)])
+    diff_pitch = [b-a for a, b in zip(np.around(m1_pitch, 3),
+                                      np.around(m2_pitch, 3))]
+    dy_raw = [b-a for a, b in zip(np.around(m1_yaw, 3),
+                                  np.around(m2_yaw, 3))]
+    diff_yaw = yaw_fix(dy_raw)
+    if np.sum(mag_diff_xyz) != 0:
+        norm_md = mag_diff_xyz / np.std(mag_diff_xyz)
+    else:
+        norm_md = mag_diff_xyz
+    if np.sum(diff_pitch) != 0:
+        norm_pitch = np.array(diff_pitch) / np.std(diff_pitch)
+    else:
+        norm_pitch = diff_pitch
+    if np.sum(diff_yaw) != 0:
+        norm_yaw = np.array(diff_yaw) / np.std(diff_yaw)         
+    else:
+        norm_yaw = diff_yaw
+    score = np.sum(norm_md + np.abs(norm_pitch) + np.abs(norm_yaw))
+
+    # MAKE SURE YOU IMPLEMENT MAX AND MIN ALT IN MODEL.
+    # CAN ALSO MAKE YAW A MOD NP.PI
+    if plot_or_not:
+        # zip keeps the scales the same
+        rx = [r[0] for r, m in zip(m1_xyz, m2_xyz)]
+        ry = [r[1] for r, m in zip(m1_xyz, m2_xyz)]
+        rz = [r[2] for r, m in zip(m1_xyz, m2_xyz)]
+        mx = [m[0] for r, m in zip(m1_xyz, m2_xyz)]
+        my = [m[1] for r, m in zip(m1_xyz, m2_xyz)]
+        mz = [m[2] for r, m in zip(m1_xyz, m2_xyz)]
+        cmap1 = pl.get_cmap('seismic')
+        norm1 = Normalize(vmin=0, vmax=len(rx))
+        scalarMap1 = cm.ScalarMappable(norm=norm1, cmap=cmap1)
+        rgba_vals1 = scalarMap1.to_rgba(range(len(rx)))
+        cmap2 = pl.get_cmap('seismic')
+        norm2 = Normalize(vmin=0, vmax=len(mx))
+        scalarMap2 = cm.ScalarMappable(norm=norm2, cmap=cmap2)
+        rgba_vals2 = scalarMap2.to_rgba(range(len(mx)))
+        bout_times = sim1.interbouts[sim1.interbouts < len(rx)]
+        bout_ends = sim1.bout_durations + sim1.interbouts
+        bout_ends = bout_ends[bout_ends < len(rx)]
+        fig = pl.figure(figsize=(6, 6))
+        fig.suptitle(
+            'Transparent and Triangles = Model 1, Solid and Circles = Model 2')
+        gs = gridspec.GridSpec(4, 4)
+        ax1 = fig.add_subplot(gs[0:2, 0:2])
+        ax2 = fig.add_subplot(gs[2:, 0:2])
+        ax3 = fig.add_subplot(gs[2:, 2:])
+        ax4 = fig.add_subplot(gs[0:2, 2:])
+        ax1.plot(rx, 'r', linewidth=1)
+        ax1.plot(mx, 'r', alpha=.5, linewidth=1)
+        ax1.plot(ry, 'g', linewidth=1) 
+        ax1.plot(my, 'g', alpha=.5, linewidth=1)
+        ax1.plot(rz, 'b', linewidth=1) 
+        ax1.plot(mz, 'b', alpha=.5, linewidth=1)
+        ax1.plot(bout_times, [rx[bt] for bt in bout_times], 'c', marker='.', linestyle='None')
+        ax1.plot(bout_times, [ry[bt] for bt in bout_times], 'c', marker='.', linestyle='None')
+        ax1.plot(bout_times, [rz[bt] for bt in bout_times], 'c', marker='.', linestyle='None')
+        ax1.plot(bout_ends, [rx[bt] for bt in bout_ends], 'm', marker='.', linestyle='None')
+        ax1.plot(bout_ends, [ry[bt] for bt in bout_ends], 'm', marker='.', linestyle='None')
+        ax1.plot(bout_ends, [rz[bt] for bt in bout_ends], 'm', marker='.', linestyle='None')
+        ax1.set_title('XYZ vs T')
+        ax4.plot(m1_yaw, 'r', linewidth=1)
+        ax4.plot(m2_yaw, 'r', linewidth=1, alpha=.5)
+        ax4.plot(m1_pitch, 'y', linewidth=1)
+        ax4.plot(m2_pitch, 'y', linewidth=1, alpha=.5)
+        ax4.plot(bout_times, [m2_yaw[bt] for bt in bout_times], 'c', marker='.', linestyle='None')
+        ax4.plot(bout_times, [m2_pitch[bt] for bt in bout_times], 'c', marker='.', linestyle='None')
+        ax4.plot(bout_ends, [m2_yaw[bt] for bt in bout_ends], 'm', marker='.', linestyle='None')
+        ax4.plot(bout_ends, [m2_pitch[bt] for bt in bout_ends], 'm', marker='.', linestyle='None')
+        ax4.set_title('Yaw (Red), Pitch (Yellow)')
+        ax2.plot(rx, ry, '.5', linewidth=.5)
+        ax2.plot(mx, my, '.5', linewidth=.5)
+        ax3.plot(rx, rz, '.5', linewidth=.5)
+        ax3.plot(mx, mz, '.5', linewidth=.5)
+        for i in range(len(rx)):
+            ax2.plot(rx[i], ry[i], color=rgba_vals1[i], marker='.')
+            ax3.plot(rx[i], rz[i], color=rgba_vals1[i], marker='.')
+        for j in range(len(mx)):
+            ax2.plot(mx[j], my[j], color=rgba_vals2[j], marker='^', ms=3)
+            ax3.plot(mx[j], mz[j], color=rgba_vals2[j], marker='^', ms=3)
+        ax2.set_title('XY')
+        ax3.set_title('XZ')
+        pl.tight_layout()
+        pl.savefig('mod_comparision.pdf')
+        pl.subplots_adjust(top=.9, wspace=.8)
+        pl.close()
+
+    return score
+
+
+def strike(p, strike_means, strike_std):
+    prob_az = norm.cdf(p["Para Az"], strike_means[0], strike_std[0])
+    prob_alt = norm.cdf(p["Para Alt"], strike_means[1], strike_std[1])
+    if p["Para Az"] > strike_means[0]:
+        prob_az = 1 - prob_az
+    if p["Para Alt"] > strike_means[1]:
+        prob_alt = 1 - prob_alt
+    # max prob when multiplying all cdfs together is .5**3. normalize. 
+    normalize_prob = prob_alt * prob_az * (1 / .25)
+    if p["Para Dist"] < (
+            strike_means[2] + strike_std[2]) and normalize_prob > .05:
+        return True
+    else:
+        return False
+    
+
 # write out algorithms as lisp programs
 
 # make a plot for the algorithm of alt / postbout alt.
 
-# do 1 fish every 2 days until whole dataset is done. at least 1 para per 3 minutes. 
+# do 1 fish every 2 days until whole dataset is done. at least 1 para per 3 minutes.
+
+# lasso and ridge for regression
 
 
 if __name__ == "__main__":
@@ -1342,7 +1424,7 @@ if __name__ == "__main__":
                 {"Model Type": "Multiple Regression Position", "Real or Sim": "Real"},
                 {"Model Type": "Multiple Regression Velocity", "Real or Sim": "Real"},
                 {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All"}]
-           #     {"Model Type": "Bayes", "Real or Sim": "Real"}]
+            #    {"Model Type": "Bayes", "Real or Sim": "Real"}]
 
     modlist_bayes = [{"Model Type": "Bayes", "Real or Sim": "Real"}]
     actions = [1, 2]
@@ -1352,9 +1434,12 @@ if __name__ == "__main__":
                       '091118_1', '091118_2', '091118_3', '091118_4', '091118_5',
                       '090418_3', '090418_4']
 
-    ms, p_inits = model_wrapper(new_wik_subset, strike_params,
-                                para_model, modlist2, hb, actions)
+    ms, p_inits, simlist_by_model, simlist_by_hunt = model_wrapper(
+        new_wik_subset, strike_params,
+        para_model, modlist2, hb, actions)
     np.save('ms.npy', ms)
+    np.save('p_inits.npy', p_inits)
+    np.save('strike_params.npy', strike_params)
     sq = score_query("Result", ms, lambda x: Counter(x))
     print sq
 
