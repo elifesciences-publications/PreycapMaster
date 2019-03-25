@@ -202,7 +202,7 @@ class PreyCap_Simulation:
                 for row in rowlist:
                     writer.writerow(row)
 
-    def score_model(self):
+    def score_hunt(self):
         score_dict = {"Number of Bouts": self.bout_counter,
                       "Hunt Duration": self.framecounter * .016,
                       "Result": self.hunt_result,
@@ -867,32 +867,6 @@ def characterize_strikes(hb_data):
     std = np.std(strike_characteristics, axis=0)
     return [avg_strike_position, std]
 
-# This is a decorator that you can put in front of a function
-# with @. Doesn't work on dicts or pandas dfs b/c not hashable.
-# Wanted to use this to memoize the regression models
-# so that you don't have to re_create them every time you
-# make a Fish. I.e. if make_reg_models were called,
-# it would just return the model instead of rerunning it.
-# but since i'm inputting a hunt_db, which isn't hashable,
-# this function can't remember the input.
-# could instead input a container with a label?
-class memoized(object):
-    def __init__(self, func):
-        self.func = func
-        self.cache = {}
-    def __call__(self, *args):
-        if not isinstance(args, collections.Hashable):
-            return self.func(*args)
-        if args in self.cache:
-            return self.cache[args]
-        else:
-            value = self.func(*args)
-            self.cache[args] = value
-            return value
-    def __repr__(self):
-        return self.func.__doc__
-    def __get__(self, obj, objtype):
-        return functools.partial(self.__call__, obj)
 
 def make_RLM(y, x):
     # if type(x) == 'list':
@@ -901,8 +875,8 @@ def make_RLM(y, x):
     mod = sm.RLM(y, x, M=sm.robust.norms.HuberT())
     fit_mod = mod.fit()
     return fit_mod
-    
-    
+
+
 def make_independent_regression_model(hunt_db):
     print('Building Independent Reg Model')
     fit_models = [make_RLM(hunt_db["Bout Az"], hunt_db["Para Az"]),
@@ -912,6 +886,7 @@ def make_independent_regression_model(hunt_db):
                   make_RLM(hunt_db["Bout Delta Yaw"], hunt_db["Para Az"])]
 #    reg_lambdas = [lambda pfeature: fm.predict(pfeature) for fm in fit_models]
     return fit_models
+
 
 def make_multiple_regression_model(hunt_db, vel_or_position):
     print('Building Multiple Reg Model')
@@ -931,12 +906,6 @@ def make_multiple_regression_model(hunt_db, vel_or_position):
     return fit_mult_reg_mods
 
 
-
-def view_and_sim_hunt(rfo, strike_params, para_model, model_params, hunt_id):
-    realhunt_allframes(rfo, hunt_id)
-    simlist = execute_models(rfo, strike_params, para_model, model_params, hunt_id)
-    return simlist
-    
 def realhunt_allframes(rfo, hunt_id):
     delay = rfo.firstbout_para_intwin
     h_ind = np.argwhere(np.array(rfo.hunt_ids) == hunt_id)[0][0]
@@ -949,6 +918,7 @@ def realhunt_allframes(rfo, hunt_id):
     np.save('ufish_origin.npy', rfo.fish_xyz[frames[0]:frames[1]])
     np.save('3D_paracoords.npy', para_xyz)
 
+    
 def make_vr_movies(sim1, sim2):
     hunt_id = sim1.fishmodel.rfo.hunt_ids[sim1.fishmodel.hunt_ind]
     realhunt_allframes(sim1.fishmodel.rfo, hunt_id)
@@ -961,12 +931,7 @@ def make_vr_movies(sim1, sim2):
     np.save('uf_model2.npy', sim2.fish_bases[:-1])                
     np.save('strikelist2.npy', sim2.strikelist)
 
-def single_hunt_results(rfo, bpm, hunt_id, modlist):
-    h_ind = np.where(np.array(rfo.hunt_ids) == hunt_id)[0][0]
-    results = [bp[h_ind][-1] for bp in bpm]
-    results_pretty = [m for m in zip(modlist, results)]
-    return results_pretty
-
+    
 def calculate_bout_energy(bout_xyz,
                           uf_vector, bout_yaw, bout_pitch):
     bout_duration = len(bout_xyz)
@@ -983,6 +948,7 @@ def calculate_bout_energy(bout_xyz,
             angular_yaw_vel**2 * moment_of_inertia) + (
                 angular_pitch_vel**2 * moment_of_inertia))
     return total_bout_energy
+
 
 def calculate_bout_energy_nonlin(bout_xyz,
                                  uf_vector, bout_yaw, bout_pitch):
@@ -1002,27 +968,61 @@ def calculate_bout_energy_nonlin(bout_xyz,
     return total_bout_energy
 
 
-def score_model_similarity(mod1, mod2, simlist_by_huntid):
+# first half vs second half, quartiles (split into 4)
+# am currently stopping plotting when one model eats. maybe don't do this.
+# if you plot both entirely, should end up in same place
+# also when scoring, note whether success or fail (i.e. result of hunt 1, 2, 3)
+def score_model_similarity(mod1_index, mod2_index,
+                           simlist_by_huntid, num_partitions):
+
+    def avg_of_partitions(arr):
+
+        # this isn't quite right. its not iterating through the partitions,
+        # it stores a partition for each sub_array and then the whole partition comes out
+        # and is taken the mean of. want to take the mean of each piece. 
+        
+        arr_partitioned = np.array(
+            [np.nanmean(p) for p in [
+                partition(len(xs) / num_partitions, xs) for xs in arr]])
+        means_by_partition = [arr_partitioned[:, n] for n in range(
+            num_partitions)]
+        return means_by_partition
     scores = []
     for sims in simlist_by_huntid:
-        sim1 = sims[mod1]
-        sim2 = sims[mod2]
-        scores.append(
-            score_trajectory_similarity(False, sim1, sim2))
+        sim1 = sims[mod1_index]
+        sim2 = sims[mod2_index]
+        scores.append(score_trajectory_similarity(
+            False, sim1, sim2))
     scores = np.array(scores)
-    xyz_sim = scores[:, 0]
-    pitch_scores = scores[:, 1]
-    yaw_scores = scores[:, 2]
+    xyz_sim = avg_of_partitions(scores[:, 0])
+    pitch_scores = avg_of_partitions(scores[:, 1])
+    yaw_scores = avg_of_partitions(scores[:, 2])
+    sb.violinplot(data=xyz_sim + pitch_scores + yaw_scores)
+    pl.show()
     return xyz_sim, pitch_scores, yaw_scores
-    
+
+def extract_all_spherical_bouts(drct_list):
+    all_spherical_bouts = []
+    all_spherical_huntbouts = []
+    for fish_id in drct_list:
+        rfo = pd.read_pickle(
+            os.getcwd() + '/' + fish_id + '/RealHuntData_' + fish_id + '.pkl')
+        all_spherical_bouts += rfo.all_spherical_bouts
+        all_spherical_huntbouts += rfo.all_spherical_huntbouts
+    return all_spherical_bouts, all_spherical_huntbouts
 
 def model_wrapper(drct_list, strike_params, para_model,
-                  model_params, hunt_db, actions):
+                  model_params, hunt_db, actions, *combine_spherical):
     para_initial_positions = []
     sim_list_allfish = []
+    if combine_spherical != ():
+        sb_allfish, shb_allfish = extract_all_spherical_bouts(drct_list)
     for dc_ind, fish_id in enumerate(drct_list):
         rfo = pd.read_pickle(
             os.getcwd() + '/' + fish_id + '/RealHuntData_' + fish_id + '.pkl')
+        if combine_spherical != ():
+            rfo.all_spherical_bouts = sb_allfish
+            rfo.all_spherical_huntbouts = shb_allfish
         simlist, ppos_list = execute_models(rfo, strike_params,
                                             para_model, model_params, hb, actions)
         sim_list_allfish += simlist
@@ -1151,11 +1151,11 @@ def yaw_fix(dy_input):
 
 def score_summary(simlist, modlist, by_hunt_or_model):
     num_models = len(modlist)
-    model_scores = [[] for i in range(num_models)]
+    hunt_scores = [[] for i in range(num_models)]
     for ind, sim in enumerate(simlist):
-        score = sim.score_model()
-        model_scores[ind % num_models].append(score)
-    return model_scores
+        score = sim.score_hunt()
+        hunt_scores[ind % num_models].append(score)
+    return hunt_scores
 
 
 def plot_query(model_summary, para_positions,
@@ -1176,28 +1176,29 @@ def plot_query(model_summary, para_positions,
     var_keys = model_summary[0][0].keys()
     var_keys.remove("Para Position at Term")
     barfig, barax = pl.subplots(1, 5, figsize=[16, 5])
-    marralgs = Marr2Algorithms(para_positions, strike_params)
-    marralgs.run_marr2_models()
+#    marralgs = Marr2Algorithms(para_positions, strike_params)
+#    marralgs.run_marr2_models()
     #note this should change if real fish is not arg 0. just make sure it
     #always is.
-    marr_static_boutcount = np.array(marralgs.bouts_static)[res_args[0]]
-    marr_bayes_boutcount = np.array(marralgs.bouts_bayes)[res_args[0]]
+ #   marr_static_boutcount = np.array(marralgs.bouts_static)[res_args[0]]
+#    marr_bayes_boutcount = np.array(marralgs.bouts_bayes)[res_args[0]]
 
     for var_ind, variable in enumerate(var_keys):
         mapped_values = [np.array(mv)[res_args[i]] for i, mv in enumerate(
             score_query(variable, model_summary))]
         if variable == "Result":
             mapped_values = [np.array(np.count_nonzero(a==1)) for a in mapped_values]
-            marr_static_results = np.sum(
-                [1 for ma in marr_static_boutcount if not math.isnan(ma)])
-            marr_bayes_results = np.sum(
-                [1 for ma in marr_bayes_boutcount if not math.isnan(ma)])
-            mapped_values.append(np.array(marr_static_results))
-            mapped_values.append(np.array(marr_bayes_results))
+            # marr_static_results = np.sum(
+            #     [1 for ma in marr_static_boutcount if not math.isnan(ma)])
+            # marr_bayes_results = np.sum(
+            #     [1 for ma in marr_bayes_boutcount if not math.isnan(ma)])
+            # mapped_values.append(np.array(marr_static_results))
+            # mapped_values.append(np.array(marr_bayes_results))
         if variable == "Number of Bouts":
+            pass
             # so mapped values has 4 entries, one for each model
-            mapped_values.append(np.array(marr_static_boutcount))
-            mapped_values.append(np.array(marr_bayes_boutcount))
+            # mapped_values.append(np.array(marr_static_boutcount))
+            # mapped_values.append(np.array(marr_bayes_boutcount))
         barax[var_ind].set_title(variable)
         print([mv.shape for mv in mapped_values])
         if plot_type == 'bar' or variable == "Result":
@@ -1226,10 +1227,6 @@ def score_query(variable, ms, *func):
         return map(f, ms)
 
 
-
-    
-#def success_summary(model_scores, modlist):
-        
 def find_refractory_periods(rfo):
     strike_refractory_list = [b["Interbouts"][-1] - b["Bout Durations"][-2]
                               for b in [rfo.model_input(i)
@@ -1241,7 +1238,6 @@ def find_refractory_periods(rfo):
     median_hb_refract = np.median(np.concatenate(refractory_all))
     return median_strike_refract, median_hb_refract
 
-# this will take the paramodel object
 
 def slice_dataframe_for_regmodels(hunt_db):
     slice_bn_neg = hunt_db['Bout Number'] >= 0
@@ -1291,6 +1287,10 @@ def strike_dist_probabilistic(p, strike_means, strike_std):
 def score_trajectory_similarity(plot_or_not, sim1, sim2):
     # call this with flag that para is REAL (b/c have real fish record to compare to)
     # if flag is sim, avoid the real parts or ignore them.
+
+    # sims both contain the bout durations and start times. do not record values
+    # for scoring inside the bouts. 
+    
     make_vr_movies(sim1, sim2)
     m1_yaw = np.array(sim1.fish_yaw)
     m1_pitch = np.array(sim1.fish_pitch)
@@ -1298,14 +1298,13 @@ def score_trajectory_similarity(plot_or_not, sim1, sim2):
     m2_yaw = np.array(sim2.fish_yaw)
     m2_pitch = np.array(sim2.fish_pitch)
     m2_xyz = [np.array(xyz) for xyz in sim2.fish_xyz]
-    mag_diff_xyz = np.nanmean(
-        np.array([np.linalg.norm(r-m) for r, m in zip(m1_xyz, m2_xyz)]))
-    diff_pitch = np.nanmean(
-        [b-a for a, b in zip(np.around(m1_pitch, 3),
-                             np.around(m2_pitch, 3))])
+    mag_diff_xyz = np.array(
+        [np.linalg.norm(r-m) for r, m in zip(m1_xyz, m2_xyz)])
+    diff_pitch = [b-a for a, b in zip(np.around(m1_pitch, 3),
+                             np.around(m2_pitch, 3))]
     dy_raw = [b-a for a, b in zip(np.around(m1_yaw, 3),
                                   np.around(m2_yaw, 3))]
-    diff_yaw = np.nanmean(yaw_fix(dy_raw))
+    diff_yaw = yaw_fix(dy_raw)
     if plot_or_not:
         # zip keeps the scales the same
         rx = [r[0] for r, m in zip(m1_xyz, m2_xyz)]
@@ -1314,18 +1313,22 @@ def score_trajectory_similarity(plot_or_not, sim1, sim2):
         mx = [m[0] for r, m in zip(m1_xyz, m2_xyz)]
         my = [m[1] for r, m in zip(m1_xyz, m2_xyz)]
         mz = [m[2] for r, m in zip(m1_xyz, m2_xyz)]
-        cmap1 = pl.get_cmap('seismic')
+        m1_yaw = m1_yaw[0:len(rx)]
+        m1_pitch = m1_pitch[0:len(rx)]
+        m2_yaw = m2_yaw[0:len(rx)]
+        m2_pitch = m2_pitch[0:len(rx)]
+        cmap1 = pl.get_cmap('cool')
         norm1 = Normalize(vmin=0, vmax=len(rx))
         scalarMap1 = cm.ScalarMappable(norm=norm1, cmap=cmap1)
         rgba_vals1 = scalarMap1.to_rgba(range(len(rx)))
-        cmap2 = pl.get_cmap('seismic')
+        cmap2 = pl.get_cmap('coolwarm')
         norm2 = Normalize(vmin=0, vmax=len(mx))
         scalarMap2 = cm.ScalarMappable(norm=norm2, cmap=cmap2)
         rgba_vals2 = scalarMap2.to_rgba(range(len(mx)))
         bout_times = sim1.interbouts[sim1.interbouts < len(rx)]
         bout_ends = sim1.bout_durations + sim1.interbouts
         bout_ends = bout_ends[bout_ends < len(rx)]
-        fig = pl.figure(figsize=(6, 6))
+        fig = pl.figure(figsize=(15, 15))
         fig.suptitle(
             'Transparent and Triangles = Model 1, Solid and Circles = Model 2')
         gs = gridspec.GridSpec(4, 4)
@@ -1360,16 +1363,26 @@ def score_trajectory_similarity(plot_or_not, sim1, sim2):
         ax3.plot(rx, rz, '.5', linewidth=.5)
         ax3.plot(mx, mz, '.5', linewidth=.5)
         for i in range(len(rx)):
-            ax2.plot(rx[i], ry[i], color=rgba_vals1[i], marker='.')
-            ax3.plot(rx[i], rz[i], color=rgba_vals1[i], marker='.')
+            ax2.plot(rx[i], ry[i], color=rgba_vals1[i], marker='.', ms=4)
+            ax3.plot(rx[i], rz[i], color=rgba_vals1[i], marker='.', ms=4)
         for j in range(len(mx)):
-            ax2.plot(mx[j], my[j], color=rgba_vals2[j], marker='^', ms=5)
-            ax3.plot(mx[j], mz[j], color=rgba_vals2[j], marker='^', ms=5)
+            ax2.plot(mx[j], my[j], color=rgba_vals2[j], marker='.', ms=4)
+            ax3.plot(mx[j], mz[j], color=rgba_vals2[j], marker='.', ms=4)
+#        ax2.set_xlim([rx[0]-500, rx[0] + 500])
+        # ax3.set_xlim([0, 1800])
+        # ax2.set_ylim([0, 1800])
+        # ax3.set_ylim([0, 1800])
         ax2.set_title('XY')
         ax3.set_title('XZ')
-        pl.tight_layout()
+#        ax3.axis('equal')
+#        ax2.axis('equal')
+        ax2.set_xlim([0, 1800])
+        ax3.set_xlim([0, 1800])
+        ax2.set_ylim([0, 1800])
+        ax3.set_ylim([0, 1800])
         pl.savefig('mod_comparision.pdf')
         pl.subplots_adjust(top=.9, wspace=.8)
+        pl.tight_layout()
         pl.show()
 #        pl.close()
 
@@ -1449,12 +1462,25 @@ if __name__ == "__main__":
                 {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All"},
                 {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All", "Extrapolate Para": 10}]
 
+    # modlist2 = [{"Model Type": "Real Coords", "Real or Sim": "Real"},
+    #             {"Model Type": "Independent Regression", "Real or Sim": "Real"},
+    #             {"Model Type": "Multiple Regression Position", "Real or Sim": "Real"},
+    #             {"Model Type": "Multiple Regression Velocity", "Real or Sim": "Real"},
+    #             {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All"},
+    #             {"Model Type": "Random", "Real or Sim": "Real", "Spherical Bouts": "All"},  
+    #             {"Model Type": "Random", "Real or Sim": "Real", "Spherical Bouts": "Hunt"}]
+
     modlist2 = [{"Model Type": "Real Coords", "Real or Sim": "Real"},
-                {"Model Type": "Independent Regression", "Real or Sim": "Real"},
                 {"Model Type": "Multiple Regression Position", "Real or Sim": "Real"},
+                {"Model Type": "Multiple Regression Position", "Real or Sim": "Real",
+                 "Extrapolate Para": 5},
                 {"Model Type": "Multiple Regression Velocity", "Real or Sim": "Real"},
-                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All"}]
-            #    {"Model Type": "Bayes", "Real or Sim": "Real"}]
+                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All"},
+                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All", "Extrapolate Para": 5},
+                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "Hunt"},
+                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "Hunt", "Extrapolate Para": 5},
+                {"Model Type": "Random", "Real or Sim": "Real", "Spherical Bouts": "All"},  
+                {"Model Type": "Random", "Real or Sim": "Real", "Spherical Bouts": "Hunt"}]
 
     modlist_bayes = [{"Model Type": "Bayes", "Real or Sim": "Real"}]
     actions = [1, 2]
@@ -1464,6 +1490,7 @@ if __name__ == "__main__":
                       '091118_1', '091118_2', '091118_3', '091118_4', '091118_5',
                       '090418_3', '090418_4']
 
+#    new_wik_subset = ['091418_1']
     ms, p_inits, simlist_by_model, simlist_by_hunt = model_wrapper(
         new_wik_subset, strike_params,
         para_model, modlist2, hb, actions)
