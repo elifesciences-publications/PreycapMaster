@@ -8,7 +8,6 @@ from matplotlib.colors import Normalize, ListedColormap
 from matplotlib import pyplot as pl
 from matplotlib import gridspec
 import statsmodels.api as sm
-from scipy.stats import norm
 import matplotlib.cm as cm
 import seaborn as sb
 import pandas as pd
@@ -26,12 +25,17 @@ from collections import deque, Counter
 from master import fishxyz_to_unitvecs, sphericalbout_to_xyz, p_map_to_fish, RealFishControl, normalize_kernel, normalize_kernel_interp
 from toolz.itertoolz import sliding_window
 from scipy.ndimage import gaussian_filter
-
+from scipy.stats import norm, ttest_ind, ttest_rel, wilcoxon, ttest_1samp
 
 # Notes: bayesdb, regardless of the seed you provide at opening,
 # will yield the same result each time if you re-create the
 # class. If you run marr2bayes on the same instance,
 # a second time, it will produce a different result.
+
+
+# make a nancount for each model, then nanfilter
+# only show pvalues as list
+# show means of each distribution as list
 
 class Marr2Algorithms:
     def __init__(self, para_positions, strike_params):
@@ -43,6 +47,36 @@ class Marr2Algorithms:
         self.strike_params = strike_params
         self.strike_means = strike_params[0]
         self.strike_std = strike_params[1]
+        self.test_results = []
+        self.fails = []
+        self.averages = []
+
+    def result_compiler(self):
+
+        def nanremove(arr):
+            a = []
+            for b in arr:
+                if not np.isfinite(b):
+                    b = 100
+                    a.append(b)
+            return np.array(a)
+
+        fig, ax = pl.subplots(3, 1)
+        all_results = [nanremove(self.bouts_static)]
+        for bayesbouts in self.bouts_bayes:
+            all_results.append(nanremove(bayesbouts))
+        
+        wilcoxon_results = [wilcoxon(all_results[0], all_results[i+1])
+                            for i in range(len(self.bouts_bayes))]
+        self.test_results = wilcoxon_results
+        self.fails = [f[np.isnan(f)].shape[0] for f in all_results]
+        self.averages = [np.median(f) for f in all_results]
+        print('One Sample T on Medians')
+        one_samp_t = ttest_1samp(self.averages[1:], self.averages[0])
+        print one_samp_t
+        sb.violinplot(data=all_results, ax=ax[0])
+        sb.barplot(data=self.fails, ax=ax[1])
+        pl.show()
 
     def marr2algorithm(self, para_varbs, boutcounter):
         if boutcounter > 20:
@@ -69,6 +103,7 @@ class Marr2Algorithms:
         if boutcounter > 20:
             return np.nan
         if strike(para_varbs, self.strike_means, self.strike_std):
+            print boutcounter + 1
             return boutcounter + 1
         df_sim = query(self.marr_bdb_file,
                        '''SIMULATE "Postbout Para Az", "Postbout Para Alt",
@@ -81,10 +116,9 @@ class Marr2Algorithms:
         para_varbs = {"Para Az": df_sim["Postbout Para Az"][0],
                       "Para Alt": df_sim["Postbout Para Alt"][0],
                       "Para Dist": df_sim["Postbout Para Dist"][0]}
-        print para_varbs
         return self.marr2bayes(para_varbs, boutcounter+1)
 
-    def run_marr2_models(self, *static_or_bayes):
+    def run_marr2_models(self, model_repetitions, *static_or_bayes):
         if static_or_bayes != ():
             static_or_bayes = static_or_bayes[0]
         if static_or_bayes == 'static' or static_or_bayes == ():
@@ -93,9 +127,10 @@ class Marr2Algorithms:
                                     self.para_positions)
         if static_or_bayes == 'bayes' or static_or_bayes == ():
             print('in bayes')
-            self.bouts_bayes = map(lambda para_position:
-                                   self.marr2bayes(para_position, 0),
-                                   self.para_positions)
+            for i in range(model_repetitions):
+                self.bouts_bayes.append(map(lambda para_position:
+                                        self.marr2bayes(para_position, 0),
+                                        self.para_positions))
     
 class PreyCap_Simulation:
     def __init__(self, fishmodel, paramodel, simlen, simulate_para, *para_input):
@@ -967,13 +1002,19 @@ def calculate_bout_energy_nonlin(bout_xyz,
     return total_bout_energy
 
 
-def score_similarity_and_view(simlist, ind1, ind2):
-    sim1 = simlist[ind1]
-    sim2 = simlist[ind2]
-    plot_or_not = True
-    sim1.score_model_similarity(plot_or_not, sim2)
-    make_vr_movies(sim1, sim2)
-
+def score_model_similarity(mod1, mod2, simlist_by_huntid):
+    scores = []
+    for sims in simlist_by_huntid:
+        sim1 = sims[mod1]
+        sim2 = sims[mod2]
+        scores.append(
+            score_trajectory_similarity(False, sim1, sim2))
+    scores = np.array(scores)
+    xyz_sim = scores[:, 0]
+    pitch_scores = scores[:, 1]
+    yaw_scores = scores[:, 2]
+    return xyz_sim, pitch_scores, yaw_scores
+    
 
 def model_wrapper(drct_list, strike_params, para_model,
                   model_params, hunt_db, actions):
@@ -1246,37 +1287,25 @@ def strike_dist_probabilistic(p, strike_means, strike_std):
     else:
         return False
 
-def score_model_similarity(plot_or_not, sim1, sim2):
+    
+def score_trajectory_similarity(plot_or_not, sim1, sim2):
     # call this with flag that para is REAL (b/c have real fish record to compare to)
-    # if flag is sim, avoid the real parts or ignore them. 
+    # if flag is sim, avoid the real parts or ignore them.
+    make_vr_movies(sim1, sim2)
     m1_yaw = np.array(sim1.fish_yaw)
     m1_pitch = np.array(sim1.fish_pitch)
     m1_xyz = [np.array(xyz) for xyz in sim1.fish_xyz]
     m2_yaw = np.array(sim2.fish_yaw)
     m2_pitch = np.array(sim2.fish_pitch)
     m2_xyz = [np.array(xyz) for xyz in sim2.fish_xyz]
-    mag_diff_xyz = np.array([np.linalg.norm(r-m) for r,m in zip(m1_xyz, m2_xyz)])
-    diff_pitch = [b-a for a, b in zip(np.around(m1_pitch, 3),
-                                      np.around(m2_pitch, 3))]
+    mag_diff_xyz = np.nanmean(
+        np.array([np.linalg.norm(r-m) for r, m in zip(m1_xyz, m2_xyz)]))
+    diff_pitch = np.nanmean(
+        [b-a for a, b in zip(np.around(m1_pitch, 3),
+                             np.around(m2_pitch, 3))])
     dy_raw = [b-a for a, b in zip(np.around(m1_yaw, 3),
                                   np.around(m2_yaw, 3))]
-    diff_yaw = yaw_fix(dy_raw)
-    if np.sum(mag_diff_xyz) != 0:
-        norm_md = mag_diff_xyz / np.std(mag_diff_xyz)
-    else:
-        norm_md = mag_diff_xyz
-    if np.sum(diff_pitch) != 0:
-        norm_pitch = np.array(diff_pitch) / np.std(diff_pitch)
-    else:
-        norm_pitch = diff_pitch
-    if np.sum(diff_yaw) != 0:
-        norm_yaw = np.array(diff_yaw) / np.std(diff_yaw)         
-    else:
-        norm_yaw = diff_yaw
-    score = np.sum(norm_md + np.abs(norm_pitch) + np.abs(norm_yaw))
-
-    # MAKE SURE YOU IMPLEMENT MAX AND MIN ALT IN MODEL.
-    # CAN ALSO MAKE YAW A MOD NP.PI
+    diff_yaw = np.nanmean(yaw_fix(dy_raw))
     if plot_or_not:
         # zip keeps the scales the same
         rx = [r[0] for r, m in zip(m1_xyz, m2_xyz)]
@@ -1306,9 +1335,9 @@ def score_model_similarity(plot_or_not, sim1, sim2):
         ax4 = fig.add_subplot(gs[0:2, 2:])
         ax1.plot(rx, 'r', linewidth=1)
         ax1.plot(mx, 'r', alpha=.5, linewidth=1)
-        ax1.plot(ry, 'g', linewidth=1) 
+        ax1.plot(ry, 'g', linewidth=1)
         ax1.plot(my, 'g', alpha=.5, linewidth=1)
-        ax1.plot(rz, 'b', linewidth=1) 
+        ax1.plot(rz, 'b', linewidth=1)
         ax1.plot(mz, 'b', alpha=.5, linewidth=1)
         ax1.plot(bout_times, [rx[bt] for bt in bout_times], 'c', marker='.', linestyle='None')
         ax1.plot(bout_times, [ry[bt] for bt in bout_times], 'c', marker='.', linestyle='None')
@@ -1334,16 +1363,17 @@ def score_model_similarity(plot_or_not, sim1, sim2):
             ax2.plot(rx[i], ry[i], color=rgba_vals1[i], marker='.')
             ax3.plot(rx[i], rz[i], color=rgba_vals1[i], marker='.')
         for j in range(len(mx)):
-            ax2.plot(mx[j], my[j], color=rgba_vals2[j], marker='^', ms=3)
-            ax3.plot(mx[j], mz[j], color=rgba_vals2[j], marker='^', ms=3)
+            ax2.plot(mx[j], my[j], color=rgba_vals2[j], marker='^', ms=5)
+            ax3.plot(mx[j], mz[j], color=rgba_vals2[j], marker='^', ms=5)
         ax2.set_title('XY')
         ax3.set_title('XZ')
         pl.tight_layout()
         pl.savefig('mod_comparision.pdf')
         pl.subplots_adjust(top=.9, wspace=.8)
-        pl.close()
+        pl.show()
+#        pl.close()
 
-    return score
+    return mag_diff_xyz, diff_pitch, diff_yaw
 
 
 def strike(p, strike_means, strike_std):
@@ -1440,6 +1470,7 @@ if __name__ == "__main__":
     np.save('ms.npy', ms)
     np.save('p_inits.npy', p_inits)
     np.save('strike_params.npy', strike_params)
+#    np.save('simlist_by_hunt.npy', simlist_by_hunt)
     sq = score_query("Result", ms, lambda x: Counter(x))
     print sq
 
