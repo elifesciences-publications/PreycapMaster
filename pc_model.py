@@ -25,7 +25,7 @@ from collections import deque, Counter
 from master import fishxyz_to_unitvecs, sphericalbout_to_xyz, p_map_to_fish, RealFishControl, normalize_kernel, normalize_kernel_interp
 from toolz.itertoolz import sliding_window
 from scipy.ndimage import gaussian_filter
-from scipy.stats import norm, ttest_ind, ttest_rel, wilcoxon, ttest_1samp
+from scipy.stats import norm, ttest_ind, ttest_rel, wilcoxon, ttest_1samp, mannwhitneyu
 
 # Notes: bayesdb, regardless of the seed you provide at opening,
 # will yield the same result each time if you re-create the
@@ -38,48 +38,62 @@ from scipy.stats import norm, ttest_ind, ttest_rel, wilcoxon, ttest_1samp
 # show means of each distribution as list
 
 class Marr2Algorithms:
-    def __init__(self, para_positions, strike_params):
-        self.para_positions = para_positions.tolist()
+    def __init__(self, para_positions, strike_params, use_likelihood):
+        self.para_positions = para_positions
         self.bouts_static = []
         self.bouts_bayes = []
-        self.marr_bdb_file = bl.bayesdb_open('wik_bdb/bdb_hunts_marr.bdb',
-                                             seed=np.random.seed())
+        self.marr_bdb_file = bl.bayesdb_open('wik_bdb/bdb_hunts_marr.bdb')
+        self.marr_bdb_file.np_prng.seed()
+        self.number_of_models_in_ensemble = len(
+                self.marr_bdb_file.backends['cgpm']._engine(
+                    self.marr_bdb_file, 1).states
+        if not use_likelihood:
+            self.marr_bdb_file.backends['cgpm'].set_multiprocess(False)
+        else:
+            self.marr_bdb_file.backends['cgpm'].set_multiprocess(True)
         self.strike_params = strike_params
         self.strike_means = strike_params[0]
         self.strike_std = strike_params[1]
         self.test_results = []
         self.fails = []
         self.averages = []
+        self.prebout_para = []
+        self.postbout_para = []
 
     def result_compiler(self):
 
+        max_bouts = 100
+        
         def nanremove(arr):
             a = []
             for b in arr:
                 if not np.isfinite(b):
-                    b = 100
-                    a.append(b)
+                    b = max_bouts
+                a.append(b)
             return np.array(a)
 
-        fig, ax = pl.subplots(3, 1)
-        all_results = [nanremove(self.bouts_static)]
+        fig, ax = pl.subplots(1, 1, figsize=(15, 15))
+        all_results_w_nan = [self.bouts_static]
         for bayesbouts in self.bouts_bayes:
-            all_results.append(nanremove(bayesbouts))
-        
+            all_results_w_nan.append(bayesbouts)
+        all_results = [nanremove(b) for b in all_results_w_nan]
         wilcoxon_results = [wilcoxon(all_results[0], all_results[i+1])
                             for i in range(len(self.bouts_bayes))]
         self.test_results = wilcoxon_results
-        self.fails = [f[np.isnan(f)].shape[0] for f in all_results]
-        self.averages = [np.median(f) for f in all_results]
+        self.fails = [f[~np.isfinite(f)].shape[0] for f in all_results_w_nan]
+        self.averages = [np.percentile(f, [25, 50, 75]) for f in all_results]
         print('One Sample T on Medians')
-        one_samp_t = ttest_1samp(self.averages[1:], self.averages[0])
+        one_samp_t = ttest_1samp([av[1] for av in self.averages[1:]],
+                                 self.averages[0][1])
         print one_samp_t
-        sb.violinplot(data=all_results, ax=ax[0])
-        sb.barplot(data=self.fails, ax=ax[1])
+        mannwit = [mannwhitneyu([av[i] for av in self.averages[1:]],
+                                [self.averages[0][i]])[1] for i in range(3)]
+        print mannwit
+        sb.violinplot(data=all_results_w_nan, ax=ax)
         pl.show()
 
     def marr2algorithm(self, para_varbs, boutcounter):
-        if boutcounter > 20:
+        if boutcounter > 50:
             return np.nan
         if strike(para_varbs, self.strike_means, self.strike_std):
             return boutcounter + 1
@@ -100,22 +114,57 @@ class Marr2Algorithms:
         return self.marr2algorithm(para_varbs, boutcounter+1)
 
     def marr2bayes(self, para_varbs, boutcounter):
-        if boutcounter > 20:
+        if boutcounter > 50:
             return np.nan
         if strike(para_varbs, self.strike_means, self.strike_std):
             print boutcounter + 1
             return boutcounter + 1
-        df_sim = query(self.marr_bdb_file,
-                       '''SIMULATE "Postbout Para Az", "Postbout Para Alt",
+        if not use_likelihood:
+            df_sim = query(
+                self.marr_bdb_file,
+                '''
+                    SIMULATE
+                        "Postbout Para Az",
+                        "Postbout Para Alt",
+                        "Postbout Para Dist"
+                    FROM bout_population
+                    USING MODEL {model_index}
+                    GIVEN
+                        "Para Az" = {Para Az},
+                        "Para Alt" = {Para Alt},
+                        "Para Dist" = {Para Dist}
+                   LIMIT 1
+               '''
+
+                .format(
+                    model_index=np.random.randint(
+                        0, self.number_of_models_in_ensemble),
+                    **p_inits[0]
+                )
+        else:
+            df_sim = query(
+                self.marr_bdb_file,
+                '''
+                    SIMULATE
+                       "Postbout Para Az",
+                       "Postbout Para Alt",
                        "Postbout Para Dist"
                        FROM bout_population
-                       GIVEN "Para Az" = {Para Az},
+                    GIVEN
+                       "Para Az" = {Para Az},
                        "Para Alt" = {Para Alt},
                        "Para Dist" = {Para Dist}
-                       LIMIT 1 '''.format(**para_varbs))
+                    LIMIT 1
+                '''
+
+                .format(**para_varbs)
+                )
+
+        self.prebout_para.append(para_varbs)
         para_varbs = {"Para Az": df_sim["Postbout Para Az"][0],
                       "Para Alt": df_sim["Postbout Para Alt"][0],
                       "Para Dist": df_sim["Postbout Para Dist"][0]}
+        self.postbout_para.append(para_varbs)
         return self.marr2bayes(para_varbs, boutcounter+1)
 
     def run_marr2_models(self, model_repetitions, *static_or_bayes):
@@ -161,6 +210,7 @@ class PreyCap_Simulation:
         self.fish_bases = []
         self.fish_pitch = [fishmodel.real_hunt["Initial Conditions"][1]]
         self.fish_yaw = [fishmodel.real_hunt["Initial Conditions"][2]]
+        self.pb_para_distance = []
         self.interbouts = self.fishmodel.interbouts
         self.bout_durations = self.fishmodel.bout_durations
         self.bout_energy = []
@@ -355,6 +405,7 @@ class PreyCap_Simulation:
 
             if first_postbout_frame:
                 csv_row += [para_varbs["Para Az"], para_varbs["Para Alt"], para_varbs["Para Dist"]]
+                self.pb_para_distance.append(para_varbs["Para Dist"])
                 # write row function
                 first_postbout_frame = False
                 csv_row_list.append(csv_row)
@@ -541,7 +592,7 @@ class PreyCap_Simulation:
             self.strikelist = np.zeros(framecounter)
         self.framecounter = framecounter
         self.hunt_result = hunt_result
-        self.write_bouts_to_csv(csv_row_list)
+#        self.write_bouts_to_csv(csv_row_list)
     
 class FishModel:
     def __init__(self, model_param, strike_params, rfo, hunt_ind, *spherical_bouts):
@@ -980,12 +1031,13 @@ def score_model_similarity(mod1_index, mod2_index,
         # this isn't quite right. its not iterating through the partitions,
         # it stores a partition for each sub_array and then the whole partition comes out
         # and is taken the mean of. want to take the mean of each piece. 
-        
-        arr_partitioned = np.array(
-            [np.nanmean(p) for p in [
-                partition(len(xs) / num_partitions, xs) for xs in arr]])
-        means_by_partition = [arr_partitioned[:, n] for n in range(
-            num_partitions)]
+        means_by_partition = []        
+        arr_partitioned = [partition(len(xs) / num_partitions, xs) for xs in arr]
+        extracted_partitions = [[p for p in part] for part in arr_partitioned]
+        for n in range(num_partitions):
+            partition_means = [np.nanmean(
+                prt[n]) for prt in extracted_partitions if prt != []]
+            means_by_partition.append(partition_means)
         return means_by_partition
     scores = []
     for sims in simlist_by_huntid:
@@ -997,9 +1049,20 @@ def score_model_similarity(mod1_index, mod2_index,
     xyz_sim = avg_of_partitions(scores[:, 0])
     pitch_scores = avg_of_partitions(scores[:, 1])
     yaw_scores = avg_of_partitions(scores[:, 2])
-    sb.violinplot(data=xyz_sim + pitch_scores + yaw_scores)
+    fig, ax = pl.subplots(2, 1, figsize=(15, 15))
+    ax[0].set_title('XYZ Similarity')
+    ax[1].set_title('Pitch and Yaw Similarity')
+    sb.violinplot(data=xyz_sim, ax=ax[0])
+    sb.violinplot(data=pitch_scores + yaw_scores, ax=ax[1])
     pl.show()
-    return xyz_sim, pitch_scores, yaw_scores
+    print('XYZ Quartiles')
+    print([np.percentile(xs, [25, 50, 75]).tolist() for xs in xyz_sim])
+    print('Pitch Quartiles')
+    print([np.percentile(ps, [25, 50, 75]).tolist() for ps in pitch_scores])
+    print('Yaw Quartiles')
+    print([np.percentile(ys, [25, 50, 75]).tolist() for ys in yaw_scores])
+    return fig, xyz_sim, pitch_scores, yaw_scores
+
 
 def extract_all_spherical_bouts(drct_list):
     all_spherical_bouts = []
@@ -1290,21 +1353,26 @@ def score_trajectory_similarity(plot_or_not, sim1, sim2):
 
     # sims both contain the bout durations and start times. do not record values
     # for scoring inside the bouts. 
-    
+    bout_times = sim1.interbouts
+    bout_durations = sim1.bout_durations
+    avoid_indices = np.concatenate(
+        [np.arange(ib, ib+bdur) for ib, bdur in zip(
+            bout_times, bout_durations)])
     make_vr_movies(sim1, sim2)
-    m1_yaw = np.array(sim1.fish_yaw)
-    m1_pitch = np.array(sim1.fish_pitch)
-    m1_xyz = [np.array(xyz) for xyz in sim1.fish_xyz]
-    m2_yaw = np.array(sim2.fish_yaw)
-    m2_pitch = np.array(sim2.fish_pitch)
-    m2_xyz = [np.array(xyz) for xyz in sim2.fish_xyz]
+    m1_yaw = np.delete(np.array(sim1.fish_yaw), avoid_indices)
+    m1_pitch = np.delete(np.array(sim1.fish_pitch), avoid_indices)
+    m1_xyz = np.delete(
+        np.array([np.array(xyz) for xyz in sim1.fish_xyz]), avoid_indices)
+    m2_yaw = np.delete(np.array(sim2.fish_yaw), avoid_indices)
+    m2_pitch = np.delete(np.array(sim2.fish_pitch), avoid_indices)
+    m2_xyz = np.delete(np.array(
+        [np.array(xyz) for xyz in sim2.fish_xyz]), avoid_indices)
     mag_diff_xyz = np.array(
         [np.linalg.norm(r-m) for r, m in zip(m1_xyz, m2_xyz)])
-    diff_pitch = [b-a for a, b in zip(np.around(m1_pitch, 3),
-                             np.around(m2_pitch, 3))]
-    dy_raw = [b-a for a, b in zip(np.around(m1_yaw, 3),
-                                  np.around(m2_yaw, 3))]
-    diff_yaw = yaw_fix(dy_raw)
+    diff_pitch = np.around([np.abs(b-a) for a, b in zip(m1_pitch, m2_pitch)],
+                           4)
+    dy_raw = [b-a for a, b in zip(m1_yaw, m2_yaw)]
+    diff_yaw = np.around(np.abs(yaw_fix(dy_raw)), 4)
     if plot_or_not:
         # zip keeps the scales the same
         rx = [r[0] for r, m in zip(m1_xyz, m2_xyz)]
@@ -1464,21 +1532,16 @@ if __name__ == "__main__":
 
     # modlist2 = [{"Model Type": "Real Coords", "Real or Sim": "Real"},
     #             {"Model Type": "Independent Regression", "Real or Sim": "Real"},
-    #             {"Model Type": "Multiple Regression Position", "Real or Sim": "Real"},
-    #             {"Model Type": "Multiple Regression Velocity", "Real or Sim": "Real"},
-    #             {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All"},
-    #             {"Model Type": "Random", "Real or Sim": "Real", "Spherical Bouts": "All"},  
-    #             {"Model Type": "Random", "Real or Sim": "Real", "Spherical Bouts": "Hunt"}]
+    #             {"Model Type": "Multiple Regression Position", "Real or Sim": "Real"}]
+
 
     modlist2 = [{"Model Type": "Real Coords", "Real or Sim": "Real"},
                 {"Model Type": "Multiple Regression Position", "Real or Sim": "Real"},
-                {"Model Type": "Multiple Regression Position", "Real or Sim": "Real",
-                 "Extrapolate Para": 5},
                 {"Model Type": "Multiple Regression Velocity", "Real or Sim": "Real"},
                 {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All"},
-                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All", "Extrapolate Para": 5},
+                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All", "Extrapolate Para": 10},
                 {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "Hunt"},
-                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "Hunt", "Extrapolate Para": 5},
+                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "Hunt", "Extrapolate Para": 10},
                 {"Model Type": "Random", "Real or Sim": "Real", "Spherical Bouts": "All"},  
                 {"Model Type": "Random", "Real or Sim": "Real", "Spherical Bouts": "Hunt"}]
 
@@ -1490,10 +1553,9 @@ if __name__ == "__main__":
                       '091118_1', '091118_2', '091118_3', '091118_4', '091118_5',
                       '090418_3', '090418_4']
 
-#    new_wik_subset = ['091418_1']
     ms, p_inits, simlist_by_model, simlist_by_hunt = model_wrapper(
         new_wik_subset, strike_params,
-        para_model, modlist2, hb, actions)
+        para_model, modlist2, hb, actions, 1)
     np.save('ms.npy', ms)
     np.save('p_inits.npy', p_inits)
     np.save('strike_params.npy', strike_params)

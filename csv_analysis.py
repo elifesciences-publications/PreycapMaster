@@ -18,7 +18,8 @@ from toolz.itertoolz import sliding_window
 
 # for two variable regression, compare 2 queries, and single reg,
 # take a color arg. for 2 queries, towards and away
-# will be dark and light, just like in minefield. 
+# will be dark and light, just like in minefield.
+
 
 class BayesDB_Simulator:
     # use -1 model for no particular model
@@ -683,7 +684,8 @@ def stim_conditionals(data, conditioner_stat, stat, n_smallest):
         stat_per_hunt += para_stat[minstat_args].tolist()
     stat_per_hunt = np.array(stat_per_hunt)
     return stat_per_hunt[~np.isnan(stat_per_hunt)]
-    
+
+
 def huntbouts_plotter(data):
     v1_cond1 = []
     v2_cond1 = []
