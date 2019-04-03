@@ -4021,7 +4021,7 @@ if __name__ == '__main__':
 # bout array, matched with a flag array that describes summary statistics for each bout. A new BoutsandFlags object is then created
 # whose only role is to contain the bouts and corresponding flags for each fish. 
 
-    fish_id = '091218_6'
+    fish_id = '090718_1'
     drct = os.getcwd() + '/' + fish_id
     import_exp = True
     import_dim = False

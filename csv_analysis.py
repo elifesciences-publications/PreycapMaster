@@ -313,7 +313,7 @@ def bout_inversion(row):
         inverted_row["Bout Alt"] *= -1
         inverted_row["Bout Delta Pitch"] *= -1
     return inverted_row
-        
+
 
 def make_regression_plots(x1, y1, x2, y2, labels, colors):
     fig = pl.figure()

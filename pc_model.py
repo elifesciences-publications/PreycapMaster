@@ -25,7 +25,7 @@ from collections import deque, Counter
 from master import fishxyz_to_unitvecs, sphericalbout_to_xyz, p_map_to_fish, RealFishControl, normalize_kernel, normalize_kernel_interp
 from toolz.itertoolz import sliding_window
 from scipy.ndimage import gaussian_filter
-from scipy.stats import norm, ttest_ind, ttest_rel, wilcoxon, ttest_1samp, mannwhitneyu
+from scipy.stats import norm, ttest_ind, ttest_rel, wilcoxon, ttest_1samp, mannwhitneyu, pearsonr
 
 # Notes: bayesdb, regardless of the seed you provide at opening,
 # will yield the same result each time if you re-create the
@@ -46,7 +46,8 @@ class Marr2Algorithms:
         self.marr_bdb_file.np_prng.seed()
         self.number_of_models_in_ensemble = len(
                 self.marr_bdb_file.backends['cgpm']._engine(
-                    self.marr_bdb_file, 1).states
+                    self.marr_bdb_file, 1).states)
+        self.use_likelihood = use_likelihood
         if not use_likelihood:
             self.marr_bdb_file.backends['cgpm'].set_multiprocess(False)
         else:
@@ -54,16 +55,30 @@ class Marr2Algorithms:
         self.strike_params = strike_params
         self.strike_means = strike_params[0]
         self.strike_std = strike_params[1]
+        self.static_params = {'az_m': .54,
+                              'alt_m_pos': .56,
+                              'alt_m_neg': 1.1,
+                              'dist_m': .88,
+                              'az_b': 0,
+                              'alt_b_pos': .14,
+                              'alt_b_neg': .15,
+                              'dist_b': -8}
         self.test_results = []
         self.fails = []
         self.averages = []
         self.prebout_para = []
         self.postbout_para = []
 
+    def firstbout_transformation(self, para_varbs):
+        pb_az = .29 * para_varbs["Para Az"]
+        pb_dist = .87 * para_varbs["Para Dist"] - 27.5
+        pb_alt = .48 * para_varbs["Para Alt"] + .15
+        return pb_az, pb_dist, pb_alt
+
     def result_compiler(self):
 
         max_bouts = 100
-        
+
         def nanremove(arr):
             a = []
             for b in arr:
@@ -79,15 +94,26 @@ class Marr2Algorithms:
         all_results = [nanremove(b) for b in all_results_w_nan]
         wilcoxon_results = [wilcoxon(all_results[0], all_results[i+1])
                             for i in range(len(self.bouts_bayes))]
-        self.test_results = wilcoxon_results
-        self.fails = [f[~np.isfinite(f)].shape[0] for f in all_results_w_nan]
+        sum_of_ranks = [np.sum(
+            np.sign(
+                np.array(
+                    all_results[0]) - np.array(
+                        all_results[i+1]))) for i in range(
+                            len(self.bouts_bayes))]
+        self.test_results = [wilcoxon_results, sum_of_ranks]
         self.averages = [np.percentile(f, [25, 50, 75]) for f in all_results]
         print('One Sample T on Medians')
         one_samp_t = ttest_1samp([av[1] for av in self.averages[1:]],
                                  self.averages[0][1])
         print one_samp_t
-        mannwit = [mannwhitneyu([av[i] for av in self.averages[1:]],
-                                [self.averages[0][i]])[1] for i in range(3)]
+        mannwit = []
+        for i in range(3):
+            try:
+                mwt = mannwhitneyu([av[i] for av in self.averages[1:]],
+                                   [self.averages[0][i]])[1]
+            except ValueError:
+                mwt = np.inf
+            mannwit.append(mwt)
         print mannwit
         sb.violinplot(data=all_results_w_nan, ax=ax)
         pl.show()
@@ -98,16 +124,20 @@ class Marr2Algorithms:
         if strike(para_varbs, self.strike_means, self.strike_std):
             return boutcounter + 1
         if boutcounter == 0:
-            pb_az = .29 * para_varbs["Para Az"]
-            pb_dist = .87 * para_varbs["Para Dist"] - 27.5
-            pb_alt = .48 * para_varbs["Para Alt"] + .15
+            pb_az, pb_dist, pb_alt = self.firstbout_transformation(
+                para_varbs)
         else:
-            pb_az = .54 * para_varbs["Para Az"]
-            pb_dist = .88 * para_varbs["Para Dist"] - 8
+            pb_az = self.static_params['az_m'] * para_varbs[
+                "Para Az"] + self.static_params['az_b']
+            pb_dist = self.static_params['dist_m'] * para_varbs[
+                "Para Dist"] + self.static_params['dist_b']
             if para_varbs["Para Alt"] >= 0:
-                pb_alt = .56 * para_varbs["Para Alt"] + .14
+                pb_alt = self.static_params['alt_m_pos'] * para_varbs[
+                    "Para Alt"] + self.static_params['alt_b_pos']
             else:
-                pb_alt = 1.1 * para_varbs["Para Alt"] + .15
+                pb_alt = self.static_params['alt_m_neg'] * para_varbs[
+                    "Para Alt"] + self.static_params['alt_b_neg']
+
         para_varbs = {"Para Az": pb_az,
                       "Para Alt": pb_alt,
                       "Para Dist": pb_dist}
@@ -117,54 +147,61 @@ class Marr2Algorithms:
         if boutcounter > 50:
             return np.nan
         if strike(para_varbs, self.strike_means, self.strike_std):
-            print boutcounter + 1
             return boutcounter + 1
-        if not use_likelihood:
-            df_sim = query(
-                self.marr_bdb_file,
-                '''
-                    SIMULATE
-                        "Postbout Para Az",
-                        "Postbout Para Alt",
-                        "Postbout Para Dist"
-                    FROM bout_population
-                    USING MODEL {model_index}
-                    GIVEN
-                        "Para Az" = {Para Az},
-                        "Para Alt" = {Para Alt},
-                        "Para Dist" = {Para Dist}
-                   LIMIT 1
-               '''
-
-                .format(
-                    model_index=np.random.randint(
-                        0, self.number_of_models_in_ensemble),
-                    **p_inits[0]
-                )
+        if boutcounter == 0:
+            pb_az, pb_dist, pb_alt = self.firstbout_transformation(
+                para_varbs)
         else:
-            df_sim = query(
-                self.marr_bdb_file,
-                '''
-                    SIMULATE
-                       "Postbout Para Az",
-                       "Postbout Para Alt",
-                       "Postbout Para Dist"
-                       FROM bout_population
-                    GIVEN
-                       "Para Az" = {Para Az},
-                       "Para Alt" = {Para Alt},
-                       "Para Dist" = {Para Dist}
-                    LIMIT 1
-                '''
+            if not self.use_likelihood:
+                df_sim = query(
+                    self.marr_bdb_file,
+                    '''
+                        SIMULATE
+                            "Postbout Para Az",
+                            "Postbout Para Alt",
+                            "Postbout Para Dist"
+                        FROM bout_population
+                        USING MODEL {model_index}
+                        GIVEN
+                            "Para Az" = {Para Az},
+                            "Para Alt" = {Para Alt},
+                            "Para Dist" = {Para Dist}
+                       LIMIT 1
+                   '''
 
-                .format(**para_varbs)
-                )
+                    .format(
+                        model_index=np.random.randint(
+                            0, self.number_of_models_in_ensemble),
+                        **para_varbs
+                    ))
+            else:
+                df_sim = query(
+                    self.marr_bdb_file,
+                    '''
+                        SIMULATE
+                           "Postbout Para Az",
+                           "Postbout Para Alt",
+                           "Postbout Para Dist"
+                           FROM bout_population
+                        GIVEN
+                           "Para Az" = {Para Az},
+                           "Para Alt" = {Para Alt},
+                           "Para Dist" = {Para Dist}
+                        LIMIT 1
+                    '''
 
-        self.prebout_para.append(para_varbs)
-        para_varbs = {"Para Az": df_sim["Postbout Para Az"][0],
-                      "Para Alt": df_sim["Postbout Para Alt"][0],
-                      "Para Dist": df_sim["Postbout Para Dist"][0]}
-        self.postbout_para.append(para_varbs)
+                    .format(**para_varbs)
+                    )
+        if boutcounter == 0:
+            para_varbs = {"Para Az": pb_az,
+                          "Para Alt": pb_alt,
+                          "Para Dist": pb_dist}
+        else:
+            self.prebout_para.append(para_varbs)
+            para_varbs = {"Para Az": df_sim["Postbout Para Az"][0],
+                          "Para Alt": df_sim["Postbout Para Alt"][0],
+                          "Para Dist": df_sim["Postbout Para Dist"][0]}
+            self.postbout_para.append(para_varbs)
         return self.marr2bayes(para_varbs, boutcounter+1)
 
     def run_marr2_models(self, model_repetitions, *static_or_bayes):
@@ -180,7 +217,25 @@ class Marr2Algorithms:
                 self.bouts_bayes.append(map(lambda para_position:
                                         self.marr2bayes(para_position, 0),
                                         self.para_positions))
-    
+
+    def validate_bayes_model(self, update_static_model):
+        slopes, yints = validate_model_transformations(self.prebout_para,
+                                                       self.postbout_para)
+        if update_static_model:
+            self.static_params = {'az_m': slopes[0],
+                                  'alt_m_pos': slopes[1],
+                                  'alt_m_neg': slopes[2],
+                                  'dist_m': slopes[3],
+                                  'az_b': yints[0],
+                                  'alt_b_pos': yints[1],
+                                  'alt_b_neg': yints[2],
+                                  'dist_b': yints[3]}
+            self.bouts_static = map(lambda para_position:
+                                    self.marr2algorithm(para_position, 0),
+                                    self.para_positions)
+            self.result_compiler()
+        
+        
 class PreyCap_Simulation:
     def __init__(self, fishmodel, paramodel, simlen, simulate_para, *para_input):
         self.fishmodel = fishmodel
@@ -210,7 +265,9 @@ class PreyCap_Simulation:
         self.fish_bases = []
         self.fish_pitch = [fishmodel.real_hunt["Initial Conditions"][1]]
         self.fish_yaw = [fishmodel.real_hunt["Initial Conditions"][2]]
-        self.pb_para_distance = []
+        self.db_rows = []
+        self.prebout_para = []
+        self.postbout_para = []
         self.interbouts = self.fishmodel.interbouts
         self.bout_durations = self.fishmodel.bout_durations
         self.bout_energy = []
@@ -345,14 +402,18 @@ class PreyCap_Simulation:
             px, py, pz = self.para_xyz
 
         first_postbout_frame = False
+        fish_bout = np.array([])
+        para_varbs = []
         while True:
             if first_postbout_frame:
+
                 csv_row = fish_bout[0:5].tolist() + [para_varbs["Para Az"],
                                                      para_varbs["Para Alt"],
                                                      para_varbs["Para Dist"],
                                                      para_varbs["Para Az Velocity"], 
                                                      para_varbs["Para Alt Velocity"],
                                                      para_varbs["Para Dist Velocity"]]
+                csv_row_list.append(csv_row)
             fish_basis = fishxyz_to_unitvecs(self.fish_xyz[-1],
                                              self.fish_yaw[-1],
                                              self.fish_pitch[-1])
@@ -389,14 +450,18 @@ class PreyCap_Simulation:
                                            fish_basis[0],
                                            fish_basis[3],
                                            fish_basis[2],
-                                           self.model_para_xyz, 
+                                           self.model_para_xyz,
                                            0)
 
+            if first_postbout_frame and self.bout_counter > 1:
+                #Here add either a first bout list or just ignore first transformation
+                self.prebout_para.append(para_varbs)
+            
             para_varbs = {"Para Az": para_spherical[0],
                           "Para Alt": para_spherical[1],
                           "Para Dist": para_spherical[2],
                           "Para Az Velocity": 0,
-                          "Para Alt Velocity": 0, 
+                          "Para Alt Velocity": 0,
                           "Para Dist Velocity": 0}
 
             if framecounter <= self.fishmodel.rfo.firstbout_para_intwin:
@@ -404,14 +469,12 @@ class PreyCap_Simulation:
                     self.para_initial_position = para_varbs
 
             if first_postbout_frame:
-                csv_row += [para_varbs["Para Az"], para_varbs["Para Alt"], para_varbs["Para Dist"]]
-                self.pb_para_distance.append(para_varbs["Para Dist"])
                 # write row function
+                if self.bout_counter > 1:
+                    self.postbout_para.append(para_varbs)
                 first_postbout_frame = False
-                csv_row_list.append(csv_row)
-                csv_row = []
-                
-            
+
+
 # can get more fancy with this function -- could have an entire object
 # that counts interesting facets of the hunt. e.g. how many frames
 # was the az greater than the init az after the first bout?
@@ -446,7 +509,7 @@ class PreyCap_Simulation:
             list so you can determine velocities and accelerations '''
                 
             if framecounter in self.interbouts and not self.fishmodel.modchoice == "Real Coords":
-                first_postbout_frame = True
+
                 self.fishmodel.current_fish_xyz = self.fish_xyz[-1]
                 self.fishmodel.current_fish_pitch = self.fish_pitch[-1]
                 self.fishmodel.current_fish_yaw = self.fish_yaw[-1]
@@ -540,6 +603,7 @@ class PreyCap_Simulation:
                     self.fish_pitch.append(np.clip(self.fish_pitch[-1] + fish_bout[3], -np.pi, np.pi))
                     self.fish_yaw.append(np.mod(self.fish_yaw[-1] + fish_bout[4], 2*np.pi))
                     framecounter += 1
+                first_postbout_frame = True
                 self.bout_counter += 1
                 
             else:
@@ -570,6 +634,7 @@ class PreyCap_Simulation:
                             bout_xyz,
                             uf_bout, bout_yaw, bout_pitch))
                         framecounter += self.bout_durations[self.bout_counter]
+                        first_postbout_frame = True
                         self.bout_counter += 1
                     else:
                         self.fish_xyz.append(self.fishmodel.rfo.fish_xyz[frame_map])
@@ -592,6 +657,7 @@ class PreyCap_Simulation:
             self.strikelist = np.zeros(framecounter)
         self.framecounter = framecounter
         self.hunt_result = hunt_result
+        self.db_rows = csv_row_list
 #        self.write_bouts_to_csv(csv_row_list)
     
 class FishModel:
@@ -919,22 +985,23 @@ def characterize_strikes(hb_data):
     return [avg_strike_position, std]
 
 
-def make_RLM(y, x):
+def make_LM(y, x):
     # if type(x) == 'list':
     # else:
     x = sm.add_constant(x)
-    mod = sm.RLM(y, x, M=sm.robust.norms.HuberT())
+#    mod = sm.RLM(y, x, M=sm.robust.norms.HuberT())
+    mod = sm.OLS(y, x)
     fit_mod = mod.fit()
     return fit_mod
 
 
 def make_independent_regression_model(hunt_db):
     print('Building Independent Reg Model')
-    fit_models = [make_RLM(hunt_db["Bout Az"], hunt_db["Para Az"]),
-                  make_RLM(hunt_db["Bout Alt"], hunt_db["Para Alt"]),
-                  make_RLM(hunt_db["Bout Dist"], hunt_db["Para Dist"]),
-                  make_RLM(hunt_db["Bout Delta Pitch"], hunt_db["Para Alt"]),
-                  make_RLM(hunt_db["Bout Delta Yaw"], hunt_db["Para Az"])]
+    fit_models = [make_LM(hunt_db["Bout Az"], hunt_db["Para Az"]),
+                  make_LM(hunt_db["Bout Alt"], hunt_db["Para Alt"]),
+                  make_LM(hunt_db["Bout Dist"], hunt_db["Para Dist"]),
+                  make_LM(hunt_db["Bout Delta Pitch"], hunt_db["Para Alt"]),
+                  make_LM(hunt_db["Bout Delta Yaw"], hunt_db["Para Az"])]
 #    reg_lambdas = [lambda pfeature: fm.predict(pfeature) for fm in fit_models]
     return fit_models
 
@@ -950,9 +1017,13 @@ def make_multiple_regression_model(hunt_db, vel_or_position):
         para_features = ["Para Az",
                          "Para Alt", "Para Dist"]
     bout_features = ["Bout Az", "Bout Alt", "Bout Dist", "Bout Delta Pitch", "Bout Delta Yaw"]
-    mult_reg_mods = map(lambda bf: sm.RLM(
+    # mult_reg_mods = map(lambda bf: sm.RLM(
+    #     hunt_db[bf],
+    #     sm.add_constant(hunt_db[para_features]), M=sm.robust.norms.HuberT()), bout_features)
+    mult_reg_mods = map(lambda bf: sm.OLS(
         hunt_db[bf],
-        sm.add_constant(hunt_db[para_features]), M=sm.robust.norms.HuberT()), bout_features)
+        sm.add_constant(hunt_db[para_features])), bout_features)
+
     fit_mult_reg_mods = [m.fit() for m in mult_reg_mods]
     return fit_mult_reg_mods
 
@@ -1039,10 +1110,20 @@ def score_model_similarity(mod1_index, mod2_index,
                 prt[n]) for prt in extracted_partitions if prt != []]
             means_by_partition.append(partition_means)
         return means_by_partition
+    
     scores = []
+    prebout_para1 = []
+    prebout_para2 = []
+    postbout_para1 = []
+    postbout_para2 = []
     for sims in simlist_by_huntid:
         sim1 = sims[mod1_index]
         sim2 = sims[mod2_index]
+        # these are now ordered pairs of pre and post para positions
+        prebout_para1 += sim1.prebout_para
+        postbout_para1 += sim1.postbout_para
+        prebout_para2 += sim2.prebout_para
+        postbout_para2 += sim2.postbout_para
         scores.append(score_trajectory_similarity(
             False, sim1, sim2))
     scores = np.array(scores)
@@ -1061,7 +1142,8 @@ def score_model_similarity(mod1_index, mod2_index,
     print([np.percentile(ps, [25, 50, 75]).tolist() for ps in pitch_scores])
     print('Yaw Quartiles')
     print([np.percentile(ys, [25, 50, 75]).tolist() for ys in yaw_scores])
-    return fig, xyz_sim, pitch_scores, yaw_scores
+    return [fig, xyz_sim, pitch_scores, yaw_scores,
+            [prebout_para1, postbout_para1], [prebout_para2, postbout_para2]]
 
 
 def extract_all_spherical_bouts(drct_list):
@@ -1073,6 +1155,7 @@ def extract_all_spherical_bouts(drct_list):
         all_spherical_bouts += rfo.all_spherical_bouts
         all_spherical_huntbouts += rfo.all_spherical_huntbouts
     return all_spherical_bouts, all_spherical_huntbouts
+
 
 def model_wrapper(drct_list, strike_params, para_model,
                   model_params, hunt_db, actions, *combine_spherical):
@@ -1457,6 +1540,59 @@ def score_trajectory_similarity(plot_or_not, sim1, sim2):
     return mag_diff_xyz, diff_pitch, diff_yaw
 
 
+
+def validate_model_transformations(prebout_para, postbout_para):
+
+    varbs = ['Para Az', 'Para Alt', 'Para Alt', 'Para Dist']
+    fig, ax = pl.subplots(4, 1, figsize=(15, 10))
+    cpal = sb.color_palette()
+    slopes = []
+    yints = []
+    for i, pv in enumerate(varbs):
+        if i == 1 or i == 2:
+            if i == 1:
+                p_pairs = [(pre[pv], post[pv]) for pre,
+                           post in zip(prebout_para, postbout_para) if pre[pv] > 0]
+            elif i == 2:
+                p_pairs = [(pre[pv], post[pv]) for pre,
+                           post in zip(prebout_para, postbout_para) if pre[pv] < 0]
+            p_pairs = [p for p in p_pairs if np.isfinite(p).all()]
+        else:
+            p_pairs = [(p[0][pv], p[1][pv]) for p in zip(
+                prebout_para,
+                postbout_para) if np.isfinite((p[0][pv], p[1][pv])).all()]
+        v1 = [p[0] for p in p_pairs]
+        v2 = [p[1] for p in p_pairs]
+        sb.regplot(v1,
+                   v2,
+                   fit_reg=True, n_boot=100,
+                   scatter_kws={'alpha': 0.2},
+                   robust=False, color=cpal[i], ax=ax[i])
+        rx, ry = ax[i].get_lines()[0].get_data()
+        r_slope = np.around((ry[1] - ry[0])/(rx[1] - rx[0]), 2)
+        slopes.append(r_slope)
+        r_yint = np.around(ry[1] - r_slope*rx[1], 3)
+        yints.append(r_yint)
+        reg_fit = np.around(pearsonr(v1, v2)[0], 2)
+        if pv == 'Para Dist':
+            ax[i].set_ylim([0, 1200])
+            ax[i].set_xlim([0, 1200])
+            ax[i].text(100, 1000, '  ' +
+                       str(r_slope) + 'x + ' + str(
+                           r_yint) + ', ' + '$r^{2}$ = ' + str(reg_fit**2),
+                       color=cpal[i], fontsize=16)
+
+        else:
+            ax[i].set_xlim([-2.5, 2.5])
+            ax[i].set_ylim([-2.5, 2.5])
+            ax[i].text(-2, 2, '  ' +
+                       str(r_slope) + 'x + ' + str(
+                           r_yint) + ', ' + '$r^{2}$ = ' + str(reg_fit**2),
+                       color=cpal[i], fontsize=16)
+    return slopes, yints
+
+
+
 def strike(p, strike_means, strike_std):
     prob_az = norm.cdf(p["Para Az"], strike_means[0], strike_std[0])
     prob_alt = norm.cdf(p["Para Alt"], strike_means[1], strike_std[1])
@@ -1537,13 +1673,13 @@ if __name__ == "__main__":
 
     modlist2 = [{"Model Type": "Real Coords", "Real or Sim": "Real"},
                 {"Model Type": "Multiple Regression Position", "Real or Sim": "Real"},
-                {"Model Type": "Multiple Regression Velocity", "Real or Sim": "Real"},
-                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All"},
-                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All", "Extrapolate Para": 10},
-                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "Hunt"},
-                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "Hunt", "Extrapolate Para": 10},
-                {"Model Type": "Random", "Real or Sim": "Real", "Spherical Bouts": "All"},  
-                {"Model Type": "Random", "Real or Sim": "Real", "Spherical Bouts": "Hunt"}]
+                {"Model Type": "Multiple Regression Velocity", "Real or Sim": "Real"}]
+                # {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All"},
+                # {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All", "Extrapolate Para": 10},
+                # {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "Hunt"},
+                # {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "Hunt", "Extrapolate Para": 10},
+                # {"Model Type": "Random", "Real or Sim": "Real", "Spherical Bouts": "All"},  
+                # {"Model Type": "Random", "Real or Sim": "Real", "Spherical Bouts": "Hunt"}]
 
     modlist_bayes = [{"Model Type": "Bayes", "Real or Sim": "Real"}]
     actions = [1, 2]
@@ -1552,6 +1688,7 @@ if __name__ == "__main__":
                       '091218_1', '091218_2', '091218_3', '091218_4', '091218_5', '091218_6',
                       '091118_1', '091118_2', '091118_3', '091118_4', '091118_5',
                       '090418_3', '090418_4']
+
 
     ms, p_inits, simlist_by_model, simlist_by_hunt = model_wrapper(
         new_wik_subset, strike_params,
