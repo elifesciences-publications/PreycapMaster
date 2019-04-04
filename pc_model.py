@@ -1435,7 +1435,7 @@ def score_trajectory_similarity(plot_or_not, sim1, sim2):
     # if flag is sim, avoid the real parts or ignore them.
 
     # sims both contain the bout durations and start times. do not record values
-    # for scoring inside the bouts. 
+    # for scoring inside the bouts.
     bout_times = sim1.interbouts
     bout_durations = sim1.bout_durations
     avoid_indices = np.concatenate(
@@ -1452,10 +1452,9 @@ def score_trajectory_similarity(plot_or_not, sim1, sim2):
         [np.array(xyz) for xyz in sim2.fish_xyz]), avoid_indices)
     mag_diff_xyz = np.array(
         [np.linalg.norm(r-m) for r, m in zip(m1_xyz, m2_xyz)])
-    diff_pitch = np.around([np.abs(b-a) for a, b in zip(m1_pitch, m2_pitch)],
-                           4)
+    diff_pitch = np.abs([b-a for a, b in zip(m1_pitch, m2_pitch)])
     dy_raw = [b-a for a, b in zip(m1_yaw, m2_yaw)]
-    diff_yaw = np.around(np.abs(yaw_fix(dy_raw)), 4)
+    diff_yaw = np.abs(yaw_fix(dy_raw))
     if plot_or_not:
         # zip keeps the scales the same
         rx = [r[0] for r, m in zip(m1_xyz, m2_xyz)]
@@ -1538,6 +1537,54 @@ def score_trajectory_similarity(plot_or_not, sim1, sim2):
 #        pl.close()
 
     return mag_diff_xyz, diff_pitch, diff_yaw
+
+
+
+# consider if abs value of yaw and pitch is the correct choice. 
+
+def compare_para_positions_across_models(simlist_by_hunt, mod1, mod2,
+                                         pre_or_post, use_abs, varb):
+
+    fig, ax = pl.subplots(1, 1)
+    colors = sb.color_palette()
+    pv1 = []
+    pv2 = []
+    for siml in simlist_by_hunt:
+        if pre_or_post == 0:
+            sim_pvs = np.array(
+                [(p[0][varb], p[1][varb]) for p in zip(
+                    siml[mod1].prebout_para,
+                    siml[mod2].prebout_para) if np.isfinite(
+                        (p[0][varb], p[1][varb])).all()])
+        elif pre_or_post == 1:
+            sim_pvs = np.array(
+                [(p[0][varb], p[1][varb]) for p in zip(
+                    siml[mod1].postbout_para,
+                    siml[mod2].postbout_para) if np.isfinite(
+                        (p[0][varb], p[1][varb])).all()])
+        if sim_pvs.tolist() != []:
+            pv1 += sim_pvs[:, 0].tolist()
+            pv2 += sim_pvs[:, 1].tolist()
+    if use_abs:
+        pv1 = np.abs(pv1)
+        pv2 = np.abs(pv2)
+    sb.distplot(pv1,
+                fit_kws={"color": colors[0]},
+                fit=norm, kde=False, color=colors[0],
+                hist_kws={"alpha": .8}, ax=ax)
+    sb.distplot(pv2,
+                fit_kws={"color": colors[1]},
+                fit=norm, kde=False, color=colors[1],
+                hist_kws={"alpha": .8}, ax=ax)
+    if varb == "Para Dist":
+        ax.set_xlim([0, 1200])
+    else:
+        ax.set_xlim([-2, 2])
+    pl.show()
+        
+
+        
+
 
 
 
