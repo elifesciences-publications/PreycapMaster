@@ -37,12 +37,37 @@ from scipy.stats import norm, ttest_ind, ttest_rel, wilcoxon, ttest_1samp, mannw
 # only show pvalues as list
 # show means of each distribution as list
 
+#note that algorithm should be solution to, where x is the strike mean:
+# there is a family of solutions m, b of the form:
+
+# mx + b = x
+# (1 - m) * strike_mean = b
+
+# strike_mean = b / (1 - m)
+
+
+
+
+# small slope clearly best for getting para closest fastest, but
+# question is whether para speed is matched to the choice. 
+
+
+# however m is only reasonable if it is < 1, otherwise get blowup on edges? 
+# show 95% confindence interval for fit to fish. say that the alg the
+# models use is within it.
+
+# Note that the regplot class uses statsmodels GLM instead of OLS.
+# So your regplot fits will be slightly different. Consider relative benefits, and
+# also consider robust. 
+
 class Marr2Algorithms:
     def __init__(self, para_positions, strike_params, use_likelihood):
         self.para_positions = para_positions
         self.bouts_static = []
         self.bouts_bayes = []
         self.marr_bdb_file = bl.bayesdb_open('wik_bdb/bdb_hunts_marr.bdb')
+        self.all_strikes_csv = pd.read_csv(
+            'wik_bdb/all_huntbouts_rev_strikes_nob0_nostrikes.csv')
         self.marr_bdb_file.np_prng.seed()
         self.number_of_models_in_ensemble = len(
                 self.marr_bdb_file.backends['cgpm']._engine(
@@ -63,11 +88,54 @@ class Marr2Algorithms:
                               'alt_b_pos': .14,
                               'alt_b_neg': .15,
                               'dist_b': -8}
+        self.strike_ci = .05
         self.test_results = []
         self.fails = []
         self.averages = []
         self.prebout_para = []
         self.postbout_para = []
+        self.glm_models = []
+
+    def glm_fits(self):
+        az_model_posvel = make_LM(
+            self.all_strikes_csv['Para Az'][
+                self.all_strikes_csv['Para Az Velocity'] > 0],
+            self.all_strikes_csv['Postbout Para Az'][
+                self.all_strikes_csv['Para Az Velocity'] > 0])
+        az_model_negvel = make_LM(
+            self.all_strikes_csv['Para Az'][
+                self.all_strikes_csv['Para Az Velocity'] < 0],
+            self.all_strikes_csv['Postbout Para Az'][
+                self.all_strikes_csv['Para Az Velocity'] < 0])
+        alt_model_posvel = make_LM(
+            self.all_strikes_csv['Para Alt'][
+                self.all_strikes_csv['Para Alt Velocity'] > 0],
+            self.all_strikes_csv['Postbout Para Alt'][
+                self.all_strikes_csv['Para Alt Velocity'] > 0])
+        alt_model_negvel = make_LM(
+            self.all_strikes_csv['Para Alt'][
+                self.all_strikes_csv['Para Alt Velocity'] < 0],
+            self.all_strikes_csv['Postbout Para Alt'][
+                self.all_strikes_csv['Para Alt Velocity'] < 0])
+        dist_model_posvel = make_LM(
+            self.all_strikes_csv['Para Dist'][
+                self.all_strikes_csv['Para Dist Velocity'] > 0],
+            self.all_strikes_csv['Postbout Para Dist'][
+                self.all_strikes_csv['Para Dist Velocity'] > 0])
+        dist_model_negvel = make_LM(
+            self.all_strikes_csv['Para Dist'][
+                self.all_strikes_csv['Para Dist Velocity'] < 0],
+            self.all_strikes_csv['Postbout Para Dist'][
+                self.all_strikes_csv['Para Dist Velocity'] < 0])
+        all_az = make_LM(self.all_strikes_csv['Para Az'],
+                         self.all_strikes_csv['Postbout Para Az'])
+        all_alt = make_LM(self.all_strikes_csv['Para Alt'],
+                          self.all_strikes_csv['Postbout Para Alt'])
+        all_dist = make_LM(self.all_strikes_csv['Para Dist'],
+                          self.all_strikes_csv['Postbout Para Dist'])
+        self.glm_models = [az_model_posvel, az_model_negvel, alt_model_posvel,
+                           alt_model_negvel, dist_model_posvel,
+                           dist_model_negvel, all_az, all_alt, all_dist]
 
     def firstbout_transformation(self, para_varbs):
         pb_az = .29 * para_varbs["Para Az"]
@@ -121,7 +189,7 @@ class Marr2Algorithms:
     def marr2algorithm(self, para_varbs, boutcounter):
         if boutcounter > 50:
             return np.nan
-        if strike(para_varbs, self.strike_means, self.strike_std):
+        if strike(para_varbs, self.strike_means, self.strike_std, self.strike_ci):
             return boutcounter + 1
         if boutcounter == 0:
             pb_az, pb_dist, pb_alt = self.firstbout_transformation(
@@ -146,7 +214,7 @@ class Marr2Algorithms:
     def marr2bayes(self, para_varbs, boutcounter):
         if boutcounter > 50:
             return np.nan
-        if strike(para_varbs, self.strike_means, self.strike_std):
+        if strike(para_varbs, self.strike_means, self.strike_std, self.strike_ci):
             return boutcounter + 1
         if boutcounter == 0:
             pb_az, pb_dist, pb_alt = self.firstbout_transformation(
@@ -427,22 +495,24 @@ class PreyCap_Simulation:
             if self.fishmodel.linear_predict_para or self.fishmodel.boutbound_prediction:
                 if self.fishmodel.boutbound_prediction:
                     if framecounter >= future_frame:
-                        future_frame = framecounter + self.fishmodel.predict_forward_frames
+                        future_frame = framecounter + self.bout_durations[
+                            self.bout_counter]
                     if not self.fishmodel.linear_predict_para:
                         try:
-                            self.model_para_xyz = [px[future_frame], py[future_frame], pz[future_frame]]
+                            self.model_para_xyz = [px[future_frame],
+                                                   py[future_frame],
+                                                   pz[future_frame]]
                         except IndexError:
                             self.model_para_xyz = [px[-1], py[-1], pz[-1]]
-                    else:
-                        self.model_para_xyz = project_para([px, py, pz],
-                                                           self.fishmodel.rfo.firstbout_para_intwin,
-                                                           self.fishmodel.predict_forward_frames, framecounter)
                 else:
-                    self.model_para_xyz = project_para([px, py, pz],
-                                                       self.fishmodel.rfo.firstbout_para_intwin, self.fishmodel.predict_forward_frames, framecounter)
+                    self.model_para_xyz = project_para(
+                        [px, py, pz],
+                        self.fishmodel.rfo.firstbout_para_intwin,
+                        self.bout_durations[self.bout_counter], framecounter)
 
             else:
-                self.model_para_xyz = [px[framecounter], py[framecounter], pz[framecounter]]
+                self.model_para_xyz = [px[framecounter],
+                                       py[framecounter], pz[framecounter]]
 
             self.fishmodel.current_target_xyz = self.model_para_xyz
             
@@ -494,7 +564,9 @@ class PreyCap_Simulation:
                 break
             
             if strike(para_varbs,
-                      self.fishmodel.strike_means, self.fishmodel.strike_std):
+                      self.fishmodel.strike_means,
+                      self.fishmodel.strike_std,
+                      self.fishmodel.strike_ci):
   #              print("STRIKE!!!!!!!!")
                 self.para_xyz[0] = px
                 self.para_xyz[1] = py
@@ -541,7 +613,6 @@ class PreyCap_Simulation:
                                                   fish_basis[1],
                                                   fish_basis[3],
                                                   fish_basis[2])
-                
                 if self.interpolate != 'none':
                     if self.interpolate == 'kernel':
                         vkernel = normalize_kernel(
@@ -665,6 +736,7 @@ class FishModel:
         self.rfo = rfo
         self.regmod = []
         self.hunt_ind = hunt_ind
+        self.strike_ci = .05
         self.model_param = model_param
         self.modchoice = model_param["Model Type"]
         if spherical_bouts != ():
@@ -691,7 +763,6 @@ class FishModel:
             self.model = (lambda pv: self.random_model(pv))
         self.linear_predict_para = False
         self.boutbound_prediction = False
-        self.predict_forward_frames = 0
         self.strike_means = strike_params[0]
         self.strike_std = strike_params[1]
         self.strike_refractory_period = strike_params[2]
@@ -990,7 +1061,7 @@ def make_LM(y, x):
     # else:
     x = sm.add_constant(x)
 #    mod = sm.RLM(y, x, M=sm.robust.norms.HuberT())
-    mod = sm.OLS(y, x)
+    mod = sm.GLM(y, x)
     fit_mod = mod.fit()
     return fit_mod
 
@@ -1020,7 +1091,7 @@ def make_multiple_regression_model(hunt_db, vel_or_position):
     # mult_reg_mods = map(lambda bf: sm.RLM(
     #     hunt_db[bf],
     #     sm.add_constant(hunt_db[para_features]), M=sm.robust.norms.HuberT()), bout_features)
-    mult_reg_mods = map(lambda bf: sm.OLS(
+    mult_reg_mods = map(lambda bf: sm.GLM(
         hunt_db[bf],
         sm.add_constant(hunt_db[para_features])), bout_features)
 
@@ -1219,15 +1290,14 @@ def execute_models(rfo, strike_params, para_model,
             try:
                 if model_run["Extrapolate Para"]:
                     fish.linear_predict_para = True
-                    fish.predict_forward_frames = model_run["Extrapolate Para"]
             except KeyError:
                 pass
             try: 
                 if model_run["Willie Mays"]:
                     fish.boutbound_prediction = True
-                    fish.predict_forward_frames = model_run["Willie Mays"]
             except KeyError:
                 pass
+
             if model_run["Model Type"] == "Independent Regression":
                 fish.regmod = [ir_bout0, independent_regression_model]
             elif model_run["Model Type"] == "Multiple Regression Velocity":
@@ -1236,7 +1306,10 @@ def execute_models(rfo, strike_params, para_model,
                 fish.regmod = [mp_bout0, multiple_regression_model_position]
             else:
                 fish.regmod = []
-            
+            try: 
+                fish.strike_ci = model_run["Strike CI"]
+            except KeyError:
+                pass
             if model_run["Real or Sim"] == "Real":
                 sim = PreyCap_Simulation(
                     fish,
@@ -1398,6 +1471,22 @@ def slice_dataframe_for_bout0(hunt_db):
     return hdb_bout0[slice_fails]
 
 
+def strike(p, strike_means, strike_std, confidence_interval):
+    prob_az = norm.cdf(p["Para Az"], strike_means[0], strike_std[0])
+    prob_alt = norm.cdf(p["Para Alt"], strike_means[1], strike_std[1])
+    if p["Para Az"] > strike_means[0]:
+        prob_az = 1 - prob_az
+    if p["Para Alt"] > strike_means[1]:
+        prob_alt = 1 - prob_alt
+    # max prob when multiplying all cdfs together is .5**3. normalize. 
+    normalize_prob = prob_alt * prob_az * (1 / .25)
+    if p["Para Dist"] < (
+            strike_means[2] + 2*strike_std[
+                2]) and normalize_prob > confidence_interval:
+        return True
+    else:
+        return False
+
 def static_strike(p, strike_means, strike_std):
     num_stds = 1.5
     in_az_win = (p["Para Az"] < strike_means[0] + num_stds * strike_std[0] and
@@ -1411,7 +1500,7 @@ def static_strike(p, strike_means, strike_std):
         return False
 
 
-def strike_dist_probabilistic(p, strike_means, strike_std):
+def strike_prob(p, strike_means, strike_std, strike_ci):
     prob_az = norm.cdf(p["Para Az"], strike_means[0], strike_std[0])
     prob_alt = norm.cdf(p["Para Alt"], strike_means[1], strike_std[1])
     prob_dist = norm.cdf(p["Para Dist"], strike_means[2], strike_std[2])
@@ -1424,7 +1513,7 @@ def strike_dist_probabilistic(p, strike_means, strike_std):
 
     # max prob when multiplying all cdfs together is .5**3. normalize. 
     normalize_prob = prob_alt * prob_az * prob_dist * (1 / .125)
-    if normalize_prob > .05:
+    if normalize_prob > strike_ci:
         return True
     else:
         return False
@@ -1543,8 +1632,8 @@ def score_trajectory_similarity(plot_or_not, sim1, sim2):
 # consider if abs value of yaw and pitch is the correct choice. 
 
 def compare_para_positions_across_models(simlist_by_hunt, mod1, mod2,
-                                         pre_or_post, use_abs, varb):
-
+                                         pre_or_post, use_abs, varb, *para_coords):
+    
     fig, ax = pl.subplots(1, 1)
     colors = sb.color_palette()
     pv1 = []
@@ -1565,23 +1654,40 @@ def compare_para_positions_across_models(simlist_by_hunt, mod1, mod2,
         if sim_pvs.tolist() != []:
             pv1 += sim_pvs[:, 0].tolist()
             pv2 += sim_pvs[:, 1].tolist()
+
+    # this allows you to add coords directly from the marralgs runs
+    if para_coords != ():
+        if len(para_coords[0]) > 2:
+            pv2 = [p[varb] for p in para_coords[0] if np.isfinite(p[varb])]
+        else:
+            pv1 = [p[varb] for p in para_coords[0][0] if np.isfinite(p[varb])]
+            pv2 = [p[varb] for p in para_coords[0][1] if np.isfinite(p[varb])]
+
     if use_abs:
         pv1 = np.abs(pv1)
         pv2 = np.abs(pv2)
-    sb.distplot(pv1,
-                fit_kws={"color": colors[0]},
-                fit=norm, kde=False, color=colors[0],
-                hist_kws={"alpha": .8}, ax=ax)
-    sb.distplot(pv2,
-                fit_kws={"color": colors[1]},
-                fit=norm, kde=False, color=colors[1],
-                hist_kws={"alpha": .8}, ax=ax)
+
     if varb == "Para Dist":
         ax.set_xlim([0, 1200])
     else:
         ax.set_xlim([-2, 2])
+
+    sb.distplot(pv1,
+                fit_kws={"color": colors[0]},
+                fit=norm, kde=False, color=colors[0],
+                hist_kws={"alpha": .6}, ax=ax)
+    sb.distplot(pv2,
+                fit_kws={"color": colors[1]},
+                fit=norm, kde=False, color=colors[1],
+                hist_kws={"alpha": .6}, ax=ax)
     pl.show()
-        
+    print("Mean, STD Model 1")
+    print np.mean(pv1)
+    print np.std(pv1)
+    print("Mean, STD Model 2")
+    print np.mean(pv2)
+    print np.std(pv2)
+    return pv1, pv2, ax
 
         
 
@@ -1640,20 +1746,7 @@ def validate_model_transformations(prebout_para, postbout_para):
 
 
 
-def strike(p, strike_means, strike_std):
-    prob_az = norm.cdf(p["Para Az"], strike_means[0], strike_std[0])
-    prob_alt = norm.cdf(p["Para Alt"], strike_means[1], strike_std[1])
-    if p["Para Az"] > strike_means[0]:
-        prob_az = 1 - prob_az
-    if p["Para Alt"] > strike_means[1]:
-        prob_alt = 1 - prob_alt
-    # max prob when multiplying all cdfs together is .5**3. normalize. 
-    normalize_prob = prob_alt * prob_az * (1 / .25)
-    if p["Para Dist"] < (
-            strike_means[2] + strike_std[2]) and normalize_prob > .05:
-        return True
-    else:
-        return False
+
     
 
 # write out algorithms as lisp programs
@@ -1703,15 +1796,15 @@ if __name__ == "__main__":
     # Hunt Results are: 1 = Success, 2 = Fail, 3 = Para Rec nans before end of hunt
     
     modlist = [{"Model Type": "Independent Regression", "Real or Sim": "Real"},
-               {"Model Type": "Independent Regression", "Real or Sim": "Real", "Extrapolate Para": 10},
+               {"Model Type": "Independent Regression", "Real or Sim": "Real", "Extrapolate Para":True},
                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All"},
-               {"Model Type": "Independent Regression", "Real or Sim": "Real", "Willie Mays": 10}]
+               {"Model Type": "Independent Regression", "Real or Sim": "Real", "Willie Mays":True}]
 
     modlist4 = [{"Model Type": "Real Coords", "Real or Sim": "Real"},
                 {"Model Type": "Independent Regression", "Real or Sim": "Real"},
-                {"Model Type": "Independent Regression", "Real or Sim": "Real", "Extrapolate Para": 10},
+                {"Model Type": "Independent Regression", "Real or Sim": "Real", "Extrapolate Para": True},
                 {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All"},
-                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All", "Extrapolate Para": 10}]
+                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All", "Extrapolate Para":True}]
 
     # modlist2 = [{"Model Type": "Real Coords", "Real or Sim": "Real"},
     #             {"Model Type": "Independent Regression", "Real or Sim": "Real"},
@@ -1720,16 +1813,47 @@ if __name__ == "__main__":
 
     modlist2 = [{"Model Type": "Real Coords", "Real or Sim": "Real"},
                 {"Model Type": "Multiple Regression Position", "Real or Sim": "Real"},
-                {"Model Type": "Multiple Regression Velocity", "Real or Sim": "Real"}]
-                # {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All"},
-                # {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All", "Extrapolate Para": 10},
-                # {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "Hunt"},
-                # {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "Hunt", "Extrapolate Para": 10},
-                # {"Model Type": "Random", "Real or Sim": "Real", "Spherical Bouts": "All"},  
-                # {"Model Type": "Random", "Real or Sim": "Real", "Spherical Bouts": "Hunt"}]
+                {"Model Type": "Multiple Regression Velocity", "Real or Sim": "Real"}, 
+                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All"},
+                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All", "Extrapolate Para":True},
+                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "Hunt"},
+                {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "Hunt", "Extrapolate Para":True}]
+#                {"Model Type": "Random", "Real or Sim": "Real", "Spherical Bouts": "All"},
+#                {"Model Type": "Random", "Real or Sim": "Real", "Spherical Bouts": "Hunt"}]
+
+    modlist_ci = [{"Model Type": "Real Coords", "Real or Sim": "Real"},
+                  {"Model Type": "Real Coords", "Real or Sim": "Real", "Strike CI": .32},
+                  {"Model Type": "Multiple Regression Position", "Real or Sim": "Real"},
+                  {"Model Type": "Multiple Regression Velocity", "Real or Sim": "Real"},
+                  {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "Hunt"},
+                  {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "Hunt", "Extrapolate Para": True},
+                  {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "Hunt", "Strike CI": .32},
+                  {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "Hunt", "Extrapolate Para": True, "Strike CI": .32}]
+
+
+
+
+
+               
 
     modlist_bayes = [{"Model Type": "Bayes", "Real or Sim": "Real"}]
     actions = [1, 2]
+
+
+    # this is the complete dataset
+    
+    new_wik = ['090418_3', '090418_4', '090418_5', '090418_7',
+               '090518_1', '090518_2', '090518_3', '090518_4', '090518_5', '090518_6',
+               '090618_1', '090618_2', '090618_3', '090618_4', '090618_5', '090618_6',
+               '090718_1', '090718_2', '090718_3', '090718_4', '090718_5', '090718_6',
+               '091118_1', '091118_2', '091118_3', '091118_4', '091118_5', '091118_6',
+               '091218_1', '091218_2', '091218_3', '091218_4', '091218_5', '091218_6',
+               '091318_1', '091318_2', '091318_3', '091318_4',  '091318_5','091318_6',
+               '091418_1', '091418_2', '091418_3', '091418_4', '091418_5', '091418_6']
+
+
+    # this is the original dataset
+    
     new_wik_subset = ['091418_1', '091418_2', '091418_3', '091418_4', '091418_6',
                       '091318_1', '091318_2', '091318_3', '091318_4', '091318_5', '091318_6',
                       '091218_1', '091218_2', '091218_3', '091218_4', '091218_5', '091218_6',
@@ -1738,8 +1862,8 @@ if __name__ == "__main__":
 
 
     ms, p_inits, simlist_by_model, simlist_by_hunt = model_wrapper(
-        new_wik_subset, strike_params,
-        para_model, modlist2, hb, actions, 1)
+        new_wik, strike_params,
+        para_model, modlist_ci, hb, actions, 1)
     np.save('ms.npy', ms)
     np.save('p_inits.npy', p_inits)
     np.save('strike_params.npy', strike_params)

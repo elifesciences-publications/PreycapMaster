@@ -80,12 +80,16 @@ class BayesDB_Simulator:
         self.query_params['query_expression'] = query_expression
         self.query_params['conditioner'] = conditioner
 
-    def single_hist(self, query_exp, condition):
+    def single_hist(self, query_exp, condition, color):
         self.set_query_params(query_exp, condition)
         df = self.rejection_query(1)
         hist_data = df[query_exp.replace('"', '')]
         print(str(hist_data.shape[0]) + " total bouts")
-        p = sb.distplot(hist_data, color='b')
+        p = sb.distplot(hist_data,
+                        fit_kws={"color": color},
+                        fit=norm, kde=False,
+                        color=color, hist_kws={"alpha": .8})
+        p.set_xlim([-2, 2])
         print(np.mean(hist_data))
         print(np.std(hist_data))
         return p
@@ -108,7 +112,15 @@ class BayesDB_Simulator:
         return df
 
     # format of query_expression is '"Var1","Var2"'
-    def two_variable_regression(self, query_expression, condition, color, *labels):
+    def two_variable_regression(self, query_expression, condition, color, labels, *ax_lims):
+
+        def unexplained_var(x, y, slope, yint):
+            y_normed = []
+            for xc, yc in zip(x, y):
+                y_sub = yc - slope * xc - yint
+                y_normed.append(y_sub)
+            return np.var(y_normed)
+        
         self.set_query_params(query_expression, condition)
         v1 = query_expression.split(',')[0].replace('"', '')
         v2 = query_expression.split(',')[1].replace('"', '')
@@ -120,34 +132,32 @@ class BayesDB_Simulator:
         reg_plot = sb.regplot(nanfilt_varbs[:, 0],
                               nanfilt_varbs[:, 1],
                               fit_reg=True, n_boot=100,
-                              scatter_kws={'alpha': 0.15},
+                              scatter_kws={'alpha': 0.25},
                               robust=False, color=color)
         rx, ry = reg_plot.get_lines()[0].get_data()
         r_slope = np.around((ry[1] - ry[0])/(rx[1] - rx[0]), 2)
         r_yint = np.around(ry[1] - r_slope*rx[1], 3)
         reg_fit = np.around(pearsonr(nanfilt_varbs[:, 0],
                                      nanfilt_varbs[:, 1])[0], 2)
-        if v2 == "Bout Distance" or v2 == "Postbout Para Dist":
-            reg_plot.set_ylim([0, 1200])
-            reg_plot.set_xlim([0, 1200])
-            reg_plot.text(100, 1000, '  ' +
+        if ax_lims != ():
+            reg_plot.set_xlim(ax_lims[0])
+            reg_plot.set_ylim(ax_lims[1])
+            reg_plot.text(ax_lims[0][0], .9*ax_lims[1][1], '  ' +
                           str(r_slope) + 'x + ' + str(
                           r_yint) + ', ' + '$r^{2}$ = ' + str(reg_fit**2),
                           color=color, fontsize=16)
-
         else:
-            reg_plot.set_xlim([-2.5, 2.5])
-            reg_plot.set_ylim([-2.5, 2.5])
-            reg_plot.text(-2, 2, '  ' +
+            reg_plot.text(-1, .9*np.max(nanfilt_varbs[:, 1]), '  ' +
                           str(r_slope) + 'x + ' + str(
                           r_yint) + ', ' + '$r^{2}$ = ' + str(reg_fit**2),
                           color=color, fontsize=16)
-
-        if labels != ():
-            labels = labels[0]
-            reg_plot.set_xlabel(labels[0], fontsize=16)
-            reg_plot.set_ylabel(labels[1], fontsize=16)
+        reg_plot.set_xlabel(labels[0], fontsize=16)
+        reg_plot.set_ylabel(labels[1], fontsize=16)
         print(str(len(nanfilt_varbs[:, 0])) + " Bouts")
+        unexp_var = unexplained_var(nanfilt_varbs[:, 0],
+                                    nanfilt_varbs[:, 1],
+                                    r_slope, r_yint)
+        print("Unexplained Variance  " + str(unexp_var))
         sb.despine()
         sb.axes_style({'ytick.right': False})
         return fig, nanfilt_varbs[:, 0], nanfilt_varbs[:, 1]
@@ -320,17 +330,17 @@ def make_regression_plots(x1, y1, x2, y2, labels, colors):
     plot1 = sb.regplot(np.array(x1),
                        np.array(y1), fit_reg=True,
                        n_boot=100, robust=False,
-                       scatter_kws={'alpha': 0.15},
+                       scatter_kws={'alpha': 0.25},
                        color=colors[0])
     plot2 = sb.regplot(np.array(x2),
                        np.array(y2), fit_reg=True,
                        n_boot=100,  robust=False,
-                       scatter_kws={'alpha': 0.15},
+                       scatter_kws={'alpha': 0.25},
                        color=colors[1])
     plot1.set_xlabel(labels[0], fontsize=16)
     plot1.set_ylabel(labels[1], fontsize=16)
-    p1x, p1y = plot1.get_lines()[1].get_data()
-    p2x, p2y = plot2.get_lines()[0].get_data()
+    p1x, p1y = plot1.get_lines()[0].get_data()
+    p2x, p2y = plot2.get_lines()[1].get_data()
     slope1 = np.around((p1y[1] - p1y[0])/(p1x[1] - p1x[0]), 2)
     slope2 = np.around((p2y[1] - p2y[0])/(p2x[1] - p2x[0]), 2)
     yint1 = np.around(p1y[1] - slope1*p1x[1], 2)
@@ -343,15 +353,17 @@ def make_regression_plots(x1, y1, x2, y2, labels, colors):
                                 coeff1_nanfilt[:, 1])[0], 2)
     coeff2 = np.around(pearsonr(coeff2_nanfilt[:, 0],
                                 coeff2_nanfilt[:, 1])[0], 2)
-    xinit = np.min(p1x[0], p2x[0])
+#    xinit = np.min(p1x[0], p2x[0])
+    xinit = -2
     plot1.text(xinit, 2.1, '  ' +
-               str(slope2) + 'x + ' + str(
-                   yint2) + ', ' + '$r^{2}$ = ' + str(coeff2**2),
-               color=colors[1], fontsize=14)
-    plot1.text(xinit, 1.7, '  ' +
                str(slope1) + 'x + ' + str(
                    yint1) + ', ' + '$r^{2}$ = ' + str(coeff1**2),
                color=colors[0], fontsize=14)
+    plot1.text(xinit, 1.7, '  ' +
+               str(slope2) + 'x + ' + str(
+                   yint2) + ', ' + '$r^{2}$ = ' + str(coeff2**2),
+               color=colors[1], fontsize=14)
+
 #    greenplot.set_ylim([-1, 1])
     if labels[1] != "Bout Distance" and labels[1] != "Postbout Para Distance":
         plot1.set_ylim([-2.5, 2.5])

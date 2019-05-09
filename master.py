@@ -283,7 +283,7 @@ class Hunt_Descriptor:
             'strike hit': 0,
             'strike miss': 0,
             'strike at nothing': 0,
-            'strike at immobile object': 0,
+            'hunting an immobile object': 0,
             'prob not a hunt': 0}
         
         for i, hunt_ind in enumerate(self.hunt_ind_list):
@@ -301,7 +301,7 @@ class Hunt_Descriptor:
 # this covers if para_id = -2 (i.e. misses at nonmoving para)
 
                 elif self.para_id_list[i] == -2:
-                    self.hunt_dict['strike at immobile object'] += 1
+                    self.hunt_dict['hunting an immobile object'] += 1
                 else:
                     self.hunt_dict['strike miss'] += 1
             elif abs(self.actions[i]) == 4:
@@ -1654,11 +1654,14 @@ class Experiment():
                     rec_len = self.paradata.all_xy[
                         xyrec].timestamp + len(
                             self.paradata.all_xy[xyrec].location) - timestamp
+                # fix this tomorrow
                 elif f_or_b == 'b':
                     timestamp = self.paradata.all_xy[xyrec].timestamp
-                    rec_len = len(
-                        self.paradata.all_xy[xyrec].location) - len(
-                            self.paradata.all_xz[xzrec].location)
+                    # rec_len = len(
+                    #     self.paradata.all_xy[xyrec].location) - len(
+                    #         self.paradata.all_xz[xzrec].location)
+                    timestamp_xz = self.paradata.all_xz[xzrec].timestamp
+                    rec_len = timestamp_xz - timestamp
                 else:
                     print("invalid entry")
                     return
@@ -2876,7 +2879,7 @@ def hunted_para_descriptor(exp, hd):
 
 
 def para_stimuli(exp, hd, inc_kde, use_random_env):
-
+    pl.ioff()
     para_stats_final = []
 #    kdeplot = raw_input('Plot KDEs?: ')
     kdeplot = 'n'
@@ -3103,6 +3106,7 @@ def para_stimuli(exp, hd, inc_kde, use_random_env):
                                   for p in temp_stim_list]
                 stim_list += temp_stim_list
                 continue
+            kdefig = pl.figure()
             az_alt_kde = sb.jointplot(env_az_init, env_alt_init, kind='kde')
             az_dist_kde = sb.jointplot(env_az_init, env_dist_init, kind='kde')
             alt_dist_kde = sb.jointplot(env_alt_init,
@@ -3148,8 +3152,9 @@ def para_stimuli(exp, hd, inc_kde, use_random_env):
             if plot_kde:
                 pl.show()
             if not plot_kde:
-                pl.show(block=False)
-                time.sleep(1)
+#                pl.show(block=False)
+#                time.sleep(1)
+                pl.close(kdefig)
                 pl.close('all')
             environment_varbs = [az_max[0],
                                  alt_max[0],
@@ -3721,21 +3726,21 @@ def finish_experiment_wrap(drcts):
         ex.hunt_wins = np.load(ex.directory + '/hunt_wins.npy')
         hd_current = hd_import(drct)
         finish_experiment(ex, hd_current, 1)
-    all_data_to_csv(drcts, 0)
-    all_data_to_csv(drcts, 1)
-    all_data_to_csv(drcts, 2)
-    quant = quantify_all_hunt_types(drcts)
-    return quant
+#    all_data_to_csv(drcts, 0)
+ #   all_data_to_csv(drcts, 1)
+  #  all_data_to_csv(drcts, 2)
+#    quant = quantify_all_hunt_types(drcts)
+ #   return quant
 
     
 def finish_experiment(exp, hd, export_para):
     hd.quantify_hunt_types(exp)
     hd.exporter()
     hunted_para_descriptor(exp, hd)
-    para_stimuli(exp, hd, True, False)
-    para_stimuli(exp, hd, True, True)
-    if export_para:
-        v, va = pvec_wrapper(exp, hd, 1)
+    # para_stimuli(exp, hd, True, False)
+    # para_stimuli(exp, hd, True, True)
+    # if export_para:
+    #     v, va = pvec_wrapper(exp, hd, 1)
 
 
 def cval_align_and_plot(val_list, f_or_r):
@@ -4021,7 +4026,7 @@ if __name__ == '__main__':
 # bout array, matched with a flag array that describes summary statistics for each bout. A new BoutsandFlags object is then created
 # whose only role is to contain the bouts and corresponding flags for each fish. 
 
-    fish_id = '090718_1'
+    fish_id = '091118_6'
     drct = os.getcwd() + '/' + fish_id
     import_exp = True
     import_dim = False
@@ -4041,18 +4046,18 @@ if __name__ == '__main__':
 #     sbouts = myexp.all_spherical_bouts()
 
 
-    new_wik = ['090418_3', '090418_4', '090418_5', '090418_6',
-               '090418_7', '090518_1', '090518_2', '090518_3', '090518_4',
-               '090518_5', '090518_6', '090618_1', '090618_2', '090618_3',
-               '090618_4', '090618_5', '090618_6', '090718_1', '090718_2',
-               '090718_3', '090718_4', '090718_5', '090718_6', '091118_1',
-               '091118_2', '091118_3', '091118_4', '091118_5', '091118_6',
-               '091218_1', '091218_2', '091218_3', '091218_4', '091218_5',
-               '091218_6', '091318_1', '091318_2', '091318_3', '091318_4',
-               '091318_5', '091318_6', '091418_1', '091418_2', '091418_3',
-               '091418_4', '091418_5', '091418_6']
+    new_wik = ['090418_3', '090418_4', '090418_5', '090418_7',
+               '090518_1', '090518_2', '090518_3', '090518_4', '090518_5', '090518_6',
+               '090618_1', '090618_2', '090618_3', '090618_4', '090618_5', '090618_6',
+               '090718_1', '090718_2', '090718_3', '090718_4', '090718_5', '090718_6',
+               '091118_1', '091118_2', '091118_3', '091118_4', '091118_5', '091118_6',
+               '091218_1', '091218_2', '091218_3', '091218_4', '091218_5', '091218_6',
+               '091318_1', '091318_2', '091318_3', '091318_4',  '091318_5','091318_6',
+               '091418_1', '091418_2', '091418_3', '091418_4', '091418_5', '091418_6']
 
     # new_wik_subset = ['091418_1', '091418_2', '091418_3', '091418_4', '091418_5', '091418_6',
+#                        '090518_1', '090518_2', '090518_3', '090518_4', '090518_5', '090518_6',
+#                        '090718_1', '090718_2', '090718_3', '090718_4', '090718_5', '090718_6',
     #                   '091118_1', '091118_2', '091118_3', '091118_4', '091118_5',
     #                   '091318_1', '091318_2', '091318_3', '091318_4', '091318_5', '091318_6',
     #                   '091218_1', '091218_2', '091218_3', '091218_4', '091218_5', '091218_6',
