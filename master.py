@@ -1819,18 +1819,17 @@ class Experiment():
         init_bouts = []
         init_bout_frames = []
         pursuit_boutframes = []
-        for hi, br, ac in zip(hd.hunt_ind_list, hd.boutrange, hd.actions):
-            if ac > 3:
-                continue
-            hb_range = range(self.hunt_wins[hi][0], self.hunt_wins[hi][1] + 1)
-            init_bout = hb_range[br[0]]
-            end_bout = hb_range[br[1]]
-            init_bout_frames.append(self.bout_frames[init_bout])
-            # this cuts off the inits and strikes, b/c range ends before end_bout
-            # and init_bout is added to by 1
-            pursuits = [self.bout_frames[bind] for bind in range(
-                init_bout+1, end_bout)]
-            pursuit_boutframes += pursuits
+        for hi, br, ac, pid in zip(hd.hunt_ind_list, hd.boutrange, hd.actions, hd.para_id_list):
+            if ac <= 2 and pid >= 0:
+                hb_range = range(self.hunt_wins[hi][0], self.hunt_wins[hi][1] + 1)
+                init_bout = hb_range[br[0]]
+                end_bout = hb_range[br[1]]
+                init_bout_frames.append(self.bout_frames[init_bout])
+                # this cuts off the inits and strikes, b/c range ends before end_bout
+                # and init_bout is added to by 1
+                pursuits = [self.bout_frames[bind] for bind in range(
+                    init_bout+1, end_bout)]
+                pursuit_boutframes += pursuits
         for sbout in fsbs:
             if sbout["Bout Frame"] in pursuit_boutframes:
                 shbs.append(sbout)

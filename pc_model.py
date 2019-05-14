@@ -178,9 +178,9 @@ class Marr2Algorithms:
         
 
     def firstbout_transformation(self, para_varbs):
-        pb_az = .29 * para_varbs["Para Az"]
-        pb_dist = .87 * para_varbs["Para Dist"] - 27.5
-        pb_alt = .48 * para_varbs["Para Alt"] + .15
+        pb_az = .28 * para_varbs["Para Az"]
+        pb_dist = .86 * para_varbs["Para Dist"] - 23.92
+        pb_alt = .44 * para_varbs["Para Alt"] + .165
         return pb_az, pb_dist, pb_alt
 
     def result_compiler(self):
@@ -550,8 +550,6 @@ class PreyCap_Simulation:
                 self.model_para_xyz = [px[framecounter],
                                        py[framecounter], pz[framecounter]]
 
-            self.fishmodel.current_target_xyz = self.model_para_xyz
-            
             para_spherical = p_map_to_fish(fish_basis[1],
                                            fish_basis[0],
                                            fish_basis[3],
@@ -638,9 +636,6 @@ class PreyCap_Simulation:
                     np.diff([x[1] for x in pmap_returns]), 1)) / .016
                 para_varbs["Para Dist Velocity"] = np.mean(gaussian_filter(
                     np.diff([x[2] for x in pmap_returns]), 1)) / .016
-
-
-                
                 if not np.isfinite(para_varbs.values()).all():
                     # here para record ends before fish catches.
                     # para can't be nan at beginning due to real fish filters in master.py
@@ -845,7 +840,6 @@ class FishModel:
         self.current_fish_xyz = []
         self.current_fish_yaw = 0
         self.current_fish_pitch = 0
-        self.current_target_xyz = []
         self.interbouts = np.cumsum(
             self.interbouts) + self.real_hunt["First Bout Delay"]
         # note that the fish is given 5 frames before initializing a bout.
@@ -931,13 +925,19 @@ class FishModel:
                                          self.current_fish_yaw,
                                          self.current_fish_pitch)
         para_results = []
-
+        para_xyz = np.array(self.current_fish_xyz) + np.array(
+            sphericalbout_to_xyz(para_varbs["Para Az"],
+                                 para_varbs["Para Alt"],
+                                 para_varbs["Para Dist"],
+                                 fish_basis[1],
+                                 fish_basis[3],
+                                 fish_basis[2]))
         # CONDITION THESE ON NUM_BOUTS_GENERATED
         if self.num_bouts_generated == 0:
             spherical_bouts = self.init_bouts
         else:
             spherical_bouts = self.pursuit_bouts
-        
+
         for bt in spherical_bouts:
             dx, dy, dz = sphericalbout_to_xyz(bt["Bout Az"],
                                               bt["Bout Alt"],
@@ -955,7 +955,7 @@ class FishModel:
                                                     temp_fish_basis[0],
                                                     temp_fish_basis[3],
                                                     temp_fish_basis[2],
-                                                    self.current_target_xyz,
+                                                    para_xyz,
                                                     0)
             pvarbs = {"Para Az": postbout_para_spherical[0],
                       "Para Alt": postbout_para_spherical[1],
@@ -1962,6 +1962,12 @@ if __name__ == "__main__":
     #               {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All", "Extrapolate Para": True, "Strike CI": .32},
     #               {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "Hunt", "Strike CI": .32},
     #               {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "Hunt", "Extrapolate Para": True, "Strike CI": .32}]
+
+    modlist_ideal = [{"Model Type": "Ideal", "Real or Sim": "Real",
+                      "Spherical Bouts": "Hunt", "Strike CI": .32},
+                     {"Model Type": "Ideal", "Real or Sim": "Real",
+                      "Spherical Bouts": "Hunt", "Extrapolate Para":True, "Strike CI": .32}]
+
 
     modlist_ci = [{"Model Type": "Real Coords",
                    "Real or Sim": "Real", "Strike CI": .32},
