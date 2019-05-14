@@ -90,7 +90,8 @@ class RealFishControl:
         self.initial_conditions = []
         self.hunt_dataframes = []
         self.all_spherical_bouts = []
-        self.all_spherical_huntbouts = []
+        self.pursuit_spherical_huntbouts = []
+        self.init_spherical_huntbouts = []
         self.para_xyz_per_hunt = []
         self.directory = exp.directory
 
@@ -1811,18 +1812,31 @@ class Experiment():
         vid.close()
         return
 
+    # filters out only bouts occuring in hunt windows, removes strikes
+    # and returns bout0s separately from b1+. 
     def spherical_huntbouts(self, fsbs, hd):
         shbs = []
-        huntframes = [range(
-            self.bout_frames[d[0]], self.bout_frames[d[1]] + 1)
-                      for i, d in enumerate(
-                              self.hunt_wins) if i in hd.hunt_ind_list]
-        hf_concat = np.concatenate(huntframes)
+        init_bouts = []
+        init_bout_frames = []
+        pursuit_boutframes = []
+        for hi, br, ac in zip(hd.hunt_ind_list, hd.boutrange, hd.actions):
+            if ac > 3:
+                continue
+            hb_range = range(self.hunt_wins[hi][0], self.hunt_wins[hi][1] + 1)
+            init_bout = hb_range[br[0]]
+            end_bout = hb_range[br[1]]
+            init_bout_frames.append(self.bout_frames[init_bout])
+            # this cuts off the inits and strikes, b/c range ends before end_bout
+            # and init_bout is added to by 1
+            pursuits = [self.bout_frames[bind] for bind in range(
+                init_bout+1, end_bout)]
+            pursuit_boutframes += pursuits
         for sbout in fsbs:
-            bf = sbout["Bout Frame"]
-            if bf in hf_concat:
+            if sbout["Bout Frame"] in pursuit_boutframes:
                 shbs.append(sbout)
-        return shbs
+            elif sbout["Bout Frame"] in init_bout_frames:
+                init_bouts.append(sbout)
+        return init_bouts, shbs
 
     def filtered_spherical_bouts(self, spherical_bouts):
         # filter for near walls and > 10% fish interpolation
@@ -2405,32 +2419,6 @@ def csv_data(headers, datavals, file_id, directory):
 
 # CALL THESE TWO FUNCTIONS AT THE END.             
 
-def grab_all_spherical_bouts(fish_directories):
-    sb_count_per_fish = []
-    shb_count_per_fish = []
-    all_spherical_bouts = []
-    all_spherical_huntbouts = []
-    for drct in fish_directories:
-        try:
-            rfo = pd.read_pickle(
-                os.getcwd() + '/' + drct + '/RealHuntData_' + drct + '.pkl')
-        except IOError:
-            sb_count_per_fish.append(0)
-            shb_count_per_fish.append(0)
-            continue
-        
-        all_spherical_bouts += rfo.all_spherical_bouts
-        all_spherical_huntbouts += rfo.all_spherical_huntbouts
-        sb_count_per_fish.append(len(rfo.all_spherical_bouts))
-        shb_count_per_fish.append(len(rfo.all_spherical_huntbouts))
-    spherical_bout_dict = {"Spherical Bouts": all_spherical_bouts,
-                           "Spherical HBs": all_spherical_huntbouts,
-                           "SB Count": sb_count_per_fish,
-                           "SHB Count": shb_count_per_fish,
-                           "Fish": fish_directories}
-    return spherical_bout_dict
-
-            
 def all_data_to_csv(directories, data_type):
     if data_type == 0:
         output_filename = 'all_huntbouts.csv'
@@ -2633,6 +2621,7 @@ def hunted_para_descriptor(exp, hd):
               'Postbout Para Az',
               'Postbout Para Alt',
               'Postbout Para Dist',
+              'Bout Duration',
               'Strike Or Abort',
               'Inferred',
               'Avg Para Velocity',
@@ -2805,6 +2794,7 @@ def hunted_para_descriptor(exp, hd):
                                     postbout_az,
                                     postbout_alt,
                                     postbout_dist,
+                                    bout_dur * .016,
                                     ac,
                                     inferred_coordinate,
                                     avg_vel,
@@ -2867,10 +2857,11 @@ def hunted_para_descriptor(exp, hd):
                 break
     sbouts = exp.all_spherical_bouts(False)
     fsb = exp.filtered_spherical_bouts(sbouts)
-    shbs = exp.spherical_huntbouts(fsb, hd)
+    init_shbs, shbs = exp.spherical_huntbouts(fsb, hd)
     # nhbs = [f for f in fsb if f not in shbs]
     realfish.all_spherical_bouts = fsb
-    realfish.all_spherical_huntbouts = shbs
+    realfish.init_spherical_huntbouts = init_shbs
+    realfish.pursuit_spherical_huntbouts = shbs
 #    velocity_kernel(exp, 'hunts', hd)
 #    yaw_kernel(exp, 'hunts', hd)
     realfish.exporter()

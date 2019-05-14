@@ -58,16 +58,85 @@ from scipy.stats import norm, ttest_ind, ttest_rel, wilcoxon, ttest_1samp, mannw
 
 # Note that the regplot class uses statsmodels GLM instead of OLS.
 # So your regplot fits will be slightly different. Consider relative benefits, and
-# also consider robust. 
+# also consider robust.
 
+
+class GLM_Fitter:
+    def __init__(self):
+        self.all_strikes_csv = pd.read_csv(
+            'wik_bdb/all_huntbouts_rev_strikes_nob0_nostrike_nonan.csv')
+        self.glm_models = []
+# have to built a model just on b0.
+    def glm_fits(self):
+        az_model_posvel = make_LM(self.all_strikes_csv['Postbout Para Az'][
+                self.all_strikes_csv['Para Az Velocity'] > 0],
+            self.all_strikes_csv['Para Az'][
+                self.all_strikes_csv['Para Az Velocity'] > 0])
+        az_model_negvel = make_LM(self.all_strikes_csv['Postbout Para Az'][
+                self.all_strikes_csv['Para Az Velocity'] < 0],
+            self.all_strikes_csv['Para Az'][
+                self.all_strikes_csv['Para Az Velocity'] < 0])
+        posalt_posdalt = np.intersect1d(
+            np.where(self.all_strikes_csv['Para Alt Velocity'] > 0),
+            np.where(self.all_strikes_csv['Para Alt'] > 0))
+        posalt_negdalt = np.intersect1d(
+            np.where(self.all_strikes_csv['Para Alt Velocity'] < 0),
+            np.where(self.all_strikes_csv['Para Alt'] > 0))
+        negalt_posdalt = np.intersect1d(
+            np.where(self.all_strikes_csv['Para Alt Velocity'] > 0),
+            np.where(self.all_strikes_csv['Para Alt'] < 0))
+        negalt_negdalt = np.intersect1d(
+            np.where(self.all_strikes_csv['Para Alt Velocity'] < 0),
+            np.where(self.all_strikes_csv['Para Alt'] < 0))
+        alt_model_pospos_posvel = make_LM(
+            self.all_strikes_csv['Postbout Para Alt'][posalt_posdalt],
+            self.all_strikes_csv['Para Alt'][posalt_posdalt])
+        alt_model_pospos_negvel = make_LM(
+            self.all_strikes_csv['Postbout Para Alt'][posalt_negdalt],
+            self.all_strikes_csv['Para Alt'][posalt_negdalt])
+        alt_model_negpos_posvel = make_LM(
+            self.all_strikes_csv['Postbout Para Alt'][negalt_posdalt],
+            self.all_strikes_csv['Para Alt'][negalt_posdalt])
+        alt_model_negpos_negvel = make_LM(
+            self.all_strikes_csv['Postbout Para Alt'][negalt_negdalt],
+            self.all_strikes_csv['Para Alt'][negalt_negdalt])
+        dist_model_posvel = make_LM(
+            self.all_strikes_csv['Postbout Para Dist'][
+                self.all_strikes_csv['Para Dist Velocity'] > 0],
+            self.all_strikes_csv['Para Dist'][
+                self.all_strikes_csv['Para Dist Velocity'] > 0])
+        dist_model_negvel = make_LM(
+            self.all_strikes_csv['Postbout Para Dist'][
+                self.all_strikes_csv['Para Dist Velocity'] < 0],
+            self.all_strikes_csv['Para Dist'][
+                self.all_strikes_csv['Para Dist Velocity'] < 0])
+        all_az = make_LM(self.all_strikes_csv['Postbout Para Az'],
+                         self.all_strikes_csv['Para Az'])
+        all_alt_pos = make_LM(
+            self.all_strikes_csv['Postbout Para Alt'][
+                self.all_strikes_csv['Para Alt'] > 0],
+            self.all_strikes_csv['Para Alt'][
+                self.all_strikes_csv['Para Alt'] > 0])
+        all_alt_neg = make_LM(
+            self.all_strikes_csv['Postbout Para Alt'][
+                self.all_strikes_csv['Para Alt'] < 0],
+            self.all_strikes_csv['Para Alt'][
+                self.all_strikes_csv['Para Alt'] < 0])
+        all_dist = make_LM(self.all_strikes_csv['Postbout Para Dist'],
+                           self.all_strikes_csv['Para Dist'])
+        self.glm_models = [az_model_posvel, az_model_negvel,
+                           alt_model_pospos_posvel, alt_model_pospos_negvel,
+                           alt_model_negpos_posvel, alt_model_negpos_negvel,
+                           dist_model_posvel, dist_model_negvel,
+                           all_az, all_alt_pos, all_alt_neg, all_dist]
+        
+    
 class Marr2Algorithms:
     def __init__(self, para_positions, strike_params, use_likelihood):
         self.para_positions = para_positions
         self.bouts_static = []
         self.bouts_bayes = []
         self.marr_bdb_file = bl.bayesdb_open('wik_bdb/bdb_hunts_marr.bdb')
-        self.all_strikes_csv = pd.read_csv(
-            'wik_bdb/all_huntbouts_rev_strikes_nob0_nostrikes.csv')
         self.marr_bdb_file.np_prng.seed()
         self.number_of_models_in_ensemble = len(
                 self.marr_bdb_file.backends['cgpm']._engine(
@@ -80,14 +149,14 @@ class Marr2Algorithms:
         self.strike_params = strike_params
         self.strike_means = strike_params[0]
         self.strike_std = strike_params[1]
-        self.static_params = {'az_m': .54,
-                              'alt_m_pos': .56,
-                              'alt_m_neg': 1.1,
-                              'dist_m': .88,
+        self.static_params = {'az_m': 0,
+                              'alt_m_pos': 0,
+                              'alt_m_neg': 0, 
+                              'dist_m': 0, 
                               'az_b': 0,
-                              'alt_b_pos': .14,
-                              'alt_b_neg': .15,
-                              'dist_b': -8}
+                              'alt_b_pos': 0, 
+                              'alt_b_neg': 0,
+                              'dist_b': 0}
         self.strike_ci = .05
         self.test_results = []
         self.fails = []
@@ -96,46 +165,17 @@ class Marr2Algorithms:
         self.postbout_para = []
         self.glm_models = []
 
-    def glm_fits(self):
-        az_model_posvel = make_LM(
-            self.all_strikes_csv['Para Az'][
-                self.all_strikes_csv['Para Az Velocity'] > 0],
-            self.all_strikes_csv['Postbout Para Az'][
-                self.all_strikes_csv['Para Az Velocity'] > 0])
-        az_model_negvel = make_LM(
-            self.all_strikes_csv['Para Az'][
-                self.all_strikes_csv['Para Az Velocity'] < 0],
-            self.all_strikes_csv['Postbout Para Az'][
-                self.all_strikes_csv['Para Az Velocity'] < 0])
-        alt_model_posvel = make_LM(
-            self.all_strikes_csv['Para Alt'][
-                self.all_strikes_csv['Para Alt Velocity'] > 0],
-            self.all_strikes_csv['Postbout Para Alt'][
-                self.all_strikes_csv['Para Alt Velocity'] > 0])
-        alt_model_negvel = make_LM(
-            self.all_strikes_csv['Para Alt'][
-                self.all_strikes_csv['Para Alt Velocity'] < 0],
-            self.all_strikes_csv['Postbout Para Alt'][
-                self.all_strikes_csv['Para Alt Velocity'] < 0])
-        dist_model_posvel = make_LM(
-            self.all_strikes_csv['Para Dist'][
-                self.all_strikes_csv['Para Dist Velocity'] > 0],
-            self.all_strikes_csv['Postbout Para Dist'][
-                self.all_strikes_csv['Para Dist Velocity'] > 0])
-        dist_model_negvel = make_LM(
-            self.all_strikes_csv['Para Dist'][
-                self.all_strikes_csv['Para Dist Velocity'] < 0],
-            self.all_strikes_csv['Postbout Para Dist'][
-                self.all_strikes_csv['Para Dist Velocity'] < 0])
-        all_az = make_LM(self.all_strikes_csv['Para Az'],
-                         self.all_strikes_csv['Postbout Para Az'])
-        all_alt = make_LM(self.all_strikes_csv['Para Alt'],
-                          self.all_strikes_csv['Postbout Para Alt'])
-        all_dist = make_LM(self.all_strikes_csv['Para Dist'],
-                          self.all_strikes_csv['Postbout Para Dist'])
-        self.glm_models = [az_model_posvel, az_model_negvel, alt_model_posvel,
-                           alt_model_negvel, dist_model_posvel,
-                           dist_model_negvel, all_az, all_alt, all_dist]
+    # don't use built in generator b/c you want to validate using custom
+    def extract_static_params(self):
+        self.static_params['az_m'] = self.glm_models[-4].params['Para Az']
+        self.static_params['alt_m_pos'] = self.glm_models[-3].params['Para Alt']
+        self.static_params['alt_b_pos'] = self.glm_models[-3].params['const']
+        self.static_params['alt_m_neg'] = self.glm_models[-2].params['Para Alt']
+        self.static_params['alt_b_neg'] = self.glm_models[-2].params['const']
+        self.static_params['dist_m'] = self.glm_models[-1].params['Para Dist']
+        self.static_params['dist_b'] = self.glm_models[-1].params['const']
+        # note az_b is kept as 0 since its 95% CI overlaps with 0.
+        
 
     def firstbout_transformation(self, para_varbs):
         pb_az = .29 * para_varbs["Para Az"]
@@ -189,7 +229,7 @@ class Marr2Algorithms:
     def marr2algorithm(self, para_varbs, boutcounter):
         if boutcounter > 50:
             return np.nan
-        if strike(para_varbs, self.strike_means, self.strike_std, self.strike_ci):
+        if strike(para_varbs, self.strike_means, self.strike_std, self.strike_ci)[0]:
             return boutcounter + 1
         if boutcounter == 0:
             pb_az, pb_dist, pb_alt = self.firstbout_transformation(
@@ -214,7 +254,7 @@ class Marr2Algorithms:
     def marr2bayes(self, para_varbs, boutcounter):
         if boutcounter > 50:
             return np.nan
-        if strike(para_varbs, self.strike_means, self.strike_std, self.strike_ci):
+        if strike(para_varbs, self.strike_means, self.strike_std, self.strike_ci)[0]:
             return boutcounter + 1
         if boutcounter == 0:
             pb_az, pb_dist, pb_alt = self.firstbout_transformation(
@@ -379,7 +419,6 @@ class PreyCap_Simulation:
 
     def score_hunt(self):
         score_dict = {"Number of Bouts": self.bout_counter,
-                      "Hunt Duration": self.framecounter * .016,
                       "Result": self.hunt_result,
                       "Para Position at Term": self.last_pvarbs,
                       "Energy Expended": np.mean(self.bout_energy),
@@ -430,7 +469,7 @@ class PreyCap_Simulation:
 
         # do this by simply adding the framecounter+realframes_start fish_xyz, pitch, and yaw to the sims versions 
 
-        def project_para(p_coords, nback, proj_forward, curr_frame):
+        def project_para_xyz(p_coords, nback, proj_forward, curr_frame):
             def final_pos(pc):
                 fp = (
                     ((pc[curr_frame] - pc[curr_frame-nback])
@@ -444,6 +483,7 @@ class PreyCap_Simulation:
         hunt_result = 0
         framecounter = 0
         future_frame = 5
+        
         # spacing is an integer describing the sampling of vectors by the para. i.e.       # draws a new accel vector every 'spacing' frames
         spacing = np.load('spacing.npy')
         # fish_basis is origin, x, y, z unit vecs
@@ -489,27 +529,23 @@ class PreyCap_Simulation:
             self.fish_bases.append(fish_basis[1])
             if framecounter == len(px):
                 #print("hunt epoch complete w/out strike")
-                hunt_result = 2
+                if self.fishmodel.action == 1:
+                    hunt_result = 2
+                elif self.fishmodel.action == 2:
+                    hunt_result = 3
                 break
             
-            if self.fishmodel.linear_predict_para or self.fishmodel.boutbound_prediction:
-                if self.fishmodel.boutbound_prediction:
-                    if framecounter >= future_frame:
-                        future_frame = framecounter + self.bout_durations[
-                            self.bout_counter]
-                    if not self.fishmodel.linear_predict_para:
-                        try:
-                            self.model_para_xyz = [px[future_frame],
-                                                   py[future_frame],
-                                                   pz[future_frame]]
-                        except IndexError:
-                            self.model_para_xyz = [px[-1], py[-1], pz[-1]]
-                else:
-                    self.model_para_xyz = project_para(
-                        [px, py, pz],
-                        self.fishmodel.rfo.firstbout_para_intwin,
-                        self.bout_durations[self.bout_counter], framecounter)
-
+            if self.fishmodel.boutbound_prediction:
+                if framecounter >= future_frame:
+                    future_frame = framecounter + self.bout_durations[
+                        self.bout_counter]
+                    try:
+                        self.model_para_xyz = [px[future_frame],
+                                               py[future_frame],
+                                               pz[future_frame]]
+                    except IndexError:
+                        self.model_para_xyz = [px[-1], py[-1], pz[-1]]
+                        
             else:
                 self.model_para_xyz = [px[framecounter],
                                        py[framecounter], pz[framecounter]]
@@ -555,7 +591,7 @@ class PreyCap_Simulation:
             if framecounter % 20 == 0:
                 pass
 #                print framecounter
-            if framecounter >= 2000:
+            if framecounter >= 2000 and self.simulate_para:
  #               print("EVASIVE PARA!!!!!")
                 hunt_result = 2
                 self.para_xyz[0] = px
@@ -566,11 +602,12 @@ class PreyCap_Simulation:
             if strike(para_varbs,
                       self.fishmodel.strike_means,
                       self.fishmodel.strike_std,
-                      self.fishmodel.strike_ci):
+                      self.fishmodel.strike_ci)[0]:
   #              print("STRIKE!!!!!!!!")
                 self.para_xyz[0] = px
                 self.para_xyz[1] = py
                 self.para_xyz[2] = pz
+                last_finite_pvarbs = copy.deepcopy(para_varbs)
                 hunt_result = 1
                 self.bout_counter += 1
                 # note that para may be "eaten" by model faster than in real life (i.e. it enters the strike zone)
@@ -581,7 +618,9 @@ class PreyCap_Simulation:
             list so you can determine velocities and accelerations '''
                 
             if framecounter in self.interbouts and not self.fishmodel.modchoice == "Real Coords":
-
+                
+                self.fishmodel.bout_duration = self.bout_durations[
+                    self.bout_counter]
                 self.fishmodel.current_fish_xyz = self.fish_xyz[-1]
                 self.fishmodel.current_fish_pitch = self.fish_pitch[-1]
                 self.fishmodel.current_fish_yaw = self.fish_yaw[-1]
@@ -599,14 +638,30 @@ class PreyCap_Simulation:
                     np.diff([x[1] for x in pmap_returns]), 1)) / .016
                 para_varbs["Para Dist Velocity"] = np.mean(gaussian_filter(
                     np.diff([x[2] for x in pmap_returns]), 1)) / .016
+
+
+                
                 if not np.isfinite(para_varbs.values()).all():
                     # here para record ends before fish catches.
                     # para can't be nan at beginning due to real fish filters in master.py
-                    hunt_result = 3
+                    hunt_result = 4
                     break
                 else:
                     last_finite_pvarbs = copy.deepcopy(para_varbs)
-                fish_bout = self.fishmodel.model(para_varbs)
+                if self.fishmodel.euler_on_para:
+                    projected_para_varbs = copy.deepcopy(para_varbs)
+                    projected_para_varbs["Para Az"] += para_varbs[
+                        "Para Az Velocity"] * self.bout_durations[
+                            self.bout_counter] * .016
+                    projected_para_varbs["Para Alt"] += para_varbs[
+                        "Para Alt Velocity"] * self.bout_durations[
+                            self.bout_counter] * .016
+                    projected_para_varbs["Para Dist"] += para_varbs[
+                        "Para Dist Velocity"] * self.bout_durations[
+                            self.bout_counter] * .016
+                    fish_bout = self.fishmodel.model(projected_para_varbs)
+                else:
+                    fish_bout = self.fishmodel.model(para_varbs)
                 dx, dy, dz = sphericalbout_to_xyz(fish_bout[0],
                                                   fish_bout[1],
                                                   fish_bout[2],
@@ -684,7 +739,7 @@ class PreyCap_Simulation:
                     frame_map = framecounter + self.realframes_start + 1
                     if framecounter in self.interbouts:
                         if not np.isfinite(para_varbs.values()).all():
-                            hunt_result = 3
+                            hunt_result = 4
                             break
                         else:
                             last_finite_pvarbs = copy.deepcopy(para_varbs)
@@ -717,8 +772,16 @@ class PreyCap_Simulation:
                     self.fish_pitch.append(self.fish_pitch[-1])
                     self.fish_yaw.append(self.fish_yaw[-1])
                     framecounter += 1
-
-        self.last_pvarbs = last_finite_pvarbs
+        try:
+            # 32 b/c 31 frames is 500 ms.
+            para_vec_velocity = np.linalg.norm(
+                [px[framecounter-1] - px[framecounter-32],
+                 py[framecounter-1] - py[framecounter-32],
+                 pz[framecounter-1] - pz[framecounter-32]]) / .5
+        except IndexError:
+            para_vec_velocity = np.nan
+        last_finite_pvarbs['Para Vec Velocity'] = para_vec_velocity
+        self.last_pvarbs = last_finite_pvarbs 
         self.pcoords = [px[0:framecounter],
                         py[0:framecounter], pz[0:framecounter]]
         # if framecounter <= 1, fish catches it immediately and theres no bout
@@ -737,13 +800,16 @@ class FishModel:
         self.regmod = []
         self.hunt_ind = hunt_ind
         self.strike_ci = .05
+        self.bout_duration = 0
         self.model_param = model_param
         self.modchoice = model_param["Model Type"]
         if spherical_bouts != ():
             if spherical_bouts[0] == 'All':
-                self.spherical_bouts = rfo.all_spherical_bouts
+                self.init_bouts = rfo.all_spherical_bouts
+                self.pursuit_bouts = rfo.all_spherical_bouts
             elif spherical_bouts[0] == 'Hunt':
-                self.spherical_bouts = rfo.all_spherical_huntbouts
+                self.init_bouts = rfo.init_spherical_huntbouts + rfo.pursuit_spherical_huntbouts
+                self.pursuit_bouts = rfo.pursuit_spherical_huntbouts
         self.bdb_file = []
         if self.modchoice == "Real Bouts":
             self.model = (lambda pv: self.real_fish_bouts(pv))
@@ -751,7 +817,8 @@ class FishModel:
             self.model = (lambda pv: self.real_fish_coords(pv))
         elif self.modchoice in ["Independent Regression",
                                 "Multiple Regression Velocity",
-                                "Multiple Regression Position"]:
+                                "Multiple Regression Position",
+                                "Multiple Regression Euler"]:
             self.model = (lambda pv: self.regression_model(pv))
         elif self.modchoice == "Bayes":
             print('loading bdb file')
@@ -761,8 +828,9 @@ class FishModel:
             self.model = (lambda pv: self.ideal_model(pv))
         elif self.modchoice == "Random":
             self.model = (lambda pv: self.random_model(pv))
-        self.linear_predict_para = False
+        self.euler_on_para = False
         self.boutbound_prediction = False
+        self.action = self.rfo.hunt_results[hunt_ind]
         self.strike_means = strike_params[0]
         self.strike_std = strike_params[1]
         self.strike_refractory_period = strike_params[2]
@@ -786,7 +854,6 @@ class FishModel:
         # trajectory is contwin + intwin - 5 to start. 
         self.num_bouts_generated = 0
 
-
     def generate_random_interbouts(self, num_bouts):
         all_ibs = np.floor(np.random.random(num_bouts) * 100)
         bout_indices = np.cumsum(all_ibs)
@@ -795,13 +862,15 @@ class FishModel:
     def generate_simulated_interbouts(self, num_bouts):
         filt_ibs = []
         filt_bdur = []
-        pct10ib, pct10bdur = np.percentile([(b["Interbout"],
-                                             b["Bout Duration"]) for b in self.spherical_bouts],
-                                           10, axis=0)
-        pct90ib, pct90bdur = np.percentile([(b["Interbout"],
-                                             b["Bout Duration"]) for b in self.spherical_bouts],
-                                           90, axis=0)
-        for b in self.spherical_bouts:
+        pct10ib, pct10bdur = np.percentile(
+            [(b["Interbout"],
+              b["Bout Duration"]) for b in self.pursuit_bouts],
+            10, axis=0)
+        pct90ib, pct90bdur = np.percentile(
+            [(b["Interbout"],
+              b["Bout Duration"]) for b in self.pursuit_bouts],
+            90, axis=0)
+        for b in self.pursuit_bouts:
             if pct10ib < b["Interbout"] < pct90ib:
                 if pct10bdur < b["Bout Duration"] < pct90bdur:
                     filt_ibs.append(b["Interbout"])
@@ -828,26 +897,25 @@ class FishModel:
         return bout
 
     def random_model(self, para_varbs):
-        r_int = np.random.randint(0, len(self.spherical_bouts))
-        rand_bout = self.spherical_bouts[r_int]
-        bout = np.array(
-            [rand_bout["Bout Az"],
-             rand_bout["Bout Alt"],
-             rand_bout["Bout Dist"],
-             rand_bout["Delta Pitch"],
-             -1*rand_bout["Delta Yaw"]])
+        if self.num_bouts_generated == 0:
+#            r_int = np.random.randint(0, len(self.init_bouts))
+#            rand_bout = self.init_bouts[r_int]
+            bout = self.regression_model(para_varbs)
+        else:
+            r_int = np.random.randint(0, len(self.pursuit_bouts))
+            rand_bout = self.pursuit_bouts[r_int]
+            bout = np.array(
+                [rand_bout["Bout Az"],
+                 rand_bout["Bout Alt"],
+                 rand_bout["Bout Dist"],
+                 rand_bout["Delta Pitch"],
+                 -1*rand_bout["Delta Yaw"]])
+        self.num_bouts_generated += 1
         return bout
 
     def ideal_model(self, para_varbs):
 
         def score_para(p_results):
-            # first ask if any para are IN strike zone
-            # strikes = np.array([self.strike(p) for p in p_results])
-            # if strikes.any():
-            #     strike_args = np.argwhere(strikes)
-            #     rand_strike = np.random.randint(strike_args.shape[0])
-            #     bout_choice = strike_args[rand_strike][0]
-            #     return bout_choice
             az = np.array([p['Para Az'] for p in p_results]) - self.strike_means[0]
             alt = np.array([p['Para Alt'] for p in p_results]) - self.strike_means[1]
             dist = np.array([p['Para Dist'] for p in p_results]) - self.strike_means[2]
@@ -863,7 +931,14 @@ class FishModel:
                                          self.current_fish_yaw,
                                          self.current_fish_pitch)
         para_results = []
-        for bt in self.spherical_bouts:
+
+        # CONDITION THESE ON NUM_BOUTS_GENERATED
+        if self.num_bouts_generated == 0:
+            spherical_bouts = self.init_bouts
+        else:
+            spherical_bouts = self.pursuit_bouts
+        
+        for bt in spherical_bouts:
             dx, dy, dz = sphericalbout_to_xyz(bt["Bout Az"],
                                               bt["Bout Alt"],
                                               bt["Bout Dist"],
@@ -886,11 +961,12 @@ class FishModel:
                       "Para Alt": postbout_para_spherical[1],
                       "Para Dist": postbout_para_spherical[2]}
             para_results.append(pvarbs)
-        best_bout = self.spherical_bouts[score_para(para_results)]
+        best_bout = spherical_bouts[score_para(para_results)]
 
         bout_array = np.array([best_bout['Bout Az'],
                                best_bout['Bout Alt'],
                                best_bout['Bout Dist'], best_bout['Delta Pitch'], -1*best_bout['Delta Yaw']])
+        self.num_bouts_generated += 1
         return bout_array
 
     def regression_model(self, para_varbs):
@@ -903,13 +979,23 @@ class FishModel:
                        para_varbs["Para Alt"], para_varbs["Para Az"]]
             bout = [rm.predict([1, p_input[pi]]) for pi, rm in enumerate(regmod)]
         else:
-            if self.modchoice == "Multiple Regression Velocity":
+            if self.modchoice == "Multiple Regression Velocity" or self.modchoice == "Random":
                 p_input = [para_varbs["Para Az"],
                            para_varbs["Para Alt"],
                            para_varbs["Para Dist"],
-                           para_varbs["Para Az Velocity"], 
+                           para_varbs["Para Az Velocity"],
                            para_varbs["Para Alt Velocity"],
                            para_varbs["Para Dist Velocity"]]
+            elif self.modchoice == "Multiple Regression Euler":
+                p_input = [para_varbs["Para Az"],
+                           para_varbs["Para Alt"],
+                           para_varbs["Para Dist"],
+                           para_varbs[
+                               "Para Az Velocity"] * self.bout_duration * .016,
+                           para_varbs[
+                               "Para Alt Velocity"] * self.bout_duration * .016,
+                           para_varbs[
+                               "Para Dist Velocity"] * self.bout_duration * .016]
             elif self.modchoice == "Multiple Regression Position":
                 p_input = [para_varbs["Para Az"],
                            para_varbs["Para Alt"],
@@ -1083,14 +1169,36 @@ def make_multiple_regression_model(hunt_db, vel_or_position):
         para_features = ["Para Az",
                          "Para Alt",
                          "Para Dist", 
-                         "Para Az Velocity", "Para Alt Velocity", "Para Dist Velocity"]
+                         "Para Az Velocity", "Para Alt Velocity",
+                         "Para Dist Velocity"]
+        
     elif vel_or_position == 'position':
         para_features = ["Para Az",
                          "Para Alt", "Para Dist"]
+
+    elif vel_or_position == 'position estimate':
+        hunt_db = copy.deepcopy(hunt_db)
+        hunt_db['Para Az'] = hunt_db['Para Az'] + (
+            hunt_db['Bout Duration'] * hunt_db['Para Az Velocity'])
+        hunt_db['Para Alt'] = hunt_db['Para Alt'] + (
+            hunt_db['Bout Duration'] * hunt_db['Para Alt Velocity'])
+        hunt_db['Para Dist'] = hunt_db['Para Dist'] + (
+            hunt_db['Bout Duration'] * hunt_db['Para Dist Velocity'])
+        para_features = ["Para Az",
+                         "Para Alt", "Para Dist"]
+
+    elif vel_or_position == 'euler':
+        hunt_db = copy.deepcopy(hunt_db)
+        hunt_db['Para dAz'] = hunt_db[
+            'Bout Duration'] * hunt_db['Para Az Velocity']
+        hunt_db['Para dAlt'] = hunt_db[
+            'Bout Duration'] * hunt_db['Para Alt Velocity']
+        hunt_db['Para dDist'] = hunt_db[
+            'Bout Duration'] * hunt_db['Para Dist Velocity']
+        para_features = ["Para Az", "Para Alt", "Para Dist",
+                         "Para dAz", "Para dAlt", "Para dDist"]
+        
     bout_features = ["Bout Az", "Bout Alt", "Bout Dist", "Bout Delta Pitch", "Bout Delta Yaw"]
-    # mult_reg_mods = map(lambda bf: sm.RLM(
-    #     hunt_db[bf],
-    #     sm.add_constant(hunt_db[para_features]), M=sm.robust.norms.HuberT()), bout_features)
     mult_reg_mods = map(lambda bf: sm.GLM(
         hunt_db[bf],
         sm.add_constant(hunt_db[para_features])), bout_features)
@@ -1219,29 +1327,37 @@ def score_model_similarity(mod1_index, mod2_index,
 
 def extract_all_spherical_bouts(drct_list):
     all_spherical_bouts = []
-    all_spherical_huntbouts = []
+    init_bouts = []
+    pursuit_bouts = []
     for fish_id in drct_list:
         rfo = pd.read_pickle(
             os.getcwd() + '/' + fish_id + '/RealHuntData_' + fish_id + '.pkl')
         all_spherical_bouts += rfo.all_spherical_bouts
-        all_spherical_huntbouts += rfo.all_spherical_huntbouts
-    return all_spherical_bouts, all_spherical_huntbouts
+        init_bouts += rfo.init_spherical_huntbouts
+        pursuit_bouts += rfo.pursuit_spherical_huntbouts
+    return all_spherical_bouts, init_bouts, pursuit_bouts
 
 
 def model_wrapper(drct_list, strike_params, para_model,
                   model_params, hunt_db, actions, *combine_spherical):
     para_initial_positions = []
     sim_list_allfish = []
+    action_distribution = []
     if combine_spherical != ():
-        sb_allfish, shb_allfish = extract_all_spherical_bouts(drct_list)
+        (sb_allfish,
+         allfish_inits,
+         allfish_pursuits) = extract_all_spherical_bouts(drct_list)
     for dc_ind, fish_id in enumerate(drct_list):
         rfo = pd.read_pickle(
             os.getcwd() + '/' + fish_id + '/RealHuntData_' + fish_id + '.pkl')
+        action_distribution += [ac for ac in rfo.hunt_results if ac in actions]
         if combine_spherical != ():
             rfo.all_spherical_bouts = sb_allfish
-            rfo.all_spherical_huntbouts = shb_allfish
+            rfo.pursuit_spherical_huntbouts = allfish_pursuits
+            rfo.init_spherical_huntbouts = allfish_inits
         simlist, ppos_list = execute_models(rfo, strike_params,
-                                            para_model, model_params, hb, actions)
+                                            para_model, model_params,
+                                            hb, actions)
         sim_list_allfish += simlist
         if dc_ind == 0:
             ms = score_summary(simlist, model_params, 0)
@@ -1253,6 +1369,7 @@ def model_wrapper(drct_list, strike_params, para_model,
                          for i in range(len(model_params))]
     sim_list_by_hunt = [p for p in partition(len(model_params),
                                              sim_list_allfish)]
+    print Counter(action_distribution)
     return ms, para_initial_positions, sim_list_by_model, sim_list_by_hunt
 
 
@@ -1268,6 +1385,7 @@ def execute_models(rfo, strike_params, para_model,
     # this will iterate through hunt_ids and through types of Fishmodel.
     # function takes a real_fish_object and creates a Simulation for each hunt id and each model.
     # have to have the Sim output a -1 or something if the fish never catches the para
+    
     if hunt_id == ():
         hunt_ids = rfo.hunt_ids
     else:
@@ -1289,7 +1407,7 @@ def execute_models(rfo, strike_params, para_model,
                 fish = FishModel(model_run, strike_params, rfo, h_ind)
             try:
                 if model_run["Extrapolate Para"]:
-                    fish.linear_predict_para = True
+                    fish.euler_on_para = True
             except KeyError:
                 pass
             try: 
@@ -1304,9 +1422,13 @@ def execute_models(rfo, strike_params, para_model,
                 fish.regmod = [mv_bout0, multiple_regression_model_velocity]
             elif model_run["Model Type"] == "Multiple Regression Position":
                 fish.regmod = [mp_bout0, multiple_regression_model_position]
+            elif model_run["Model Type"] == "Multiple Regression Euler":
+                fish.regmod = [me_bout0, multiple_regression_model_euler]
+            elif model_run["Model Type"] == "Random":
+                fish.regmod = [mv_bout0, multiple_regression_model_velocity]
             else:
                 fish.regmod = []
-            try: 
+            try:
                 fish.strike_ci = model_run["Strike CI"]
             except KeyError:
                 pass
@@ -1394,7 +1516,7 @@ def plot_query(model_summary, para_positions,
         res_args = [np.arange(len(ms)) for ms in model_summary]
     var_keys = model_summary[0][0].keys()
     var_keys.remove("Para Position at Term")
-    barfig, barax = pl.subplots(1, 5, figsize=[16, 5])
+    barfig, barax = pl.subplots(1, 4, figsize=[16, 5])
 #    marralgs = Marr2Algorithms(para_positions, strike_params)
 #    marralgs.run_marr2_models()
     #note this should change if real fish is not arg 0. just make sure it
@@ -1427,7 +1549,10 @@ def plot_query(model_summary, para_positions,
         elif plot_type == 'box':
             sb.boxplot(data=mapped_values, ax=barax[var_ind], whis=[5, 95],
                        showfliers=False)
+        elif plot_type == 'boxen':
+            sb.boxenplot(data=mapped_values, ax=barax[var_ind])
 
+            
 #            sb.boxplot(data=mapped_values, ax=barax[var_ind])
     return barfig
 
@@ -1478,14 +1603,13 @@ def strike(p, strike_means, strike_std, confidence_interval):
         prob_az = 1 - prob_az
     if p["Para Alt"] > strike_means[1]:
         prob_alt = 1 - prob_alt
-    # max prob when multiplying all cdfs together is .5**3. normalize. 
+    # max prob when multiplying all cdfs together is .5**3. normalize.
     normalize_prob = prob_alt * prob_az * (1 / .25)
-    if p["Para Dist"] < (
-            strike_means[2] + 2*strike_std[
-                2]) and normalize_prob > confidence_interval:
-        return True
+    dist_diff = (strike_means[2] + 2*strike_std[2]) - p["Para Dist"]
+    if dist_diff > 0 and normalize_prob > confidence_interval:
+        return True, [prob_az, prob_alt, dist_diff]
     else:
-        return False
+        return False, [prob_az, prob_alt, dist_diff]
 
 def static_strike(p, strike_means, strike_std):
     num_stds = 1.5
@@ -1779,7 +1903,18 @@ if __name__ == "__main__":
     mp_bout0 = make_multiple_regression_model(
         bout0regmodel_input,
         'position')
-
+    multiple_regression_model_euler = make_multiple_regression_model(
+        regmodel_input,
+        'euler')
+    me_bout0 = make_multiple_regression_model(
+        bout0regmodel_input,
+        'euler')
+    # multiple_regression_model_mpe = make_multiple_regression_model(
+    #     regmodel_input,
+    #     'position estimate')
+    # mpe_bout0 = make_multiple_regression_model(
+    #     bout0regmodel_input,
+    #     'position estimate')
     para_model = pickle.load(open(os.getcwd() + '/pmm.pkl', 'rb'))
     np.random.seed()
     sequence_length = 10000
@@ -1792,8 +1927,7 @@ if __name__ == "__main__":
     #                  "Willie Mays": Enter number of frames ahead to predict
     #                  "Extrapolate Para": ''
     #                  "Spherical Bouts": Enter the list of possible bouts here
-    #
-    # Hunt Results are: 1 = Success, 2 = Fail, 3 = Para Rec nans before end of hunt
+    #    # Hunt Results are: 1 = Success, 2 = Fail, 3 = Para Rec nans before end of hunt
     
     modlist = [{"Model Type": "Independent Regression", "Real or Sim": "Real"},
                {"Model Type": "Independent Regression", "Real or Sim": "Real", "Extrapolate Para":True},
@@ -1821,20 +1955,36 @@ if __name__ == "__main__":
 #                {"Model Type": "Random", "Real or Sim": "Real", "Spherical Bouts": "All"},
 #                {"Model Type": "Random", "Real or Sim": "Real", "Spherical Bouts": "Hunt"}]
 
-    modlist_ci = [{"Model Type": "Real Coords", "Real or Sim": "Real"},
-                  {"Model Type": "Real Coords", "Real or Sim": "Real", "Strike CI": .32},
-                  {"Model Type": "Multiple Regression Position", "Real or Sim": "Real"},
-                  {"Model Type": "Multiple Regression Velocity", "Real or Sim": "Real"},
-                  {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "Hunt"},
-                  {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "Hunt", "Extrapolate Para": True},
-                  {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "Hunt", "Strike CI": .32},
-                  {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "Hunt", "Extrapolate Para": True, "Strike CI": .32}]
+    # modlist_ci = [{"Model Type": "Real Coords", "Real or Sim": "Real", "Strike CI": .32},
+    #               {"Model Type": "Multiple Regression Position", "Real or Sim": "Real", "Strike CI": .32},
+    #               {"Model Type": "Multiple Regression Velocity", "Real or Sim": "Real", "Strike CI": .32},
+    #               {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All", "Strike CI": .32},
+    #               {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "All", "Extrapolate Para": True, "Strike CI": .32},
+    #               {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "Hunt", "Strike CI": .32},
+    #               {"Model Type": "Ideal", "Real or Sim": "Real", "Spherical Bouts": "Hunt", "Extrapolate Para": True, "Strike CI": .32}]
+
+    modlist_ci = [{"Model Type": "Real Coords",
+                   "Real or Sim": "Real", "Strike CI": .32},
+                  {"Model Type": "Multiple Regression Position",
+                   "Real or Sim": "Real", "Strike CI": .32},
+                  {"Model Type": "Multiple Regression Velocity",
+                   "Real or Sim": "Real", "Strike CI": .32},
+                  {"Model Type": "Multiple Regression Euler",
+                   "Real or Sim": "Real", "Strike CI": .32},
+                  {"Model Type": "Random", "Real or Sim": "Real",
+                   "Spherical Bouts": "All", "Strike CI": .32},
+                  {"Model Type": "Random", "Real or Sim": "Real",
+                   "Spherical Bouts": "Hunt", "Strike CI": .32}, 
+                  {"Model Type": "Ideal", "Real or Sim": "Real",
+                   "Spherical Bouts": "All", "Strike CI": .32},
+                  {"Model Type": "Ideal", "Real or Sim": "Real",
+                   "Spherical Bouts": "All", "Extrapolate Para":True, "Strike CI": .32},
+                  {"Model Type": "Ideal", "Real or Sim": "Real",
+                   "Spherical Bouts": "Hunt", "Strike CI": .32},
+                  {"Model Type": "Ideal", "Real or Sim": "Real",
+                   "Spherical Bouts": "Hunt", "Extrapolate Para":True, "Strike CI": .32}]
 
 
-
-
-
-               
 
     modlist_bayes = [{"Model Type": "Bayes", "Real or Sim": "Real"}]
     actions = [1, 2]

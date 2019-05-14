@@ -80,19 +80,26 @@ class BayesDB_Simulator:
         self.query_params['query_expression'] = query_expression
         self.query_params['conditioner'] = conditioner
 
-    def single_hist(self, query_exp, condition, color):
+    def single_hist(self, query_exp, condition, color, *bins):
         self.set_query_params(query_exp, condition)
         df = self.rejection_query(1)
         hist_data = df[query_exp.replace('"', '')]
         print(str(hist_data.shape[0]) + " total bouts")
-        p = sb.distplot(hist_data,
-                        fit_kws={"color": color},
-                        fit=norm, kde=False,
-                        color=color, hist_kws={"alpha": .8})
+        if bins != ():
+            bins = bins[0]
+            p = sb.distplot(hist_data,
+                            fit_kws={"color": color},
+                            fit=norm, kde=False, bins=bins,
+                            color=color, hist_kws={"alpha": .8})
+        else:
+            p = sb.distplot(hist_data,
+                            fit_kws={"color": color},
+                            fit=norm, kde=False,
+                            color=color, hist_kws={"alpha": .8})
         p.set_xlim([-2, 2])
         print(np.mean(hist_data))
         print(np.std(hist_data))
-        return p
+        return p, hist_data
 
     def rejection_query(self, real):
         if not real:
