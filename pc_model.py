@@ -64,7 +64,7 @@ from scipy.stats import norm, ttest_ind, ttest_rel, wilcoxon, ttest_1samp, mannw
 class GLM_Fitter:
     def __init__(self):
         self.all_strikes_csv = pd.read_csv(
-            'wik_bdb/all_huntbouts_rev_strikes_nob0_nostrike_nonan.csv')
+            'wik_bdb/all_huntbouts_strikes_nob0_nostrike_nonan.csv')
         self.glm_models = []
 # have to built a model just on b0.
     def glm_fits(self):
@@ -157,7 +157,7 @@ class Marr2Algorithms:
                               'alt_b_pos': 0, 
                               'alt_b_neg': 0,
                               'dist_b': 0}
-        self.strike_ci = .05
+        self.strike_ci = .32
         self.test_results = []
         self.fails = []
         self.averages = []
@@ -175,7 +175,7 @@ class Marr2Algorithms:
         self.static_params['dist_m'] = self.glm_models[-1].params['Para Dist']
         self.static_params['dist_b'] = self.glm_models[-1].params['const']
         # note az_b is kept as 0 since its 95% CI overlaps with 0.
-        
+
 
     def firstbout_transformation(self, para_varbs):
         pb_az = .28 * para_varbs["Para Az"]
@@ -184,9 +184,8 @@ class Marr2Algorithms:
         return pb_az, pb_dist, pb_alt
 
     def result_compiler(self):
-
         max_bouts = 100
-
+        
         def nanremove(arr):
             a = []
             for b in arr:
@@ -194,8 +193,9 @@ class Marr2Algorithms:
                     b = max_bouts
                 a.append(b)
             return np.array(a)
-
+        
         fig, ax = pl.subplots(1, 1, figsize=(15, 15))
+        # start results with bouts_static per hunt
         all_results_w_nan = [self.bouts_static]
         for bayesbouts in self.bouts_bayes:
             all_results_w_nan.append(bayesbouts)
@@ -208,6 +208,12 @@ class Marr2Algorithms:
                     all_results[0]) - np.array(
                         all_results[i+1]))) for i in range(
                             len(self.bouts_bayes))]
+        # wilcoxon test results yields how likely one bayesian set of bouts is to be
+        # greater than the static model. it's a paired test b/c its the same
+        # initial condition
+        # sum_of_ranks is how many more times the bayesian model wins
+        # vs the static model. if the result is negative, the
+        # static model wins more often. 
         self.test_results = [wilcoxon_results, sum_of_ranks]
         self.averages = [np.percentile(f, [25, 50, 75]) for f in all_results]
         print('One Sample T on Medians')
@@ -1544,6 +1550,7 @@ def plot_query(model_summary, para_positions,
         print([mv.shape for mv in mapped_values])
         if plot_type == 'bar' or variable == "Result":
             sb.barplot(data=mapped_values, ax=barax[var_ind])
+            barax[var_ind].set_ylim([0, mapped_values[-1] + 3])
         elif plot_type == 'violin':
             sb.violinplot(data=mapped_values, ax=barax[var_ind])
         elif plot_type == 'box':
@@ -1968,29 +1975,52 @@ if __name__ == "__main__":
                      {"Model Type": "Ideal", "Real or Sim": "Real",
                       "Spherical Bouts": "Hunt", "Extrapolate Para":True, "Strike CI": .32}]
 
-
-    modlist_ci = [{"Model Type": "Real Coords",
-                   "Real or Sim": "Real", "Strike CI": .32},
-                  {"Model Type": "Multiple Regression Position",
-                   "Real or Sim": "Real", "Strike CI": .32},
-                  {"Model Type": "Multiple Regression Velocity",
-                   "Real or Sim": "Real", "Strike CI": .32},
-                  {"Model Type": "Multiple Regression Euler",
-                   "Real or Sim": "Real", "Strike CI": .32},
-                  {"Model Type": "Random", "Real or Sim": "Real",
-                   "Spherical Bouts": "All", "Strike CI": .32},
-                  {"Model Type": "Random", "Real or Sim": "Real",
-                   "Spherical Bouts": "Hunt", "Strike CI": .32}, 
-                  {"Model Type": "Ideal", "Real or Sim": "Real",
-                   "Spherical Bouts": "All", "Strike CI": .32},
-                  {"Model Type": "Ideal", "Real or Sim": "Real",
-                   "Spherical Bouts": "All", "Extrapolate Para":True, "Strike CI": .32},
-                  {"Model Type": "Ideal", "Real or Sim": "Real",
-                   "Spherical Bouts": "Hunt", "Strike CI": .32},
-                  {"Model Type": "Ideal", "Real or Sim": "Real",
-                   "Spherical Bouts": "Hunt", "Extrapolate Para":True, "Strike CI": .32}]
+    modlist_ideal = [{"Model Type": "Ideal", "Real or Sim": "Real",
+                      "Spherical Bouts": "All", "Strike CI": .32},
+                     {"Model Type": "Ideal", "Real or Sim": "Real",
+                      "Spherical Bouts": "All", "Extrapolate Para":True, "Strike CI": .32}]
 
 
+    modlist_allsph = [{"Model Type": "Ideal", "Real or Sim": "Real",
+                       "Spherical Bouts": "All", "Strike CI": .32},
+                      {"Model Type": "Ideal", "Real or Sim": "Real",
+                       "Spherical Bouts": "All", "Extrapolate Para":True, "Strike CI": .32},
+                      {"Model Type": "Random", "Real or Sim": "Real",
+                       "Spherical Bouts": "All", "Strike CI": .32}]
+
+    
+
+    modlist_hici = [{"Model Type": "Real Coords",
+                     "Real or Sim": "Real", "Strike CI": .32},
+                    {"Model Type": "Multiple Regression Position",
+                     "Real or Sim": "Real", "Strike CI": .32},
+                    {"Model Type": "Multiple Regression Velocity",
+                     "Real or Sim": "Real", "Strike CI": .32},
+                    {"Model Type": "Multiple Regression Euler",
+                     "Real or Sim": "Real", "Strike CI": .32},
+                    {"Model Type": "Random", "Real or Sim": "Real",
+                     "Spherical Bouts": "Hunt", "Strike CI": .32}, 
+                    {"Model Type": "Ideal", "Real or Sim": "Real",
+                     "Spherical Bouts": "Hunt", "Strike CI": .32},
+                    {"Model Type": "Ideal", "Real or Sim": "Real",
+                     "Spherical Bouts": "Hunt", "Extrapolate Para":True, "Strike CI": .32}]
+
+    modlist_lowci = [{"Model Type": "Real Coords",
+                      "Real or Sim": "Real"},
+                     {"Model Type": "Multiple Regression Position",
+                      "Real or Sim": "Real"},
+                     {"Model Type": "Multiple Regression Velocity",
+                      "Real or Sim": "Real"},
+                     {"Model Type": "Multiple Regression Euler",
+                      "Real or Sim": "Real"},
+                     {"Model Type": "Random", "Real or Sim": "Real",
+                      "Spherical Bouts": "Hunt"},
+                     {"Model Type": "Ideal", "Real or Sim": "Real",
+                      "Spherical Bouts": "Hunt"},
+                     {"Model Type": "Ideal", "Real or Sim": "Real",
+                      "Spherical Bouts": "Hunt", "Extrapolate Para":True}]
+
+    
 
     modlist_bayes = [{"Model Type": "Bayes", "Real or Sim": "Real"}]
     actions = [1, 2]
@@ -2016,10 +2046,14 @@ if __name__ == "__main__":
                       '091118_1', '091118_2', '091118_3', '091118_4', '091118_5',
                       '090418_3', '090418_4']
 
-
+    strike_ci = .05
+    modlist_newci = []
+    for d in modlist_lowci:
+        d["Strike CI"] = strike_ci
+        modlist_newci.append(d)
     ms, p_inits, simlist_by_model, simlist_by_hunt = model_wrapper(
         new_wik, strike_params,
-        para_model, modlist_ci, hb, actions, 1)
+        para_model, modlist_newci, hb, actions, 1)
     np.save('ms.npy', ms)
     np.save('p_inits.npy', p_inits)
     np.save('strike_params.npy', strike_params)

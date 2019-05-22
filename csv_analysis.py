@@ -80,23 +80,27 @@ class BayesDB_Simulator:
         self.query_params['query_expression'] = query_expression
         self.query_params['conditioner'] = conditioner
 
-    def single_hist(self, query_exp, condition, color, *bins):
+    def single_hist(self, query_exp, condition, color, *plotargs):
         self.set_query_params(query_exp, condition)
         df = self.rejection_query(1)
         hist_data = df[query_exp.replace('"', '')]
+        hist_data = np.array([v for v in hist_data if not math.isnan(v)])
         print(str(hist_data.shape[0]) + " total bouts")
-        if bins != ():
-            bins = bins[0]
+        if plotargs != ():
+            bins = plotargs[0][0]
+            if plotargs[0][2] == 1:
+                hist_data = np.degrees(hist_data)
             p = sb.distplot(hist_data,
                             fit_kws={"color": color},
                             fit=norm, kde=False, bins=bins,
                             color=color, hist_kws={"alpha": .8})
+            p.set_xlim(plotargs[0][1])
         else:
             p = sb.distplot(hist_data,
                             fit_kws={"color": color},
                             fit=norm, kde=False,
                             color=color, hist_kws={"alpha": .8})
-        p.set_xlim([-2, 2])
+            p.set_xlim([-2, 2])
         print(np.mean(hist_data))
         print(np.std(hist_data))
         return p, hist_data
@@ -119,7 +123,7 @@ class BayesDB_Simulator:
         return df
 
     # format of query_expression is '"Var1","Var2"'
-    def two_variable_regression(self, query_expression, condition, color, labels, *ax_lims):
+    def two_variable_regression(self, query_expression, condition, color, labels, ax_lims, *todeg):
 
         def unexplained_var(x, y, slope, yint):
             y_normed = []
@@ -136,17 +140,24 @@ class BayesDB_Simulator:
         nanfilt_varbs = np.array([vrb for vrb in zip(df_real[v1],
                                                      df_real[v2]) if
                                   np.isfinite(vrb).all()])
-        reg_plot = sb.regplot(nanfilt_varbs[:, 0],
-                              nanfilt_varbs[:, 1],
+        if todeg != ():
+            nfv1 = np.degrees(nanfilt_varbs[:, 0])
+            nfv2 = np.degrees(nanfilt_varbs[:, 1])
+        else:
+            nfv1 = nanfilt_varbs[:, 0]
+            nfv2 = nanfilt_varbs[:, 1]
+
+        reg_plot = sb.regplot(nfv1,
+                              nfv2, 
                               fit_reg=True, n_boot=100,
                               scatter_kws={'alpha': 0.25},
                               robust=False, color=color)
         rx, ry = reg_plot.get_lines()[0].get_data()
         r_slope = np.around((ry[1] - ry[0])/(rx[1] - rx[0]), 2)
         r_yint = np.around(ry[1] - r_slope*rx[1], 3)
-        reg_fit = np.around(pearsonr(nanfilt_varbs[:, 0],
-                                     nanfilt_varbs[:, 1])[0], 2)
-        if ax_lims != ():
+        reg_fit = np.around(pearsonr(nfv1,
+                                     nfv2)[0], 2)
+        if not math.isnan(ax_lims[0]):
             reg_plot.set_xlim(ax_lims[0])
             reg_plot.set_ylim(ax_lims[1])
             reg_plot.text(ax_lims[0][0], .9*ax_lims[1][1], '  ' +
@@ -161,13 +172,13 @@ class BayesDB_Simulator:
         reg_plot.set_xlabel(labels[0], fontsize=16)
         reg_plot.set_ylabel(labels[1], fontsize=16)
         print(str(len(nanfilt_varbs[:, 0])) + " Bouts")
-        unexp_var = unexplained_var(nanfilt_varbs[:, 0],
-                                    nanfilt_varbs[:, 1],
+        unexp_var = unexplained_var(nfv1, 
+                                    nfv2, 
                                     r_slope, r_yint)
         print("Unexplained Variance  " + str(unexp_var))
         sb.despine()
         sb.axes_style({'ytick.right': False})
-        return fig, nanfilt_varbs[:, 0], nanfilt_varbs[:, 1]
+        return fig, nfv1, nfv2
         
 
     def compare_sim_to_real(self, query_expression, colors):
@@ -181,7 +192,7 @@ class BayesDB_Simulator:
         pl.show()
 
     def compare_2_queries(self, q_exp, condition1,
-                          condition2, real, new_sim, color):
+                          condition2, real, new_sim, color, *todeg):
         colors = [(np.array(color) * 1 / np.max(color)).tolist(),
                   (np.array(color) * .6).tolist()]
         if not real:
@@ -194,6 +205,9 @@ class BayesDB_Simulator:
         fig = pl.figure()
         c1_distribution = c1_result[q_exp.replace('"', '')]
         c2_distribution = c2_result[q_exp.replace('"', '')]
+        if todeg != ():
+            c1_distribution = np.degrees(c1_distribution)
+            c2_distribution = np.degrees(c2_distribution)
         print(str(c1_distribution.shape[0]) + ' bouts in Query 1')
         print('Mean Q1 = ' + str(np.mean(c1_distribution)))
         print(str(c2_distribution.shape[0]) + ' bouts in Query 2')
@@ -271,7 +285,13 @@ def add_bouts_reversed_label(df):
             if first0:
                 first0 = False
             else:
-                if df["Strike Or Abort"][ind-1] <= 3 and df[
+#                if df["Strike Or Abort"][ind-1] <= 3 and df[
+#                        "Bout Number"][ind-1] < 0:
+                if df["Strike Or Abort"][ind-1] == 3 and df[
+                        "Bout Number"][ind-1] < 0 and df["Cluster Membership"][
+                            ind-1] != -1:
+                    new_bout_ids += [i - counter for i in range(counter)]
+                elif df["Strike Or Abort"][ind-1] < 3 and df[
                         "Bout Number"][ind-1] < 0:
                     new_bout_ids += [i - counter for i in range(counter)]
                 else:
@@ -353,9 +373,9 @@ def make_regression_plots(x1, y1, x2, y2, labels, colors):
     yint1 = np.around(p1y[1] - slope1*p1x[1], 2)
     yint2 = np.around(p2y[1] - slope2*p2x[1], 2)
     coeff1_nanfilt = np.array(
-        [c1 for c1 in zip(x2, y2) if np.isfinite(c1).all()])
+        [c1 for c1 in zip(x1, y1) if np.isfinite(c1).all()])
     coeff2_nanfilt = np.array([c2 for c2 in zip(
-        x1, y1) if np.isfinite(c2).all()])
+        x2, y2) if np.isfinite(c2).all()])
     coeff1 = np.around(pearsonr(coeff1_nanfilt[:, 0],
                                 coeff1_nanfilt[:, 1])[0], 2)
     coeff2 = np.around(pearsonr(coeff2_nanfilt[:, 0],
@@ -372,7 +392,9 @@ def make_regression_plots(x1, y1, x2, y2, labels, colors):
                color=colors[1], fontsize=14)
 
 #    greenplot.set_ylim([-1, 1])
-    if labels[1] != "Bout Distance" and labels[1] != "Postbout Para Distance":
+    if labels[1] == "Bout Dist" or labels[1] == "Postbout Para Dist":
+        plot1.set_ylim([0, 1000])
+    else:
         plot1.set_ylim([-2.5, 2.5])
     pl.show()
     return fig

@@ -1376,7 +1376,7 @@ class ParaMaster():
 
         #Simple function to take the 3D paramecia coords and create an animated graph.
 
-    def graph3D(self, animatebool):
+    def graph3D(self, animatebool, *p_id):
         framecount = self.framewindow[1] - self.framewindow[0]
         graph_3D = pl.figure(figsize=(6, 6))
         ax = graph_3D.add_subplot(111, projection='3d')
@@ -1385,11 +1385,19 @@ class ParaMaster():
         ax.set_ylim([0, 1888])
         ax.set_zlim([0, 1888])
         pl.hold(True)
+        if p_id == ():
+            para3Dcoords = self.para3Dcoords[:, self.pcw:]
+        else:
+            p_id = p_id[0]
+            para3Dcoords = np.array([self.para3Dcoords[3*p_id],
+                                     self.para3Dcoords[(3*p_id)+1],
+                                     self.para3Dcoords[(3*p_id)+2]])[:,
+                                                                     self.pcw:]
         if not animatebool:
-            for ind in range(0, self.para3dcoords.shape[0], 3):
-                x = self.para3Dcoords[ind]
-                y = self.para3Dcoords[ind + 1]
-                z = self.para3Dcoords[ind + 2]
+            for ind in range(0, para3Dcoords.shape[0], 3):
+                x = para3Dcoords[ind]
+                y = para3Dcoords[ind + 1]
+                z = para3Dcoords[ind + 2]
                 ax.plot(
                     xs=x,
                     ys=y,
@@ -1398,7 +1406,7 @@ class ParaMaster():
                            np.random.random()],
                     ls='-',
                     marker='o',
-                    ms=8,
+                    ms=6,
                     markevery=[-1])
             pl.show()
             return True
@@ -1409,16 +1417,16 @@ class ParaMaster():
                 for id, plt in enumerate(plots):
                     if num > 0:
 #be careful here make sure you know what's being plotted when
-                        x = self.para3Dcoords[id * 3, 0:num]
-                        y = self.para3Dcoords[id * 3 + 1, 0:num]
-                        z = self.para3Dcoords[id * 3 + 2, 0:num]
+                        x = para3Dcoords[id * 3, 0:num]
+                        y = para3Dcoords[id * 3 + 1, 0:num]
+                        z = para3Dcoords[id * 3 + 2, 0:num]
                         if not math.isnan(x[-1]):
                             plt.set_data(x, y)
                             plt.set_3d_properties(z)
                 return plots
 
             plotlist = []
-            for para in range(self.para3Dcoords.shape[0] / 3):
+            for para in range(para3Dcoords.shape[0] / 3):
                 templot, = ax.plot(
                     xs=[],
                     ys=[],
@@ -1427,7 +1435,7 @@ class ParaMaster():
                            np.random.random()],
                     ls='-',
                     marker='o',
-                    ms=8,
+                    ms=6,
                     markevery=[-1])
                 plotlist.append(templot)
             line_ani = anim.FuncAnimation(

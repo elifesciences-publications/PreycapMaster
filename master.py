@@ -390,6 +390,12 @@ class ParaEnv:
 # Once you find the right metric for attention to a para, ask if ufish multiplied by any integer intersects 
 # With the coordinates of a barrier.
 
+
+# dot product entry 1 is the dp of the first and second vec.
+# it is a property of the two vecs, but you are plotting vec vs. time.
+# if you stagger dot by 1, the dot is a property of the current vector. 
+
+
     def exporter(self):
         with open('p_env' + self.bout_number + '.pkl', 'wb') as file:
             pickle.dump(self, file)
@@ -552,7 +558,7 @@ class DimensionalityReduce():
         for b_ind, bout in enumerate(self.all_bouts):
             if b_ind in orig_cluster_indices:
                 sub_bout = []
-                b_partitioned = partition(self.num_dp, bout)
+                b_partitioned = psartition(self.num_dp, bout)
                 for bout_frame in b_partitioned:
                     norm_frame = (np.array(bout_frame) / std_array)
                     sub_bout_frame = norm_frame[keys].tolist()
@@ -2586,9 +2592,9 @@ def bouts_during_hunt(hunt_ind, exp, plotornot):
     yaw_during_hunt = exp.spherical_yaw[start:end]
 #    yaw_filt_during_hunt = yaw_all_filt[start:end]
     z_during_hunt = gaussian_filter(exp.fishdata.z[start:end], 1)
-    ax2.plot(framerange, yaw_during_hunt, color='m')
-    ax2.plot(framerange, pitch_during_hunt, color='k')
-    ax4.plot(framerange, z_during_hunt, color='b')
+    ax2.plot(framerange, np.degrees(yaw_during_hunt), color='m')
+    ax2.plot(framerange, np.degrees(pitch_during_hunt), color='k')
+    ax4.plot(framerange, np.array(z_during_hunt) * .0106, color='b')
     pl.tight_layout()
     if plotornot == 0:
         pl.clf()
@@ -2765,7 +2771,6 @@ def hunted_para_descriptor(exp, hd):
             postbout_az = filt_az[norm_frame+bout_dur]
             postbout_alt = filt_alt[norm_frame+bout_dur]
             postbout_dist = filt_dist[norm_frame+bout_dur]
-
             if br[1] < 0:
                 if hb_ind == len(hunt_bouts) + br[1]:
                     endhunt = True
@@ -3160,7 +3165,7 @@ def para_stimuli(exp, hd, inc_kde, use_random_env):
         stim_list += temp_stim_list
         para_stats_final.append(para_stats_for_trial)
 
-    np.save('para_validation.npy', para_stats_final)
+    np.save(exp.directory + '/para_validation.npy', para_stats_final)
     pstim_header = ['Hunt ID',
                     'Para ID',
                     'Inferred',
@@ -4016,7 +4021,7 @@ if __name__ == '__main__':
 # bout array, matched with a flag array that describes summary statistics for each bout. A new BoutsandFlags object is then created
 # whose only role is to contain the bouts and corresponding flags for each fish. 
 
-    fish_id = '091118_6'
+    fish_id = '091318_6'
     drct = os.getcwd() + '/' + fish_id
     import_exp = True
     import_dim = False
