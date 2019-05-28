@@ -157,15 +157,15 @@ class BayesDB_Simulator:
         r_yint = np.around(ry[1] - r_slope*rx[1], 3)
         reg_fit = np.around(pearsonr(nfv1,
                                      nfv2)[0], 2)
-        if not math.isnan(ax_lims[0]):
+        if not math.isnan(ax_lims[0][0]):
             reg_plot.set_xlim(ax_lims[0])
             reg_plot.set_ylim(ax_lims[1])
-            reg_plot.text(ax_lims[0][0], .9*ax_lims[1][1], '  ' +
+            reg_plot.text(ax_lims[0][0], 1.1*ax_lims[1][1], '  ' +
                           str(r_slope) + 'x + ' + str(
                           r_yint) + ', ' + '$r^{2}$ = ' + str(reg_fit**2),
                           color=color, fontsize=16)
         else:
-            reg_plot.text(-1, .9*np.max(nanfilt_varbs[:, 1]), '  ' +
+            reg_plot.text(np.min(nfv1), 1.1*np.max(nfv2), '  ' +
                           str(r_slope) + 'x + ' + str(
                           r_yint) + ', ' + '$r^{2}$ = ' + str(reg_fit**2),
                           color=color, fontsize=16)
@@ -221,7 +221,7 @@ class BayesDB_Simulator:
         sb.despine()
         pl.savefig('2query.pdf')
         pl.show()
-        return fig
+        return fig, c1_distribution, c2_distribution
         
                         
 def concatenate_all_csv(fish_list, file_name, invert):

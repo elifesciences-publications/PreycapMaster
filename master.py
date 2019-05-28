@@ -2462,7 +2462,8 @@ def huntbouts_wrapped(hd, exp, med_or_min, plotornot):
     philstack = []
     phirstack = []
     for h in hd.hunt_ind_list:
-        yaw, pitch, z, phil, phir = bouts_during_hunt(h, exp, plotornot)
+        yaw, pitch, xyz, phil, phir = bouts_during_hunt(h, exp, plotornot)
+        z = xyz[2]
         zstack.append(z)
         philstack.append(phil)
         phirstack.append(phir)
@@ -2538,7 +2539,7 @@ def control_stimuli(directories, nonhunt_clusters):
         para_stimuli(myexp, hd, False, True)
 
         
-def bouts_during_hunt(hunt_ind, exp, plotornot):
+def bouts_during_hunt(hunt_ind, exp, plotornot, *subtract_360):
     integ_win = exp.integration_window
     firstind = exp.hunt_wins[hunt_ind][0]
     secondind = exp.hunt_wins[hunt_ind][1]
@@ -2590,11 +2591,18 @@ def bouts_during_hunt(hunt_ind, exp, plotornot):
         ax3.text(bouts_tail[ind], -.5, str(typ))
     pitch_during_hunt = exp.spherical_pitch[start:end]
     yaw_during_hunt = exp.spherical_yaw[start:end]
+    if subtract_360 != ():
+        yaw_during_hunt = [ydh-(2*np.pi) if ydh > np.pi else ydh for ydh in
+                           yaw_during_hunt]
 #    yaw_filt_during_hunt = yaw_all_filt[start:end]
+    x_during_hunt = gaussian_filter(exp.fishdata.x[start:end], 1)
+    y_during_hunt = gaussian_filter(exp.fishdata.y[start:end], 1)
     z_during_hunt = gaussian_filter(exp.fishdata.z[start:end], 1)
     ax2.plot(framerange, np.degrees(yaw_during_hunt), color='m')
     ax2.plot(framerange, np.degrees(pitch_during_hunt), color='k')
-    ax4.plot(framerange, np.array(z_during_hunt) * .0106, color='b')
+    ax4.plot(framerange, np.array(z_during_hunt) * .0106, color='darkslategray')
+    ax4.plot(framerange, np.array(x_during_hunt) * .0106, color='teal')
+    ax4.plot(framerange, np.array(y_during_hunt) * .0106, color='cyan')
     pl.tight_layout()
     if plotornot == 0:
         pl.clf()
@@ -2602,7 +2610,8 @@ def bouts_during_hunt(hunt_ind, exp, plotornot):
     elif plotornot == 1:
         pl.savefig('bouts_during_hunt.pdf')
         pl.show()
-    return pitch_during_hunt, yaw_during_hunt, z_during_hunt, filt_phil, filt_phir
+    return pitch_during_hunt, yaw_during_hunt, [x_during_hunt, y_during_hunt,
+                 z_during_hunt], filt_phil, filt_phir
 
 
 def hunted_para_descriptor(exp, hd):
@@ -4021,7 +4030,7 @@ if __name__ == '__main__':
 # bout array, matched with a flag array that describes summary statistics for each bout. A new BoutsandFlags object is then created
 # whose only role is to contain the bouts and corresponding flags for each fish. 
 
-    fish_id = '091318_6'
+    fish_id = '090718_1_'
     drct = os.getcwd() + '/' + fish_id
     import_exp = True
     import_dim = False
