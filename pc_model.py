@@ -622,7 +622,9 @@ class PreyCap_Simulation:
             list so you can determine velocities and accelerations '''
                 
             if framecounter in self.interbouts and not self.fishmodel.modchoice == "Real Coords":
-                
+                # assures a bout chosen by ideal model can't bleed into next bout
+                self.fishmodel.bout_thresh_len = self.interbouts(np.argwhere(
+                    self.interbouts == framecounter)[0][0] + 1) - framecounter - 1
                 self.fishmodel.bout_duration = self.bout_durations[
                     self.bout_counter]
                 self.fishmodel.current_fish_xyz = self.fish_xyz[-1]
@@ -630,7 +632,8 @@ class PreyCap_Simulation:
                 self.fishmodel.current_fish_yaw = self.fish_yaw[-1]
 #                print para_varbs
                 pxyz_temp = [[px[i], py[i], pz[i]] for i in range(
-                    framecounter-self.fishmodel.rfo.firstbout_para_intwin, framecounter)]
+                    framecounter-self.fishmodel.rfo.firstbout_para_intwin,
+                    framecounter)]
                 pmap_returns = []
                 for p_xyz in pxyz_temp:
                     pmap_returns.append(p_map_to_fish(fish_basis[1],
@@ -649,87 +652,81 @@ class PreyCap_Simulation:
                     break
                 else:
                     last_finite_pvarbs = copy.deepcopy(para_varbs)
-                if self.fishmodel.euler_on_para:
-                    projected_para_varbs = copy.deepcopy(para_varbs)
-                    projected_para_varbs["Para Az"] += para_varbs[
-                        "Para Az Velocity"] * self.bout_durations[
-                            self.bout_counter] * .016
-                    projected_para_varbs["Para Alt"] += para_varbs[
-                        "Para Alt Velocity"] * self.bout_durations[
-                            self.bout_counter] * .016
-                    projected_para_varbs["Para Dist"] += para_varbs[
-                        "Para Dist Velocity"] * self.bout_durations[
-                            self.bout_counter] * .016
+                if self.fishmodel.euler_on_para and not self.fishmodel.modchoice == "Ideal":
+                    projected_para_varbs = euler_project_para(
+                        para_varbs, self.bout_durations[self.bout_counter])
                     fish_bout = self.fishmodel.model(projected_para_varbs)
                 else:
                     fish_bout = self.fishmodel.model(para_varbs)
+                    
                 dx, dy, dz = sphericalbout_to_xyz(fish_bout[0],
                                                   fish_bout[1],
                                                   fish_bout[2],
                                                   fish_basis[1],
                                                   fish_basis[3],
                                                   fish_basis[2])
-                if self.interpolate != 'none':
-                    if self.interpolate == 'kernel':
-                        vkernel = normalize_kernel(
-                            self.velocity_kernel,
-                            self.bout_durations[self.bout_counter])
-                        ykernel = normalize_kernel_interp(
-                            self.yaw_kernel,
-                            self.bout_durations[self.bout_counter])
-                        x_prog = (np.cumsum(dx * vkernel) + self.fish_xyz[-1][0]).tolist()
-                        y_prog = (np.cumsum(dy * vkernel) + self.fish_xyz[-1][1]).tolist()
-                        z_prog = (np.cumsum(dz * vkernel) + self.fish_xyz[-1][2]).tolist()
-                        yaw_prog = (np.cumsum(fish_bout[4] * ykernel) + self.fish_yaw[-1]).tolist()
-                        pitch_prog = (np.cumsum(fish_bout[3] * vkernel) + self.fish_pitch[-1]).tolist()
-                        
-                    elif self.interpolate == 'linear':
-                        x_prog = np.linspace(
-                            self.fish_xyz[-1][0],
-                            self.fish_xyz[-1][0] + dx,
-                            self.bout_durations[self.bout_counter]).tolist()
-                        y_prog = np.linspace(
-                            self.fish_xyz[-1][1],
-                            self.fish_xyz[-1][1] + dy,
-                            self.bout_durations[self.bout_counter]).tolist()
-                        z_prog = np.linspace(
-                            self.fish_xyz[-1][2],
-                            self.fish_xyz[-1][2] + dz,
-                            self.bout_durations[self.bout_counter]).tolist()
-                        yaw_prog = np.linspace(
-                            self.fish_yaw[-1],
-                            self.fish_yaw[-1] + fish_bout[4],
-                            self.bout_durations[self.bout_counter]).tolist()
-                        pitch_prog = np.linspace(
-                            self.fish_pitch[-1],
-                            self.fish_pitch[-1] + fish_bout[3],
-                            self.bout_durations[self.bout_counter]).tolist()
-                    bout_xyz = zip(x_prog, y_prog, z_prog)
-                    bout_pitch = np.clip(pitch_prog, -np.pi, np.pi).tolist()
-                    # assures fish can't frontflip or backflip over. 
-                    bout_yaw = np.mod(yaw_prog, 2*np.pi).tolist()
-                    # assures yaw coords stay 0 to 2pi w no negatives or > 2pi                    
-                    self.fish_xyz += bout_xyz
-                    self.fish_pitch += bout_pitch
-                    self.fish_yaw += bout_yaw
-                    uf_bout = []
-                    fb_init = [self.fish_bases[-1]]
-                    for x, y, z, p, yw in zip(x_prog[1:],
-                                              y_prog[1:],
-                                              z_prog[1:], pitch_prog[1:], yaw_prog[1:]):                        
-                        fish_basis = fishxyz_to_unitvecs((x,y,z), yw, p)
-                        uf_bout.append(fish_basis[1])
-                    self.fish_bases += uf_bout
-                    uf_bout = fb_init + uf_bout
-                    self.bout_energy.append(calculate_bout_energy(bout_xyz, uf_bout, bout_yaw, bout_pitch))
-                    framecounter += self.bout_durations[self.bout_counter]
-                                            
-                elif self.interpolate == 'none':
-                    new_xyz = self.fish_xyz[-1] + np.array([dx, dy, dz])
-                    self.fish_xyz.append(new_xyz)
-                    self.fish_pitch.append(np.clip(self.fish_pitch[-1] + fish_bout[3], -np.pi, np.pi))
-                    self.fish_yaw.append(np.mod(self.fish_yaw[-1] + fish_bout[4], 2*np.pi))
-                    framecounter += 1
+
+                if self.fishmodel.modchoice == "Ideal":
+                    this_bout_dur = fish_bout[-1]
+                else:
+                    this_bout_dur = self.bout_durations[self.bout_counter]
+
+                if self.interpolate == 'kernel':
+                    vkernel = normalize_kernel(
+                        self.velocity_kernel,
+                        this_bout_dur)
+                    ykernel = normalize_kernel_interp(
+                        self.yaw_kernel,
+                        this_bout_dur)
+                    x_prog = (np.cumsum(dx * vkernel) + self.fish_xyz[-1][0]).tolist()
+                    y_prog = (np.cumsum(dy * vkernel) + self.fish_xyz[-1][1]).tolist()
+                    z_prog = (np.cumsum(dz * vkernel) + self.fish_xyz[-1][2]).tolist()
+                    yaw_prog = (np.cumsum(fish_bout[4] * ykernel) + self.fish_yaw[-1]).tolist()
+                    pitch_prog = (np.cumsum(fish_bout[3] * vkernel) + self.fish_pitch[-1]).tolist()
+
+                elif self.interpolate == 'linear':
+                    x_prog = np.linspace(
+                        self.fish_xyz[-1][0],
+                        self.fish_xyz[-1][0] + dx,
+                        this_bout_dur).tolist()
+                    y_prog = np.linspace(
+                        self.fish_xyz[-1][1],
+                        self.fish_xyz[-1][1] + dy,
+                        this_bout_dur).tolist()
+                    z_prog = np.linspace(
+                        self.fish_xyz[-1][2],
+                        self.fish_xyz[-1][2] + dz,
+                        this_bout_dur).tolist()
+                    yaw_prog = np.linspace(
+                        self.fish_yaw[-1],
+                        self.fish_yaw[-1] + fish_bout[4],
+                        this_bout_dur).tolist()
+                    pitch_prog = np.linspace(
+                        self.fish_pitch[-1],
+                        self.fish_pitch[-1] + fish_bout[3],
+                        this_bout_dur).tolist()
+                bout_xyz = zip(x_prog, y_prog, z_prog)
+                bout_pitch = np.clip(pitch_prog, -np.pi, np.pi).tolist()
+                # assures fish can't frontflip or backflip over. 
+                bout_yaw = np.mod(yaw_prog, 2*np.pi).tolist()
+                # assures yaw coords stay 0 to 2pi w no negatives or > 2pi                    
+                self.fish_xyz += bout_xyz
+                self.fish_pitch += bout_pitch
+                self.fish_yaw += bout_yaw
+                uf_bout = []
+                fb_init = [self.fish_bases[-1]]
+                for x, y, z, p, yw in zip(x_prog[1:],
+                                          y_prog[1:],
+                                          z_prog[1:],
+                                          pitch_prog[1:], yaw_prog[1:]):
+                    fish_basis = fishxyz_to_unitvecs((x, y, z), yw, p)
+                    uf_bout.append(fish_basis[1])
+                self.fish_bases += uf_bout
+                uf_bout = fb_init + uf_bout
+                self.bout_energy.append(
+                    calculate_bout_energy(
+                        bout_xyz, uf_bout, bout_yaw, bout_pitch))
+                framecounter += this_bout_dur
                 first_postbout_frame = True
                 self.bout_counter += 1
                 
@@ -846,6 +843,7 @@ class FishModel:
         self.current_fish_xyz = []
         self.current_fish_yaw = 0
         self.current_fish_pitch = 0
+        self.bout_thresh_len = 0
         self.interbouts = np.cumsum(
             self.interbouts) + self.real_hunt["First Bout Delay"]
         # note that the fish is given 5 frames before initializing a bout.
@@ -913,15 +911,21 @@ class FishModel:
         self.num_bouts_generated += 1
         return bout
 
+
+    # HAVE TO DO THIS TWO WAYS. FIRST IS RESTRICTING IDEAL MODEL BY
+    # DURATION. SECOND IS SETTING FISHMODEL.BOUT_DURATION TO
+    # THE DURATION OF THE CHOSEN BOUT, THEN USING THAT BOUT DURATION IN
+    # THE MODEL. 
+    
     def ideal_model(self, para_varbs):
 
         def score_para(p_results):
             az = np.array([p['Para Az'] for p in p_results]) - self.strike_means[0]
             alt = np.array([p['Para Alt'] for p in p_results]) - self.strike_means[1]
             dist = np.array([p['Para Dist'] for p in p_results]) - self.strike_means[2]
-            norm_az = az / np.std(az)
-            norm_alt = alt / np.std(alt)
-            norm_dist = dist / np.std(dist)
+            norm_az = az / np.std(az[np.isfinite(az)])
+            norm_alt = alt / np.std(alt[np.isfinite(alt)])
+            norm_dist = dist / np.std(dist[np.isfinite(dist)])
             score = np.abs(norm_az) + np.abs(norm_alt) + np.abs(norm_dist)
             bout_choice = np.argmin(score)
             return bout_choice
@@ -944,36 +948,59 @@ class FishModel:
         else:
             spherical_bouts = self.pursuit_bouts
 
+
+
         for bt in spherical_bouts:
-            dx, dy, dz = sphericalbout_to_xyz(bt["Bout Az"],
-                                              bt["Bout Alt"],
-                                              bt["Bout Dist"],
-                                              fish_basis[1],
-                                              fish_basis[3],
-                                              fish_basis[2])
-            temp_yaw = -1*bt["Delta Yaw"] + self.current_fish_yaw
-            temp_pitch = bt["Delta Pitch"] + self.current_fish_pitch
-            temp_xyz = np.array(self.current_fish_xyz) + np.array([dx, dy, dz])
-            temp_fish_basis = fishxyz_to_unitvecs(temp_xyz, 
-                                                  temp_yaw, 
-                                                  temp_pitch)
-            postbout_para_spherical = p_map_to_fish(temp_fish_basis[1],
-                                                    temp_fish_basis[0],
-                                                    temp_fish_basis[3],
-                                                    temp_fish_basis[2],
-                                                    para_xyz,
-                                                    0)
-            pvarbs = {"Para Az": postbout_para_spherical[0],
-                      "Para Alt": postbout_para_spherical[1],
-                      "Para Dist": postbout_para_spherical[2]}
+            if bt["Bout Duration"] > self.bout_thresh_len:
+                pvarbs = {"Para Az": np.inf, 
+                          "Para Alt": np.inf,
+                          "Para Dist": np.inf}
+            else:
+                dx, dy, dz = sphericalbout_to_xyz(bt["Bout Az"],
+                                                  bt["Bout Alt"],
+                                                  bt["Bout Dist"],
+                                                  fish_basis[1],
+                                                  fish_basis[3],
+                                                  fish_basis[2])
+                temp_yaw = -1*bt["Delta Yaw"] + self.current_fish_yaw
+                temp_pitch = bt["Delta Pitch"] + self.current_fish_pitch
+                temp_xyz = np.array(self.current_fish_xyz) + np.array([dx, dy, dz])
+                temp_fish_basis = fishxyz_to_unitvecs(temp_xyz,
+                                                      temp_yaw,
+                                                      temp_pitch)
+                if self.euler_on_para:
+                    proj_para = euler_project_para(para_varbs,
+                                                   bt["Bout Duration"])
+                    para_xyz = np.array(self.current_fish_xyz) + np.array(
+                        sphericalbout_to_xyz(proj_para["Para Az"],
+                                             proj_para["Para Alt"],
+                                             proj_para["Para Dist"],
+                                             fish_basis[1],
+                                             fish_basis[3],
+                                             fish_basis[2]))
+                    
+                postbout_para_spherical = p_map_to_fish(temp_fish_basis[1],
+                                                        temp_fish_basis[0],
+                                                        temp_fish_basis[3],
+                                                        temp_fish_basis[2],
+                                                        para_xyz,
+                                                        0)
+                pvarbs = {"Para Az": postbout_para_spherical[0],
+                          "Para Alt": postbout_para_spherical[1],
+                          "Para Dist": postbout_para_spherical[2]}
             para_results.append(pvarbs)
         best_bout = spherical_bouts[score_para(para_results)]
-
         bout_array = np.array([best_bout['Bout Az'],
                                best_bout['Bout Alt'],
-                               best_bout['Bout Dist'], best_bout['Delta Pitch'], -1*best_bout['Delta Yaw']])
+                               best_bout['Bout Dist'],
+                               best_bout['Delta Pitch'],
+                               -1*best_bout['Delta Yaw'],
+                               best_bout['Bout Duration']])
         self.num_bouts_generated += 1
         return bout_array
+
+    # Now just have to set bout_thresh_len to current bout duration plus the distance between current frame and next interbout.
+    # when bout is executed, just ask which ind the interbout is coming from.
 
     def regression_model(self, para_varbs):
         if self.num_bouts_generated == 0:
@@ -1013,21 +1040,6 @@ class FishModel:
         bout[-1] *= -1
         self.num_bouts_generated += 1
         return np.array(bout)
-
-    # def regression_model(self, para_varbs):
-    #     bout_az = (para_varbs['Para Az'] * 1.36) + .02
-    #     bout_yaw = -1 * ((.46 * para_varbs['Para Az']) - .02)
-    #     bout_alt = (1.5 * para_varbs['Para Alt']) + -.37
-    #     bout_pitch = (.27 * para_varbs['Para Alt']) - .04
-    #     bout_dist = (.09 * para_varbs['Para Dist']) + 29
-    #     bout_array = np.array([bout_az,
-    #                            bout_alt,
-    #                            bout_dist, bout_pitch, bout_yaw])
-    #     noise_array = np.ones(5)
-    #     # noise_array = np.array(
-    #     # [(np.random.random() * .4) + .8 for i in bout_array])
-    #     bout = bout_array * noise_array
-    #     return bout
 
     def bdb_model(self, para_varbs):
 #        invert = True
@@ -1576,8 +1588,19 @@ def score_query(variable, ms, *func):
         return map(func, map(f, ms))
     else:
         return map(f, ms)
+    
 
+def euler_project_para(pvarbs, bout_dur):
+    projected_para_varbs = copy.deepcopy(pvarbs)
+    projected_para_varbs["Para Az"] += pvarbs[
+        "Para Az Velocity"] * bout_dur * .016
+    projected_para_varbs["Para Alt"] += pvarbs[
+        "Para Alt Velocity"] * bout_dur * .016
+    projected_para_varbs["Para Dist"] += pvarbs[
+        "Para Dist Velocity"] * bout_dur * .016
+    return projected_para_varbs
 
+    
 def find_refractory_periods(rfo):
     strike_refractory_list = [b["Interbouts"][-1] - b["Bout Durations"][-2]
                               for b in [rfo.model_input(i)

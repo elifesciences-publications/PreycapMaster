@@ -352,8 +352,13 @@ def bout_inversion(row):
     return inverted_row
 
 
-def make_regression_plots(x1, y1, x2, y2, labels, colors):
+def make_regression_plots(x1, y1, x2, y2, labels, colors, lims, *todeg):
     fig = pl.figure()
+    if todeg != ():
+        x1 = np.degrees(x1)
+        x2 = np.degrees(x2)
+        y1 = np.degrees(y1)
+        y2 = np.degrees(y2)
     plot1 = sb.regplot(np.array(x1),
                        np.array(y1), fit_reg=True,
                        n_boot=100, robust=False,
@@ -381,21 +386,34 @@ def make_regression_plots(x1, y1, x2, y2, labels, colors):
     coeff2 = np.around(pearsonr(coeff2_nanfilt[:, 0],
                                 coeff2_nanfilt[:, 1])[0], 2)
 #    xinit = np.min(p1x[0], p2x[0])
-    xinit = -2
-    plot1.text(xinit, 2.1, '  ' +
-               str(slope1) + 'x + ' + str(
-                   yint1) + ', ' + '$r^{2}$ = ' + str(coeff1**2),
-               color=colors[0], fontsize=14)
-    plot1.text(xinit, 1.7, '  ' +
-               str(slope2) + 'x + ' + str(
-                   yint2) + ', ' + '$r^{2}$ = ' + str(coeff2**2),
-               color=colors[1], fontsize=14)
+  
 
 #    greenplot.set_ylim([-1, 1])
     if labels[1] == "Bout Dist" or labels[1] == "Postbout Para Dist":
         plot1.set_ylim([0, 1000])
+        plot1.text(0, 1000, '  ' +
+                   str(slope1) + 'x + ' + str(
+                       yint1) + ', ' + '$r^{2}$ = ' + str(coeff1**2),
+                   color=colors[0], fontsize=14)
+        plot1.text(0, 800, '  ' +
+                   str(slope2) + 'x + ' + str(
+                       yint2) + ', ' + '$r^{2}$ = ' + str(coeff2**2),
+                   color=colors[1], fontsize=14)
     else:
-        plot1.set_ylim([-2.5, 2.5])
+        if todeg != ():
+            plot1.set_xlim([lims[0][0], lims[0][1]])
+            plot1.set_ylim([lims[1][0], lims[1][1]])
+            plot1.text(lims[0][0], lims[1][1], '  ' +
+                   str(slope1) + 'x + ' + str(
+                       yint1) + ', ' + '$r^{2}$ = ' + str(coeff1**2),
+                       color=colors[0], fontsize=14)
+            plot1.text(lims[0][0], .9*lims[1][1], '  ' +
+                   str(slope2) + 'x + ' + str(
+                       yint2) + ', ' + '$r^{2}$ = ' + str(coeff2**2),
+                       color=colors[1], fontsize=14)
+
+        else:
+            plot1.set_ylim([-2.5, 2.5])
     pl.show()
     return fig
 
