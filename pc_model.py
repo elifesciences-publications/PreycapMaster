@@ -135,6 +135,7 @@ class Marr2Algorithms:
     def __init__(self, para_positions, strike_params, use_likelihood):
         self.para_positions = para_positions
         self.bouts_static = []
+        self.bouts_static_prevalidation = []
         self.bouts_bayes = []
         self.marr_bdb_file = bl.bayesdb_open('wik_bdb/bdb_hunts_marr.bdb')
         self.marr_bdb_file.np_prng.seed()
@@ -344,6 +345,7 @@ class Marr2Algorithms:
                                   'alt_b_pos': yints[1],
                                   'alt_b_neg': yints[2],
                                   'dist_b': yints[3]}
+            self.bouts_static_prevalidation = copy.deepcopy(self.bouts_static)
             self.bouts_static = map(lambda para_position:
                                     self.marr2algorithm(para_position, 0),
                                     self.para_positions)
@@ -393,6 +395,7 @@ class PreyCap_Simulation:
         self.last_pvarbs = []
         self.num_frames_out_of_view = 0
         self.pcoords = []
+        self.restrict_to_boutlength = False
         self.para_initial_position = {}
         
     def write_bouts_to_csv(self, rowlist):
@@ -553,8 +556,15 @@ class PreyCap_Simulation:
                         self.model_para_xyz = [px[-1], py[-1], pz[-1]]
                         
             else:
-                self.model_para_xyz = [px[framecounter],
-                                       py[framecounter], pz[framecounter]]
+                try:
+                    self.model_para_xyz = [px[framecounter],
+                                           py[framecounter], pz[framecounter]]
+                except IndexError:
+                    if self.fishmodel.action == 1:
+                        hunt_result = 2
+                    elif self.fishmodel.action == 2:
+                        hunt_result = 3
+                    break
 
             para_spherical = p_map_to_fish(fish_basis[1],
                                            fish_basis[0],
@@ -623,8 +633,16 @@ class PreyCap_Simulation:
                 
             if framecounter in self.interbouts and not self.fishmodel.modchoice == "Real Coords":
                 # assures a bout chosen by ideal model can't bleed into next bout
-                self.fishmodel.bout_thresh_len = self.interbouts(np.argwhere(
-                    self.interbouts == framecounter)[0][0] + 1) - framecounter - 1
+                try:
+                    if self.restrict_to_boutlength:
+                        self.fishmodel.bout_thresh_len = self.bout_durations[
+                            self.bout_counter]
+                    else:
+                        self.fishmodel.bout_thresh_len = self.interbouts[np.argwhere(
+                            self.interbouts == framecounter)[0][0] + 1] - framecounter - 1
+                except IndexError:
+                    self.fishmodel.bout_thresh_len = self.bout_durations[
+                        self.bout_counter]
                 self.fishmodel.bout_duration = self.bout_durations[
                     self.bout_counter]
                 self.fishmodel.current_fish_xyz = self.fish_xyz[-1]
@@ -667,7 +685,7 @@ class PreyCap_Simulation:
                                                   fish_basis[2])
 
                 if self.fishmodel.modchoice == "Ideal":
-                    this_bout_dur = fish_bout[-1]
+                    this_bout_dur = int(fish_bout[-1])
                 else:
                     this_bout_dur = self.bout_durations[self.bout_counter]
 
@@ -1480,13 +1498,18 @@ def execute_models(rfo, strike_params, para_model,
                         sequence_length,
                         False,
                         p_xyz)
-
+            try:
+                if model_run["Restrict Bout Length"]:
+                    sim.restrict_to_boutlength = True
+            except KeyError:
+                pass
             sim.run_simulation()
             p_xyz = copy.deepcopy(sim.para_xyz)
             prev_interbouts = copy.deepcopy(sim.fishmodel.interbouts)
             prev_boutdurations = copy.deepcopy(sim.fishmodel.bout_durations)
             if mi == 0:
-                para_init_positions.append(copy.deepcopy(sim.para_initial_position))
+                para_init_positions.append(
+                    copy.deepcopy(sim.para_initial_position))
             sim_list.append(sim)
             if model_run["Model Type"] == "Bayes":
                 fish.bdb_file.close()
@@ -2041,8 +2064,18 @@ if __name__ == "__main__":
                      {"Model Type": "Ideal", "Real or Sim": "Real",
                       "Spherical Bouts": "Hunt"},
                      {"Model Type": "Ideal", "Real or Sim": "Real",
-                      "Spherical Bouts": "Hunt", "Extrapolate Para":True}]
+                      "Spherical Bouts": "Hunt", "Extrapolate Para": True}]
 
+
+
+                     # {"Model Type": "Ideal", "Real or Sim": "Real",
+                     #  "Spherical Bouts": "Hunt", "Restrict Bout Length": True},
+                     # {"Model Type": "Ideal", "Real or Sim": "Real",
+                     #  "Spherical Bouts": "Hunt", "Extrapolate Para": True},
+                     # {"Model Type": "Ideal", "Real or Sim": "Real",
+                     #  "Spherical Bouts": "Hunt", "Extrapolate Para": True,
+                     #  "Restrict Bout Length": True}]
+                     
     
 
     modlist_bayes = [{"Model Type": "Bayes", "Real or Sim": "Real"}]
@@ -2069,7 +2102,7 @@ if __name__ == "__main__":
                       '091118_1', '091118_2', '091118_3', '091118_4', '091118_5',
                       '090418_3', '090418_4']
 
-    strike_ci = .05
+    strike_ci = .13
     modlist_newci = []
     for d in modlist_lowci:
         d["Strike CI"] = strike_ci
