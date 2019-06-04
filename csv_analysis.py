@@ -192,9 +192,11 @@ class BayesDB_Simulator:
         pl.show()
 
     def compare_2_queries(self, q_exp, condition1,
-                          condition2, real, new_sim, color, *todeg):
-        colors = [(np.array(color) * 1 / np.max(color)).tolist(),
+                          condition2, real, new_sim, color, lims, *todeg):
+        colors = [(np.array(color)).tolist(),
                   (np.array(color) * .6).tolist()]
+#          colors = [(np.array(color) * 1 / np.max(color)).tolist(),
+#                  (np.array(color) * .6).tolist()]
         if not real:
             if new_sim:
                 self.setup_rejection_query()
@@ -212,10 +214,25 @@ class BayesDB_Simulator:
         print('Mean Q1 = ' + str(np.mean(c1_distribution)))
         print(str(c2_distribution.shape[0]) + ' bouts in Query 2')
         print('Mean Q2 = ' + str(np.mean(c2_distribution)))
-        sb.distplot(c1_distribution, fit_kws={"color": colors[0]},
-                    fit=norm, kde=False, color=colors[0], hist_kws={"alpha": .8})
-        sb.distplot(c2_distribution, fit_kws={"color": colors[1]},
-                    fit=norm, kde=False, color=colors[1], hist_kws={"alpha": .8})
+        if not math.isnan(lims[0]):
+            tiling = np.linspace(lims[0], lims[1], int((lims[1] - lims[0]) / lims[2]))
+            sb.distplot(c1_distribution, 
+                        fit_kws={"color": colors[0]},
+                        fit=norm, bins=tiling, kde=False, color=colors[0], hist_kws={"alpha": .8})
+            distplot1 = sb.distplot(c2_distribution, fit_kws={"color": colors[1]},
+                                    fit=norm, bins=tiling, kde=False, color=colors[1], 
+                                    hist_kws={"alpha": .8})
+            distplot1.set_xlim(lims[0:2])
+        else:
+            sb.distplot(c1_distribution, 
+                        fit_kws={"color": colors[0]},
+                        fit=norm, kde=False, color=colors[0], hist_kws={"alpha": .8})
+
+            distplot1 = sb.distplot(c2_distribution, fit_kws={"color": colors[1]},
+                                    fit=norm, kde=False, color=colors[1], 
+                                    hist_kws={"alpha": .8})
+
+            
         ttest_results = ttest_ind(c1_distribution, c2_distribution)
         print ttest_results
         sb.despine()
