@@ -371,15 +371,20 @@ def bout_inversion(row):
 
 def make_regression_plots(x1, y1, x2, y2, labels, colors, lims):
     fig = pl.figure()
+    if labels[1] == "Bout Dist" or labels[1] == "Postbout Para Dist":
+        x1 = np.array(x1) * .0106
+        x2 = np.array(x2) * .0106
+        y1 = np.array(y1) * .0106
+        y2 = np.array(y2) * .0106
     plot1 = sb.regplot(np.array(x1),
                        np.array(y1), fit_reg=True,
                        n_boot=100, robust=False,
-                       scatter_kws={'alpha': 0.25},
+                       scatter_kws={'alpha': 0.4},
                        color=colors[0])
     plot2 = sb.regplot(np.array(x2),
                        np.array(y2), fit_reg=True,
                        n_boot=100,  robust=False,
-                       scatter_kws={'alpha': 0.25},
+                       scatter_kws={'alpha': 0.4},
                        color=colors[1])
     plot1.set_xlabel(labels[0], fontsize=16)
     plot1.set_ylabel(labels[1], fontsize=16)
@@ -402,19 +407,19 @@ def make_regression_plots(x1, y1, x2, y2, labels, colors, lims):
 
 #    greenplot.set_ylim([-1, 1])
     if labels[1] == "Bout Dist" or labels[1] == "Postbout Para Dist":
-        plot1.set_ylim([0, 1000])
-        plot1.text(0, 1000, '  ' +
+
+        plot1.text(0, 12, '  ' +
                    str(slope1) + 'x + ' + str(
                        yint1) + ', ' + '$r^{2}$ = ' + str(coeff1**2),
                    color=colors[0], fontsize=14)
-        plot1.text(0, 800, '  ' +
+        plot1.text(0, 11, '  ' +
                    str(slope2) + 'x + ' + str(
                        yint2) + ', ' + '$r^{2}$ = ' + str(coeff2**2),
                    color=colors[1], fontsize=14)
     else:
         plot1.set_xlim([lims[0][0], lims[0][1]])
         plot1.set_ylim([lims[1][0], lims[1][1]])
-        plot1.text(lims[0][0], lims[1][1], '  ' +
+        plot1.text(lims[0][0], .8*lims[1][1], '  ' +
                str(slope1) + 'x + ' + str(
                    yint1) + ', ' + '$r^{2}$ = ' + str(coeff1**2),
                    color=colors[0], fontsize=14)

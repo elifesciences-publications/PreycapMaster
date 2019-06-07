@@ -4,6 +4,7 @@ import copy
 import numpy as np
 import pickle
 import datetime as dt
+from astropy.convolution import Gaussian1DKernel, convolve
 from matplotlib.colors import Normalize, ListedColormap
 from matplotlib import pyplot as pl
 from matplotlib import gridspec
@@ -657,12 +658,20 @@ class PreyCap_Simulation:
                     pmap_returns.append(p_map_to_fish(fish_basis[1],
                                                       fish_basis[0],
                                                       fish_basis[3], fish_basis[2], p_xyz, 0))
-                para_varbs["Para Az Velocity"] = np.mean(gaussian_filter(
-                    np.diff([x[0] for x in pmap_returns]), 1)) / .016
-                para_varbs["Para Alt Velocity"] = np.mean(gaussian_filter(
-                    np.diff([x[1] for x in pmap_returns]), 1)) / .016
-                para_varbs["Para Dist Velocity"] = np.mean(gaussian_filter(
-                    np.diff([x[2] for x in pmap_returns]), 1)) / .016
+                gkern = Gaussian1DKernel(1)                   
+                # para_varbs["Para Az Velocity"] = np.mean(gaussian_filter(
+                #     np.diff([x[0] for x in pmap_returns]), 1)) / .016
+                # para_varbs["Para Alt Velocity"] = np.mean(gaussian_filter(
+                #     np.diff([x[1] for x in pmap_returns]), 1)) / .016
+                # para_varbs["Para Dist Velocity"] = np.mean(gaussian_filter(
+                #     np.diff([x[2] for x in pmap_returns]), 1)) / .016
+                para_varbs["Para Az Velocity"] = np.mean(convolve(
+                        np.diff([x[0] for x in pmap_returns]), gkern)) / .016
+                para_varbs["Para Alt Velocity"] = np.mean(convolve(
+                    np.diff([x[1] for x in pmap_returns]), gkern)) / .016
+                para_varbs["Para Dist Velocity"] = np.mean(convolve(
+                    np.diff([x[2] for x in pmap_returns]), gkern)) / .016
+
                 if not np.isfinite(para_varbs.values()).all():
                     # here para record ends before fish catches.
                     # para can't be nan at beginning due to real fish filters in master.py
@@ -1161,7 +1170,7 @@ class FishModel:
 def characterize_strikes(hb_data):
     strike_characteristics = []
     for i in range(len(hb_data["Bout Number"])):
-        if hb_data["Bout Number"][i] == -1:
+        if hb_data["Bout Number"][i] < 0:
             if hb_data["Strike Or Abort"][i] == 1:
                 strike = np.array([hb_data["Para Az"][i],
                                    hb_data["Para Alt"][i],
@@ -1379,6 +1388,7 @@ def model_wrapper(drct_list, strike_params, para_model,
     para_initial_positions = []
     sim_list_allfish = []
     action_distribution = []
+    real_fish_numbouts = []
     if combine_spherical != ():
         (sb_allfish,
          allfish_inits,
@@ -1386,6 +1396,7 @@ def model_wrapper(drct_list, strike_params, para_model,
     for dc_ind, fish_id in enumerate(drct_list):
         rfo = pd.read_pickle(
             os.getcwd() + '/' + fish_id + '/RealHuntData_' + fish_id + '.pkl')
+        real_fish_numbouts += [len(ib) for ib, ac in zip(rfo.hunt_interbouts, rfo.hunt_results) if ac in actions]
         action_distribution += [ac for ac in rfo.hunt_results if ac in actions]
         if combine_spherical != ():
             rfo.all_spherical_bouts = sb_allfish
@@ -1406,6 +1417,7 @@ def model_wrapper(drct_list, strike_params, para_model,
     sim_list_by_hunt = [p for p in partition(len(model_params),
                                              sim_list_allfish)]
     print Counter(action_distribution)
+    np.save('real_fish_bout_distribution.npy', real_fish_numbouts)
     return ms, para_initial_positions, sim_list_by_model, sim_list_by_hunt
 
 
@@ -1591,6 +1603,8 @@ def plot_query(model_summary, para_positions,
         elif plot_type == 'box':
             sb.boxplot(data=mapped_values, ax=barax[var_ind], whis=[5, 95],
                        showfliers=False)
+            if variable == "Number of Bouts":
+                barax[var_ind].set_ylim([0, 15])
         elif plot_type == 'boxen':
             sb.boxenplot(data=mapped_values, ax=barax[var_ind])
 
@@ -1652,17 +1666,32 @@ def slice_dataframe_for_bout0(hunt_db):
 def strike(p, strike_means, strike_std, confidence_interval):
     prob_az = norm.cdf(p["Para Az"], strike_means[0], strike_std[0])
     prob_alt = norm.cdf(p["Para Alt"], strike_means[1], strike_std[1])
+    
+    if confidence_interval == .01:
+        dist_multiplier = 3
+    elif confidence_interval == .05:
+        dist_multiplier = 2
+    elif confidence_interval == .13:
+        dist_multiplier = 1.5
+    elif confidence_interval == .32:
+        dist_multiplier = 1
+        
     if p["Para Az"] > strike_means[0]:
         prob_az = 1 - prob_az
     if p["Para Alt"] > strike_means[1]:
         prob_alt = 1 - prob_alt
     # max prob when multiplying all cdfs together is .5**3. normalize.
     normalize_prob = prob_alt * prob_az * (1 / .25)
-    dist_diff = (strike_means[2] + 2*strike_std[2]) - p["Para Dist"]
-    if dist_diff > 0 and normalize_prob > confidence_interval:
-        return True, [prob_az, prob_alt, dist_diff]
+    dist = p["Para Dist"]
+#    dist_diff = (strike_means[2] - dist_multiplier*strike_std[2]) - p["Para Dist"]
+    # if (strike_means[2] - dist_multiplier*strike_std[2] < dist) and (
+    #         strike_means[2] + dist_multiplier*strike_std[2] > dist) and (
+    #             normalize_prob > confidence_interval):
+    if (dist < strike_means[2] + dist_multiplier*strike_std[2]) and (
+                normalize_prob > confidence_interval):
+        return True, [prob_az, prob_alt, dist]
     else:
-        return False, [prob_az, prob_alt, dist_diff]
+        return False, [prob_az, prob_alt, dist]
 
 def static_strike(p, strike_means, strike_std):
     num_stds = 1.5
@@ -2102,7 +2131,7 @@ if __name__ == "__main__":
                       '091118_1', '091118_2', '091118_3', '091118_4', '091118_5',
                       '090418_3', '090418_4']
 
-    strike_ci = .13
+    strike_ci = .05
     modlist_newci = []
     for d in modlist_lowci:
         d["Strike CI"] = strike_ci
