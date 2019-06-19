@@ -2725,9 +2725,13 @@ def hunted_para_descriptor(exp, hd):
         percent_nans = np.array([na / float(bd) for na, bd
                                  in zip(nans_in_bouts, hunt_bout_durations)])
         norm_bf_raw = [hbf - hunt_bout_frames[0] for hbf in hunt_bout_frames]
-        # int win is added because createpoirec cointains it. have to go beyond        # it to get relevant para coords. 
+        # int win is added because createpoirec cointains it. have to go beyond
+        # it to get relevant para coords. 
         norm_bf = map(lambda(x): x+int_win, norm_bf_raw)
         # these are normed to the hunting bout so that first bout is 0.
+        # this will be used in calculation of az, alt, and dist because
+        # those come from the poirec. raw frame data (i.e. the para position)
+        # uses bf_raw because para_xyz has already had the int win eliminated. 
         endhunt = False
 
         # br is bout range from hd. 
@@ -2850,6 +2854,19 @@ def hunted_para_descriptor(exp, hd):
                         hunt_bout_durations[br[0]:hb_ind+1])
                     realfish.hunt_results.append(ac)
 #                    realfish.para_xyz_per_hunt.append(para_xyz)
+
+# br is the first bout of the hunt_window, defined in HD. br[0] will almost always 0, except for a change of mind.
+# norm_bf_raw starts at 0, so calling b[0] will typically
+# return 0. this is really just a catch for if you wanted to simulate strikes after
+# changes of mind, which was probably overboard in the first place and
+# overcomplicated the code.
+# the para_xyz record goes from the -5 of the first bout of the hd defined hunt_window
+# to the end of the strike bout. the strike bout is hb_ind, which is used to index the correct frame in
+# norm_bf_raw. norm_bf itself (i.e not raw) is the frame of the poirec to use for spherical coords.
+# which are all accurate with respect to the initiation of hunts. 
+# firstbout_para_intwin is added because para_xyz is constructed by going backwards 5 so that
+# the modeling can take the para velocity into account on its first bout. 
+
                     realfish.para_xyz_per_hunt.append(
                         para_xyz[:,
                                  norm_bf_raw[br[0]]:norm_bf_raw[

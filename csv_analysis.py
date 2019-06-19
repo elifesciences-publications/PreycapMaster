@@ -416,6 +416,8 @@ def make_regression_plots(x1, y1, x2, y2, labels, colors, lims):
                    str(slope2) + 'x + ' + str(
                        yint2) + ', ' + '$r^{2}$ = ' + str(coeff2**2),
                    color=colors[1], fontsize=14)
+        plot1.set_xlim([0, 14])
+        plot1.set_ylim([0, 14])
     else:
         plot1.set_xlim([lims[0][0], lims[0][1]])
         plot1.set_ylim([lims[1][0], lims[1][1]])
@@ -714,31 +716,43 @@ def twod_scatter(data, var1, var2):
     return attended1, attended2, ignored1, ignored2
 
 
-def stim_analyzer(data, para_variable, *random_stat):
+def stim_analyzer(data, para_variable, hittypes, use_inferred, *random_stat):
     colorpal = sb.color_palette("husl", 8)
-    hittypes = [1, 2, 3, 4]
     attended = []
     ignored = []
-    for ind, (h, val) in enumerate(zip(data["Hunted Or Not"],
-                                     data[para_variable])):
+    for ind, (h, val, inf) in enumerate(zip(data["Hunted Or Not"],
+                                            data[para_variable],
+                                            data["Inferred"])):
         if math.isnan(val):
             continue
         if h in hittypes:
-            attended.append(val)
+            if use_inferred:
+                attended.append(val)
+            else:
+                if not inf:
+                    attended.append(val)
         if h == 0:
-            ignored.append(val)
+            if use_inferred:
+                ignored.append(val)
+            else:
+                if not inf:
+                    ignored.append(val)
     ig_and_att = np.array(ignored + attended)
     ig_and_att = ig_and_att[~np.isnan(ig_and_att)]
+    ig = np.array(ignored)
+    ig = ig_and_att[~np.isnan(ig)]
+
     attended = np.array(attended)
     attended = attended[~np.isnan(attended)]
-    sb.distplot(ig_and_att, color=colorpal[5])
+#    sb.distplot(ig_and_att, color=colorpal[5])
+    sb.distplot(ig, color=colorpal[5])
     sb.distplot(attended, color=colorpal[3])
     if random_stat != ():
         for i, rs in enumerate(random_stat[0]):
             rs = np.array(rs)
             sb.distplot(rs, color=colorpal[i])
     pl.show()
-    return attended, ig_and_att
+    return attended, ig
     
 # def calc_MI(x, y, bins):
 #     c_xy = np.histogram2d(x, y, bins)[0]

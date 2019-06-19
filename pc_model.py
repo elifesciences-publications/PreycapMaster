@@ -178,7 +178,7 @@ class Marr2Algorithms:
         self.static_params['dist_b'] = self.glm_models[-1].params['const']
         # note az_b is kept as 0 since its 95% CI overlaps with 0.
 
-
+    # Correct as of 6/14/19
     def firstbout_transformation(self, para_varbs):
         pb_az = .28 * para_varbs["Para Az"]
         pb_dist = .86 * para_varbs["Para Dist"] - 23.92
@@ -491,6 +491,7 @@ class PreyCap_Simulation:
         csv_row_list = []
         last_finite_pvarbs = {}
         hunt_result = 0
+        early_prec_termination = False
         framecounter = 0
         future_frame = 5
         
@@ -518,7 +519,13 @@ class PreyCap_Simulation:
                 self.para_xyz[2])
         else:
             px, py, pz = self.para_xyz
-
+            for prec_i, prec_x in enumerate(px):
+                if math.isnan(prec_x) and prec_i > 5:
+                    last_pursuit = self.interbouts[-2]
+                    last_pursuit_duration = self.bout_durations[-2]
+                    if prec_i < last_pursuit + last_pursuit_duration:
+                        early_prec_termination = True
+                    
         first_postbout_frame = False
         fish_bout = np.array([])
         para_varbs = []
@@ -538,11 +545,11 @@ class PreyCap_Simulation:
             # fish_basis is a 4D vec with origin, ufish, upar, and uperp
             self.fish_bases.append(fish_basis[1])
             if framecounter == len(px):
-                #print("hunt epoch complete w/out strike")
+                # print("hunt epoch complete w/out strike")
                 if self.fishmodel.action == 1:
-                    hunt_result = 2
-                elif self.fishmodel.action == 2:
                     hunt_result = 3
+                elif self.fishmodel.action == 2:
+                    hunt_result = 4
                 break
             
             if self.fishmodel.boutbound_prediction:
@@ -562,9 +569,9 @@ class PreyCap_Simulation:
                                            py[framecounter], pz[framecounter]]
                 except IndexError:
                     if self.fishmodel.action == 1:
-                        hunt_result = 2
-                    elif self.fishmodel.action == 2:
                         hunt_result = 3
+                    elif self.fishmodel.action == 2:
+                        hunt_result = 4
                     break
 
             para_spherical = p_map_to_fish(fish_basis[1],
@@ -623,7 +630,10 @@ class PreyCap_Simulation:
                 self.para_xyz[1] = py
                 self.para_xyz[2] = pz
                 last_finite_pvarbs = copy.deepcopy(para_varbs)
-                hunt_result = 1
+                if not early_prec_termination:
+                    hunt_result = 1
+                else:
+                    hunt_result = 2
                 self.bout_counter += 1
                 # note that para may be "eaten" by model faster than in real life (i.e. it enters the strike zone)
                 # 
@@ -675,7 +685,13 @@ class PreyCap_Simulation:
                 if not np.isfinite(para_varbs.values()).all():
                     # here para record ends before fish catches.
                     # para can't be nan at beginning due to real fish filters in master.py
-                    hunt_result = 4
+                    if early_prec_termination:
+                        hunt_result = 5
+                    else:
+                        if self.fishmodel.action == 1:
+                            hunt_result = 3
+                        elif self.fishmodel.action == 2:
+                            hunt_result = 4
                     break
                 else:
                     last_finite_pvarbs = copy.deepcopy(para_varbs)
@@ -764,7 +780,13 @@ class PreyCap_Simulation:
                     frame_map = framecounter + self.realframes_start + 1
                     if framecounter in self.interbouts:
                         if not np.isfinite(para_varbs.values()).all():
-                            hunt_result = 4
+                            if early_prec_termination:
+                                hunt_result = 5
+                            else:
+                                if self.fishmodel.action == 1:
+                                    hunt_result = 3
+                                elif self.fishmodel.action == 2:
+                                    hunt_result = 4
                             break
                         else:
                             last_finite_pvarbs = copy.deepcopy(para_varbs)
@@ -975,10 +997,9 @@ class FishModel:
         else:
             spherical_bouts = self.pursuit_bouts
 
-
-
         for bt in spherical_bouts:
-            if bt["Bout Duration"] > self.bout_thresh_len:
+            if (bt["Bout Duration"] > self.bout_thresh_len) or (
+                    bt["Bout Duration"] < self.bout_duration):
                 pvarbs = {"Para Az": np.inf, 
                           "Para Alt": np.inf,
                           "Para Dist": np.inf}
@@ -1277,18 +1298,21 @@ def make_vr_movies(sim1, sim2):
     np.save('uf_model2.npy', sim2.fish_bases[:-1])                
     np.save('strikelist2.npy', sim2.strikelist)
 
-    
+# make this into joules! currently using 50 which is in PIXELS! hahaha. 50 pix = 530 microns
 def calculate_bout_energy(bout_xyz,
                           uf_vector, bout_yaw, bout_pitch):
     bout_duration = len(bout_xyz)
-    head_to_com_distance = 50
+    # pix times .0106 millimeters per pix / 1000
+    head_to_com_distance = 50 * .0000106
     com_xyz_init = np.array(bout_xyz[0]) - (head_to_com_distance * uf_vector[0])
     com_xyz_end = np.array(bout_xyz[-1]) - (head_to_com_distance * uf_vector[-1])
+    # frames to seconds = .016 seconds per frame
     velocity_com = np.linalg.norm(com_xyz_end - com_xyz_init) / (bout_duration * .016)
     angular_yaw_vel = yaw_fix([bout_yaw[-1] - bout_yaw[0]])[0] / (bout_duration * .016)
     angular_pitch_vel = bout_pitch[-1] - bout_pitch[0] / (bout_duration * .016)
     # 1 mg from avella et al. 2012, dpf10. wet mass. dry mass is ~.2mg
-    fish_mass = .001
+    # UNITS: mass in kg, angle in radians, velocity in m / s, length in m.
+    fish_mass = .000001
     moment_of_inertia = fish_mass * (head_to_com_distance)**2
     total_bout_energy = .5*((velocity_com**2 * fish_mass) + (
             angular_yaw_vel**2 * moment_of_inertia) + (
@@ -1418,7 +1442,7 @@ def model_wrapper(drct_list, strike_params, para_model,
                                              sim_list_allfish)]
     print Counter(action_distribution)
     np.save('real_fish_bout_distribution.npy', real_fish_numbouts)
-    return ms, para_initial_positions, sim_list_by_model, sim_list_by_hunt
+    return ms, para_initial_positions, sim_list_by_model, sim_list_by_hunt, allfish_pursuits
 
 
 def execute_models(rfo, strike_params, para_model,
@@ -1581,7 +1605,7 @@ def plot_query(model_summary, para_positions,
         mapped_values = [np.array(mv)[res_args[i]] for i, mv in enumerate(
             score_query(variable, model_summary))]
         if variable == "Result":
-            mapped_values = [np.array(np.count_nonzero(a==1)) for a in mapped_values]
+            mapped_values = [np.array(np.count_nonzero(a <= 2)) for a in mapped_values]
             # marr_static_results = np.sum(
             #     [1 for ma in marr_static_boutcount if not math.isnan(ma)])
             # marr_bayes_results = np.sum(
@@ -1651,16 +1675,24 @@ def find_refractory_periods(rfo):
 
 
 def slice_dataframe_for_regmodels(hunt_db):
-    slice_bn_neg = hunt_db['Bout Number'] >= 0
+    slice_bn_neg = hunt_db['Bout Number'] > 0
     hdb_noneg = hunt_db[slice_bn_neg]
-    slice_fails = hdb_noneg['Strike Or Abort'] < 3
-    return hdb_noneg[slice_fails]
+    slice_action = hdb_noneg['Strike Or Abort'] < 3
+    action_sliced = hdb_noneg[slice_action]
+    before_rev_slice = action_sliced['Rev Bout Number'] < 4
+    return action_sliced[before_rev_slice]
+
+#    return action_sliced
 
 def slice_dataframe_for_bout0(hunt_db):
     slice_bout_0 = hunt_db['Bout Number'] == 0
     hdb_bout0 = hunt_db[slice_bout_0]
-    slice_fails = hdb_bout0['Strike Or Abort'] < 3
-    return hdb_bout0[slice_fails]
+    slice_action = hdb_bout0['Strike Or Abort'] < 3
+    action_sliced = hdb_bout0[slice_action]
+    before_rev_slice = action_sliced['Rev Bout Number'] < 4
+    return action_sliced[before_rev_slice]
+#    return hdb_bout0[slice_action]
+  #  return action_sliced
 
 
 def strike(p, strike_means, strike_std, confidence_interval):
@@ -1675,7 +1707,7 @@ def strike(p, strike_means, strike_std, confidence_interval):
         dist_multiplier = 1.5
     elif confidence_interval == .32:
         dist_multiplier = 1
-        
+
     if p["Para Az"] > strike_means[0]:
         prob_az = 1 - prob_az
     if p["Para Alt"] > strike_means[1]:
@@ -1838,10 +1870,9 @@ def score_trajectory_similarity(plot_or_not, sim1, sim2):
 # consider if abs value of yaw and pitch is the correct choice. 
 
 def compare_para_positions_across_models(simlist_by_hunt, mod1, mod2,
-                                         pre_or_post, use_abs, varb, *para_coords):
-    
+                                         pre_or_post, use_abs, varb,
+                                         lims, colors, *para_coords):
     fig, ax = pl.subplots(1, 1)
-    colors = sb.color_palette()
     pv1 = []
     pv2 = []
     for siml in simlist_by_hunt:
@@ -1873,19 +1904,23 @@ def compare_para_positions_across_models(simlist_by_hunt, mod1, mod2,
         pv1 = np.abs(pv1)
         pv2 = np.abs(pv2)
 
+    ax.set_xlim([lims[0], lims[1]])
     if varb == "Para Dist":
-        ax.set_xlim([0, 1200])
+        pv1 = np.array(pv1) * .0106
+        pv2 = np.array(pv2) * .0106
     else:
-        ax.set_xlim([-2, 2])
-
+        pv1 = np.degrees(pv1)
+        pv2 = np.degrees(pv2)
+    tiling = np.linspace(lims[0], lims[1],
+                         int((lims[1] - lims[0]) / lims[2]))
     sb.distplot(pv1,
                 fit_kws={"color": colors[0]},
                 fit=norm, kde=False, color=colors[0],
-                hist_kws={"alpha": .6}, ax=ax)
+                hist_kws={"alpha": .6}, bins=tiling, ax=ax)
     sb.distplot(pv2,
                 fit_kws={"color": colors[1]},
                 fit=norm, kde=False, color=colors[1],
-                hist_kws={"alpha": .6}, ax=ax)
+                hist_kws={"alpha": .6}, bins=tiling, ax=ax)
     pl.show()
     print("Mean, STD Model 1")
     print np.mean(pv1)
@@ -1893,7 +1928,7 @@ def compare_para_positions_across_models(simlist_by_hunt, mod1, mod2,
     print("Mean, STD Model 2")
     print np.mean(pv2)
     print np.std(pv2)
-    return pv1, pv2, ax
+    return pv1, pv2, fig
 
         
 
@@ -1970,27 +2005,36 @@ if __name__ == "__main__":
     # CAN FILTER BASED ON HUNT RESULT IF YOU WANT.
     regmodel_input = slice_dataframe_for_regmodels(hb)
     bout0regmodel_input = slice_dataframe_for_bout0(hb)
-    independent_regression_model = make_independent_regression_model(
-        regmodel_input)
-    ir_bout0 = make_independent_regression_model(bout0regmodel_input)
+    # independent_regression_model = make_independent_regression_model(
+    #     regmodel_input)
+    # ir_bout0 = make_independent_regression_model(bout0regmodel_input)
     multiple_regression_model_velocity = make_multiple_regression_model(
         regmodel_input,
-        'velocity')
-    mv_bout0 = make_multiple_regression_model(
-        bout0regmodel_input,
         'velocity')
     multiple_regression_model_position = make_multiple_regression_model(
         regmodel_input,
         'position')
+    mv_bout0 = make_multiple_regression_model(
+        bout0regmodel_input,
+        'velocity')
     mp_bout0 = make_multiple_regression_model(
         bout0regmodel_input,
         'position')
-    multiple_regression_model_euler = make_multiple_regression_model(
-        regmodel_input,
-        'euler')
-    me_bout0 = make_multiple_regression_model(
-        bout0regmodel_input,
-        'euler')
+    # mv_bout0 = make_multiple_regression_model(
+    #     regmodel_input, 
+    #     'velocity')
+    # mp_bout0 = make_multiple_regression_model(
+    #     regmodel_input, 
+    #     'position')
+
+
+    
+    # multiple_regression_model_euler = make_multiple_regression_model(
+    #     regmodel_input,
+    #     'euler')
+    # me_bout0 = make_multiple_regression_model(
+    #     bout0regmodel_input,
+    #     'euler')
     # multiple_regression_model_mpe = make_multiple_regression_model(
     #     regmodel_input,
     #     'position estimate')
@@ -2080,13 +2124,21 @@ if __name__ == "__main__":
                     {"Model Type": "Ideal", "Real or Sim": "Real",
                      "Spherical Bouts": "Hunt", "Extrapolate Para":True, "Strike CI": .32}]
 
+    # modlist_lowci = [{"Model Type": "Real Coords",
+    #                   "Real or Sim": "Real"},
+    #                  {"Model Type": "Multiple Regression Position",
+    #                   "Real or Sim": "Real"},
+    #                  {"Model Type": "Multiple Regression Velocity",
+    #                   "Real or Sim": "Real"}]
+          
+               
+
+    
     modlist_lowci = [{"Model Type": "Real Coords",
                       "Real or Sim": "Real"},
                      {"Model Type": "Multiple Regression Position",
                       "Real or Sim": "Real"},
                      {"Model Type": "Multiple Regression Velocity",
-                      "Real or Sim": "Real"},
-                     {"Model Type": "Multiple Regression Euler",
                       "Real or Sim": "Real"},
                      {"Model Type": "Random", "Real or Sim": "Real",
                       "Spherical Bouts": "Hunt"},
@@ -2136,7 +2188,7 @@ if __name__ == "__main__":
     for d in modlist_lowci:
         d["Strike CI"] = strike_ci
         modlist_newci.append(d)
-    ms, p_inits, simlist_by_model, simlist_by_hunt = model_wrapper(
+    ms, p_inits, simlist_by_model, simlist_by_hunt, spherical_huntbouts = model_wrapper(
         new_wik, strike_params,
         para_model, modlist_newci, hb, actions, 1)
     np.save('ms.npy', ms)
