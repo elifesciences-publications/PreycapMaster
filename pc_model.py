@@ -178,11 +178,11 @@ class Marr2Algorithms:
         self.static_params['dist_b'] = self.glm_models[-1].params['const']
         # note az_b is kept as 0 since its 95% CI overlaps with 0.
 
-    # Correct as of 6/14/19
+    # Correct as of 6/22/19
     def firstbout_transformation(self, para_varbs):
         pb_az = .28 * para_varbs["Para Az"]
         pb_dist = .86 * para_varbs["Para Dist"] - 23.92
-        pb_alt = .44 * para_varbs["Para Alt"] + .165
+        pb_alt = .45 * para_varbs["Para Alt"] + .155
         return pb_az, pb_dist, pb_alt
 
     def result_compiler(self):

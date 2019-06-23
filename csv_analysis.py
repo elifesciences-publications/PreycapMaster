@@ -15,6 +15,7 @@ from matplotlib import pyplot as pl
 from matplotlib.ticker import MaxNLocator
 from matplotlib.colors import Normalize, ListedColormap
 from toolz.itertoolz import sliding_window
+from pc_model import make_LM
 
 # for two variable regression, compare 2 queries, and single reg,
 # take a color arg. for 2 queries, towards and away
@@ -152,11 +153,12 @@ class BayesDB_Simulator:
                               fit_reg=True, n_boot=100,
                               scatter_kws={'alpha': 0.25},
                               robust=False, color=color)
-        rx, ry = reg_plot.get_lines()[0].get_data()
-        r_slope = np.around((ry[1] - ry[0])/(rx[1] - rx[0]), 2)
-        r_yint = np.around(ry[1] - r_slope*rx[1], 3)
+
+        mod = make_LM(nfv2, nfv1)
+        r_yint, r_slope = np.around(mod.params, 2)
         reg_fit = np.around(pearsonr(nfv1,
                                      nfv2)[0], 2)
+        print mod.summary()
         if not math.isnan(ax_lims[0][0]):
             reg_plot.set_xlim(ax_lims[0])
             reg_plot.set_ylim(ax_lims[1])
@@ -386,14 +388,16 @@ def make_regression_plots(x1, y1, x2, y2, labels, colors, lims):
                        n_boot=100,  robust=False,
                        scatter_kws={'alpha': 0.4},
                        color=colors[1])
-    plot1.set_xlabel(labels[0], fontsize=16)
-    plot1.set_ylabel(labels[1], fontsize=16)
-    p1x, p1y = plot1.get_lines()[0].get_data()
-    p2x, p2y = plot2.get_lines()[1].get_data()
-    slope1 = np.around((p1y[1] - p1y[0])/(p1x[1] - p1x[0]), 2)
-    slope2 = np.around((p2y[1] - p2y[0])/(p2x[1] - p2x[0]), 2)
-    yint1 = np.around(p1y[1] - slope1*p1x[1], 2)
-    yint2 = np.around(p2y[1] - slope2*p2x[1], 2)
+   # plot1.set_xlabel(labels[0], fontsize=16)
+   # plot1.set_ylabel(labels[1], fontsize=16)
+
+    mod1 = make_LM(y1, x1)
+    mod2 = make_LM(y2, x2)
+    yint1, slope1 = np.around(mod1.params, 2)
+    yint2, slope2 = np.around(mod2.params, 2)
+    print mod1.summary()
+    print mod2.summary()
+
     coeff1_nanfilt = np.array(
         [c1 for c1 in zip(x1, y1) if np.isfinite(c1).all()])
     coeff2_nanfilt = np.array([c2 for c2 in zip(
@@ -716,43 +720,72 @@ def twod_scatter(data, var1, var2):
     return attended1, attended2, ignored1, ignored2
 
 
-def stim_analyzer(data, para_variable, hittypes, use_inferred, *random_stat):
+def stim_analyzer(data, para_variable, hittypes, use_inferred, at_color, *random_stat):
     colorpal = sb.color_palette("husl", 8)
+    attended_single_hunt = np.nan
+    ignored_single_hunt = []
     attended = []
     ignored = []
-    for ind, (h, val, inf) in enumerate(zip(data["Hunted Or Not"],
-                                            data[para_variable],
-                                            data["Inferred"])):
+    rank = []
+    curr_hunt_id = np.nan
+    h_type = 0
+    for ind, (h, val, inf, h_id) in enumerate(zip(data["Hunted Or Not"],
+                                                  data[para_variable],
+                                                  data["Inferred"],
+                                                  data["Hunt ID"])):
+        if curr_hunt_id != h_id:
+            if h_type in hittypes:
+                curr_rank = len(np.where(
+                    ignored_single_hunt < attended_single_hunt)[0])
+                rank.append(curr_rank)
+                attended.append(attended_single_hunt)
+                ignored += ignored_single_hunt
+            curr_hunt_id = h_id
+            ignored_single_hunt = []
+            h_type = 0
         if math.isnan(val):
             continue
         if h in hittypes:
+            h_type = copy.deepcopy(h)
             if use_inferred:
-                attended.append(val)
+                attended_single_hunt = val
             else:
                 if not inf:
-                    attended.append(val)
+                    attended_single_hunt = val
         if h == 0:
             if use_inferred:
-                ignored.append(val)
+                ignored_single_hunt.append(val)
             else:
                 if not inf:
-                    ignored.append(val)
+                    ignored_single_hunt.append(val)
     ig_and_att = np.array(ignored + attended)
     ig_and_att = ig_and_att[~np.isnan(ig_and_att)]
     ig = np.array(ignored)
     ig = ig_and_att[~np.isnan(ig)]
-
     attended = np.array(attended)
     attended = attended[~np.isnan(attended)]
-#    sb.distplot(ig_and_att, color=colorpal[5])
-    sb.distplot(ig, color=colorpal[5])
-    sb.distplot(attended, color=colorpal[3])
+    fig, ax = pl.subplots(1, 1)
+    if para_variable != "Distance":
+        sb.distplot(np.degrees(ig_and_att),
+                    color=[130/255.0, 130/255.0, 130/255.0], ax=ax)
+        sb.distplot(np.degrees(attended), color=at_color, ax=ax)
+    else:
+        sb.distplot(.0106 * ig_and_att,
+                    color=[130/255.0, 130/255.0, 130/255.0], ax=ax)
+        sb.distplot(.0106 * attended, color=at_color, ax=ax)
+        
     if random_stat != ():
         for i, rs in enumerate(random_stat[0]):
             rs = np.array(rs)
-            sb.distplot(rs, color=colorpal[i])
+            if para_variable != "Distance":
+                sb.distplot(np.degrees(rs),
+                            color=colorpal[0], ax=ax)
+            else:
+                sb.distplot(rs * .0106,
+                            color=colorpal[0], ax=ax)
+
     pl.show()
-    return attended, ig
+    return fig, attended, ig_and_att, rank
     
 # def calc_MI(x, y, bins):
 #     c_xy = np.histogram2d(x, y, bins)[0]
