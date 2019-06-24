@@ -327,26 +327,39 @@ class Marr2Algorithms:
             self.bouts_static = map(lambda para_position:
                                     self.marr2algorithm(para_position, 0),
                                     self.para_positions)
+            self.bouts_static_prevalidation = copy.deepcopy(self.bouts_static)
         if static_or_bayes == 'bayes' or static_or_bayes == ():
             print('in bayes')
             for i in range(model_repetitions):
                 self.bouts_bayes.append(map(lambda para_position:
                                         self.marr2bayes(para_position, 0),
                                         self.para_positions))
-
-    def validate_bayes_model(self, update_static_model):
+  
+    def validate_bayes_model(self, mods, update_static_model, *use_executed):
         slopes, yints = validate_model_transformations(self.prebout_para,
                                                        self.postbout_para)
         if update_static_model:
-            self.static_params = {'az_m': slopes[0],
-                                  'alt_m_pos': slopes[1],
-                                  'alt_m_neg': slopes[2],
-                                  'dist_m': slopes[3],
-                                  'az_b': yints[0],
-                                  'alt_b_pos': yints[1],
-                                  'alt_b_neg': yints[2],
-                                  'dist_b': yints[3]}
-            self.bouts_static_prevalidation = copy.deepcopy(self.bouts_static)
+
+            if use_executed == ():
+                self.static_params = {'az_m': slopes[0],
+                                      'alt_m_pos': slopes[1],
+                                      'alt_m_neg': slopes[2],
+                                      'dist_m': slopes[3],
+                                      'az_b': yints[0],
+                                      'alt_b_pos': yints[1],
+                                      'alt_b_neg': yints[2],
+                                      'dist_b': yints[3]}
+            else:
+                self.static_params = {'az_m': mods[0].params[1],
+                                      'alt_m_pos': mods[1].params[1],
+                                      'alt_m_neg': mods[2].params[1],
+                                      'dist_m': mods[3].params[1],
+                                      'az_b': mods[0].params[0],
+                                      'alt_b_pos': mods[1].params[0],
+                                      'alt_b_neg': mods[2].params[0],
+                                      'dist_b': mods[3].params[0]}
+
+            print self.static_params
             self.bouts_static = map(lambda para_position:
                                     self.marr2algorithm(para_position, 0),
                                     self.para_positions)
@@ -1962,26 +1975,25 @@ def validate_model_transformations(prebout_para, postbout_para):
                    fit_reg=True, n_boot=100,
                    scatter_kws={'alpha': 0.2},
                    robust=False, color=cpal[i], ax=ax[i])
-        rx, ry = ax[i].get_lines()[0].get_data()
-        r_slope = np.around((ry[1] - ry[0])/(rx[1] - rx[0]), 2)
-        slopes.append(r_slope)
-        r_yint = np.around(ry[1] - r_slope*rx[1], 3)
-        yints.append(r_yint)
+
+        mod = make_LM(v2, v1)
+        slopes.append(mod.params[1])
+        yints.append(mod.params[0])
         reg_fit = np.around(pearsonr(v1, v2)[0], 2)
         if pv == 'Para Dist':
             ax[i].set_ylim([0, 1200])
             ax[i].set_xlim([0, 1200])
             ax[i].text(100, 1000, '  ' +
-                       str(r_slope) + 'x + ' + str(
-                           r_yint) + ', ' + '$r^{2}$ = ' + str(reg_fit**2),
+                       str(mod.params[1]) + 'x + ' + str(
+                           mod.params[0]) + ', ' + '$r^{2}$ = ' + str(reg_fit**2),
                        color=cpal[i], fontsize=16)
 
         else:
             ax[i].set_xlim([-2.5, 2.5])
             ax[i].set_ylim([-2.5, 2.5])
             ax[i].text(-2, 2, '  ' +
-                       str(r_slope) + 'x + ' + str(
-                           r_yint) + ', ' + '$r^{2}$ = ' + str(reg_fit**2),
+                       str(mod.params[1]) + 'x + ' + str(
+                           mod.params[0]) + ', ' + '$r^{2}$ = ' + str(reg_fit**2),
                        color=cpal[i], fontsize=16)
     return slopes, yints
 
