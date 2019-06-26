@@ -334,7 +334,9 @@ class Marr2Algorithms:
                 self.bouts_bayes.append(map(lambda para_position:
                                         self.marr2bayes(para_position, 0),
                                         self.para_positions))
-  
+
+    # results from these two choices are almost identical. by default, use
+    # the params of what the model generates randomly. 
     def validate_bayes_model(self, mods, update_static_model, *use_executed):
         slopes, yints = validate_model_transformations(self.prebout_para,
                                                        self.postbout_para)
