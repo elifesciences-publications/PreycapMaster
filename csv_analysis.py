@@ -766,12 +766,14 @@ def stim_analyzer(data, para_variable, hittypes, use_inferred, at_color, *random
     attended = attended[~np.isnan(attended)]
     fig, ax = pl.subplots(1, 1)
     if para_variable != "Distance":
-        sb.distplot(np.degrees(ig_and_att),
-                    color=[130/255.0, 130/255.0, 130/255.0], ax=ax)
+        if random_stat == ():
+            sb.distplot(np.degrees(ig_and_att),
+                        color=[130/255.0, 130/255.0, 130/255.0], ax=ax)
         sb.distplot(np.degrees(attended), color=at_color, ax=ax)
     else:
-        sb.distplot(.0106 * ig_and_att,
-                    color=[130/255.0, 130/255.0, 130/255.0], ax=ax)
+        if random_stat == ():
+           sb.distplot(.0106 * ig_and_att,
+                       color=[130/255.0, 130/255.0, 130/255.0], ax=ax)
         sb.distplot(.0106 * attended, color=at_color, ax=ax)
         
     if random_stat != ():

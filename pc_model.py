@@ -1692,9 +1692,9 @@ def find_refractory_periods(rfo):
 def slice_dataframe_for_regmodels(hunt_db):
     slice_bn_neg = hunt_db['Bout Number'] > 0
     hdb_noneg = hunt_db[slice_bn_neg]
-    slice_action = hdb_noneg['Strike Or Abort'] < 3
+    slice_action = hdb_noneg['Strike Or Abort'] == 3
     action_sliced = hdb_noneg[slice_action]
-    before_rev_slice = action_sliced['Rev Bout Number'] < 4
+    before_rev_slice = action_sliced['Rev Bout Number'] < -4
     return action_sliced[before_rev_slice]
 
 #    return action_sliced
@@ -2138,38 +2138,36 @@ if __name__ == "__main__":
                     {"Model Type": "Ideal", "Real or Sim": "Real",
                      "Spherical Bouts": "Hunt", "Extrapolate Para":True, "Strike CI": .32}]
 
+    modlist_lowci = [{"Model Type": "Multiple Regression Position",
+                      "Real or Sim": "Real"},
+                     {"Model Type": "Multiple Regression Velocity",
+                      "Real or Sim": "Real"}]
+          
+               
+
+    
     # modlist_lowci = [{"Model Type": "Real Coords",
     #                   "Real or Sim": "Real"},
     #                  {"Model Type": "Multiple Regression Position",
     #                   "Real or Sim": "Real"},
     #                  {"Model Type": "Multiple Regression Velocity",
-    #                   "Real or Sim": "Real"}]
-          
-               
-
-    
-    modlist_lowci = [{"Model Type": "Real Coords",
-                      "Real or Sim": "Real"},
-                     {"Model Type": "Multiple Regression Position",
-                      "Real or Sim": "Real"},
-                     {"Model Type": "Multiple Regression Velocity",
-                      "Real or Sim": "Real"},
-                     {"Model Type": "Random", "Real or Sim": "Real",
-                      "Spherical Bouts": "Hunt"},
-                     {"Model Type": "Ideal", "Real or Sim": "Real",
-                      "Spherical Bouts": "Hunt"},
-                     {"Model Type": "Ideal", "Real or Sim": "Real",
-                      "Spherical Bouts": "Hunt", "Extrapolate Para": True}]
+    #                   "Real or Sim": "Real"},
+    #                  {"Model Type": "Random", "Real or Sim": "Real",
+    #                   "Spherical Bouts": "Hunt"},
+    #                  {"Model Type": "Ideal", "Real or Sim": "Real",
+    #                   "Spherical Bouts": "Hunt"},
+    #                  {"Model Type": "Ideal", "Real or Sim": "Real",
+    #                   "Spherical Bouts": "Hunt", "Extrapolate Para": True}]
 
 
 
-                     # {"Model Type": "Ideal", "Real or Sim": "Real",
-                     #  "Spherical Bouts": "Hunt", "Restrict Bout Length": True},
-                     # {"Model Type": "Ideal", "Real or Sim": "Real",
-                     #  "Spherical Bouts": "Hunt", "Extrapolate Para": True},
-                     # {"Model Type": "Ideal", "Real or Sim": "Real",
-                     #  "Spherical Bouts": "Hunt", "Extrapolate Para": True,
-                     #  "Restrict Bout Length": True}]
+    #                  # {"Model Type": "Ideal", "Real or Sim": "Real",
+    #                  #  "Spherical Bouts": "Hunt", "Restrict Bout Length": True},
+    #                  # {"Model Type": "Ideal", "Real or Sim": "Real",
+    #                  #  "Spherical Bouts": "Hunt", "Extrapolate Para": True},
+    #                  # {"Model Type": "Ideal", "Real or Sim": "Real",
+    #                  #  "Spherical Bouts": "Hunt", "Extrapolate Para": True,
+    #                  #  "Restrict Bout Length": True}]
                      
     
 
