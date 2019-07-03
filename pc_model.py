@@ -8,6 +8,7 @@ from astropy.convolution import Gaussian1DKernel, convolve
 from matplotlib.colors import Normalize, ListedColormap
 from matplotlib import pyplot as pl
 from matplotlib import gridspec
+import matplotlib.animation as anim
 import statsmodels.api as sm
 import matplotlib.cm as cm
 import seaborn as sb
@@ -138,7 +139,7 @@ class GLM_Fitter:
 class Abstract_1D_Model:
     
     def __init__(self, termination_boundary, proportion,
-                 transform_type, init_value):
+                 transform_type, init_value, *fixed_noise):
         np.random.seed()
         self.num_steps = []
         self.steps = []
@@ -146,13 +147,21 @@ class Abstract_1D_Model:
         self.proportion = proportion
         self.termination = [-1*termination_boundary,
                             termination_boundary]
-        self.fixed_std = 5
+        self.init_value = init_value
+        if fixed_noise != ():
+            self.fixed_std = fixed_noise[0]
+        else:
+            self.fixed_std = 10
         self.transform_type = transform_type
 
     def transform_loop(self, num_iter):
-        num_steps, steps = self.transform()
-        self.num_steps.append(num_steps)
-        self.steps.append(steps)
+        self.num_steps = []
+        self.steps = []
+        for i in range(num_iter):
+            num_steps, steps = self.transform()
+            self.num_steps.append(num_steps)
+            self.steps.append(steps)
+            
         
     def transform(self):
         stepcounter = 0
@@ -160,28 +169,66 @@ class Abstract_1D_Model:
         self.current_value = self.init_value
         while(True):
             stepcounter += 1
-            if transform_type == 'static':
-                self.curent_value *= self.proportion
-            elif transform_type == 'fixed noise':
+            if self.transform_type == 'static':
+                self.current_value *= self.proportion
+            elif self.transform_type == 'fixed noise':
                 mean_transform = self.proportion * self.current_value
-                std_transform = std
-                self.current_value = np.random.normal(mean_transform,
-                                                      std_transform, 1)
-            elif transform_type == 'prop noise':
+                std_transform = self.fixed_std
+                self.current_value, = np.random.normal(mean_transform,
+                                                       std_transform, 1)
+            elif self.transform_type == 'prop noise':
                 # standard dev is proportional to init value.
                 # fit on DPMM transforms is .36 * val + 7.62
                 # using GLM
                 mean_transform = self.proportion * self.current_value
-                std_transform = .36*self.current_value + 7.62
-                self.current_value = np.random.normal(mean_transform,
-                                                      std_transform, 1)
+                std_transform = .36 * np.abs(self.current_value) + 7.62
+                self.current_value, = np.random.normal(mean_transform,
+                                                       std_transform, 1)
             steps.append(self.current_value)
             if self.termination[0] < self.current_value < self.termination[1]:
                 return stepcounter, steps
             elif stepcounter > 100:
                 return np.nan, steps
 
-    
+    def step_plotter(self):
+
+        print('in step plotter')
+        fig, ax = pl.subplots(1, 1)
+#        self.steps = self.steps[0]
+        steps = self.steps[0]
+        
+  #      for steps in self.steps:
+        ax.set_xlim([-100, 100])
+        ax.set_ylim([-1, 1])
+#        framecount = len(steps)
+        framecount = len(steps)
+        def init():
+            print('setting up graph')
+            plot.set_data([], [])
+            return (plot, )
+        
+        def animate(num):
+            x = steps[num]
+            print x
+            if not math.isnan(x):
+                plot.set_data(x, 0)
+            return (plot, )
+
+        plot, = ax.plot([], [],
+                        color='c',
+                        marker='o',
+                        ms=6)
+        
+        line_ani = anim.FuncAnimation(
+            fig,
+            animate,
+            frames=framecount,
+            init_func=init, 
+            interval=1000,
+            repeat=True, 
+            blit=False)
+     #   pl.cla()
+     
         
 class Marr2Algorithms:
     def __init__(self, para_positions, strike_params, use_likelihood):
