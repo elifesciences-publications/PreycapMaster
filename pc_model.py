@@ -131,7 +131,58 @@ class GLM_Fitter:
                            dist_model_posvel, dist_model_negvel,
                            all_az, all_alt_pos, all_alt_neg, all_dist]
         
+
+
+# add a graphing function using animate. 
+        
+class Abstract_1D_Model:
     
+    def __init__(self, termination_boundary, proportion,
+                 transform_type, init_value):
+        np.random.seed()
+        self.num_steps = []
+        self.steps = []
+        self.current_value = 0
+        self.proportion = proportion
+        self.termination = [-1*termination_boundary,
+                            termination_boundary]
+        self.fixed_std = 5
+        self.transform_type = transform_type
+
+    def transform_loop(self, num_iter):
+        num_steps, steps = self.transform()
+        self.num_steps.append(num_steps)
+        self.steps.append(steps)
+        
+    def transform(self):
+        stepcounter = 0
+        steps = [self.init_value]
+        self.current_value = self.init_value
+        while(True):
+            stepcounter += 1
+            if transform_type == 'static':
+                self.curent_value *= self.proportion
+            elif transform_type == 'fixed noise':
+                mean_transform = self.proportion * self.current_value
+                std_transform = std
+                self.current_value = np.random.normal(mean_transform,
+                                                      std_transform, 1)
+            elif transform_type == 'prop noise':
+                # standard dev is proportional to init value.
+                # fit on DPMM transforms is .36 * val + 7.62
+                # using GLM
+                mean_transform = self.proportion * self.current_value
+                std_transform = .36*self.current_value + 7.62
+                self.current_value = np.random.normal(mean_transform,
+                                                      std_transform, 1)
+            steps.append(self.current_value)
+            if self.termination[0] < self.current_value < self.termination[1]:
+                return stepcounter, steps
+            elif stepcounter > 100:
+                return np.nan, steps
+
+    
+        
 class Marr2Algorithms:
     def __init__(self, para_positions, strike_params, use_likelihood):
         self.para_positions = para_positions
