@@ -162,7 +162,6 @@ class Abstract_1D_Model:
             self.num_steps.append(num_steps)
             self.steps.append(steps)
             
-        
     def transform(self):
         stepcounter = 0
         steps = [self.init_value]
@@ -190,44 +189,47 @@ class Abstract_1D_Model:
             elif stepcounter > 100:
                 return np.nan, steps
 
-    def step_plotter(self):
-
-        print('in step plotter')
-        fig, ax = pl.subplots(1, 1)
-#        self.steps = self.steps[0]
-        steps = self.steps[0]
+    def step_plotter(self, index):
+        steps = self.steps[index]
+        cp = sb.color_palette("inferno", len(steps))
+        fig, ax = pl.subplots(1, 1, figsize=(15, 3))
+        ax.set_xlim([-150, 150])
+        ax.set_ylim([-.1, .1])
+        ax.get_yaxis().set_visible(False)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['bottom'].set_visible(False)
+        ax.spines['left'].set_visible(False)
+        ax.axvspan(self.termination[0],
+                   self.termination[1],
+                   alpha=0.1, zorder=0, color='k')
+        framecount = len(steps) + 1
         
-  #      for steps in self.steps:
-        ax.set_xlim([-100, 100])
-        ax.set_ylim([-1, 1])
-#        framecount = len(steps)
-        framecount = len(steps)
         def init():
             print('setting up graph')
-            plot.set_data([], [])
-            return (plot, )
-        
-        def animate(num):
-            x = steps[num]
-            print x
-            if not math.isnan(x):
-                plot.set_data(x, 0)
+            x_init = np.array([])
+            y_init = np.array([])
+            data = np.hstack((x_init[:, np.newaxis], y_init[:, np.newaxis]))
+            plot.set_offsets(data)
             return (plot, )
 
-        plot, = ax.plot([], [],
-                        color='c',
-                        marker='o',
-                        ms=6)
-        
+        def animate(num):
+            x = np.array(steps[0:num])
+            data = np.hstack((x[:, np.newaxis], np.zeros(len(x))[:, np.newaxis]))
+            plot.set_offsets(data)
+            plot.set_facecolors(cp[:num])
+            return (plot, )
+
+        plot = ax.scatter([], [], s=400)
         line_ani = anim.FuncAnimation(
-            fig,
-            animate,
-            frames=framecount,
-            init_func=init, 
-            interval=1000,
-            repeat=True, 
-            blit=False)
-     #   pl.cla()
+                    fig,
+                    animate,
+                    frames=framecount,
+                    init_func=init, 
+                    interval=1000,
+                    repeat=True, 
+                    blit=False)
+        return line_ani
      
         
 class Marr2Algorithms:
