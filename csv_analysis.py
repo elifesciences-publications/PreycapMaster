@@ -381,12 +381,12 @@ def make_regression_plots(x1, y1, x2, y2, labels, colors, lims):
     plot1 = sb.regplot(np.array(x1),
                        np.array(y1), fit_reg=True,
                        n_boot=100, robust=False,
-                       scatter_kws={'alpha': 0.4},
+                       scatter_kws={'s':16, 'alpha': 0.4},
                        color=colors[0])
     plot2 = sb.regplot(np.array(x2),
                        np.array(y2), fit_reg=True,
                        n_boot=100,  robust=False,
-                       scatter_kws={'alpha': 0.4},
+                       scatter_kws={'s':16, 'alpha': 0.4},
                        color=colors[1])
    # plot1.set_xlabel(labels[0], fontsize=16)
    # plot1.set_ylabel(labels[1], fontsize=16)
@@ -420,8 +420,8 @@ def make_regression_plots(x1, y1, x2, y2, labels, colors, lims):
                    str(slope2) + 'x + ' + str(
                        yint2) + ', ' + '$r^{2}$ = ' + str(coeff2**2),
                    color=colors[1], fontsize=14)
-        plot1.set_xlim([0, 14])
-        plot1.set_ylim([0, 14])
+        plot1.set_xlim([0, 3])
+        plot1.set_ylim([0, 3])
     else:
         plot1.set_xlim([lims[0][0], lims[0][1]])
         plot1.set_ylim([lims[1][0], lims[1][1]])

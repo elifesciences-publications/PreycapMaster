@@ -138,16 +138,17 @@ class GLM_Fitter:
         
 class Abstract_1D_Model:
     
-    def __init__(self, termination_boundary, proportion,
-                 transform_type, init_value, *fixed_noise):
+    def __init__(self, termination_boundaries, proportion, bias,
+                 transform_type, init_value, std_eq, *fixed_noise):
         np.random.seed()
         self.num_steps = []
         self.steps = []
         self.current_value = 0
         self.proportion = proportion
-        self.termination = [-1*termination_boundary,
-                            termination_boundary]
+        self.bias = bias
+        self.termination = termination_boundaries
         self.init_value = init_value
+        self.std_eq = std_eq
         if fixed_noise != ():
             self.fixed_std = fixed_noise[0]
         else:
@@ -170,8 +171,10 @@ class Abstract_1D_Model:
             stepcounter += 1
             if self.transform_type == 'static':
                 self.current_value *= self.proportion
+                self.current_value += self.bias
             elif self.transform_type == 'fixed noise':
-                mean_transform = self.proportion * self.current_value
+                mean_transform = (
+                    self.proportion * self.current_value) + self.bias
                 std_transform = self.fixed_std
                 self.current_value, = np.random.normal(mean_transform,
                                                        std_transform, 1)
@@ -179,21 +182,22 @@ class Abstract_1D_Model:
                 # standard dev is proportional to init value.
                 # fit on DPMM transforms is .36 * val + 7.62
                 # using GLM
-                mean_transform = self.proportion * self.current_value
-                std_transform = .36 * np.abs(self.current_value) + 7.62
+                mean_transform = (self.proportion * self.current_value) + self.bias
+                std_transform = self.std_eq[0] * np.abs(
+                    self.current_value) + self.std_eq[1]
                 self.current_value, = np.random.normal(mean_transform,
                                                        std_transform, 1)
             steps.append(self.current_value)
             if self.termination[0] < self.current_value < self.termination[1]:
                 return stepcounter, steps
             elif stepcounter > 100:
-                return np.nan, steps
+                return 100, steps
 
-    def step_plotter(self, index):
+    def step_plotter(self, index, lims):
         steps = self.steps[index]
         cp = sb.color_palette("inferno", len(steps))
         fig, ax = pl.subplots(1, 1, figsize=(15, 3))
-        ax.set_xlim([-150, 150])
+        ax.set_xlim([lims[0], lims[1]])
         ax.set_ylim([-.1, .1])
         ax.get_yaxis().set_visible(False)
         ax.spines['top'].set_visible(False)
@@ -1792,9 +1796,9 @@ def find_refractory_periods(rfo):
 def slice_dataframe_for_regmodels(hunt_db):
     slice_bn_neg = hunt_db['Bout Number'] > 0
     hdb_noneg = hunt_db[slice_bn_neg]
-    slice_action = hdb_noneg['Strike Or Abort'] == 3
+    slice_action = hdb_noneg['Strike Or Abort'] < 3
     action_sliced = hdb_noneg[slice_action]
-    before_rev_slice = action_sliced['Rev Bout Number'] < -4
+    before_rev_slice = action_sliced['Rev Bout Number'] < 4
     return action_sliced[before_rev_slice]
 
 #    return action_sliced
@@ -1827,14 +1831,15 @@ def strike(p, strike_means, strike_std, confidence_interval):
         prob_az = 1 - prob_az
     if p["Para Alt"] > strike_means[1]:
         prob_alt = 1 - prob_alt
-    # max prob when multiplying all cdfs together is .5**3. normalize.
+    # max prob when multiplying cdfs together is .5**2. normalize so that
+    # center is 100%
     normalize_prob = prob_alt * prob_az * (1 / .25)
     dist = p["Para Dist"]
 #    dist_diff = (strike_means[2] - dist_multiplier*strike_std[2]) - p["Para Dist"]
     # if (strike_means[2] - dist_multiplier*strike_std[2] < dist) and (
     #         strike_means[2] + dist_multiplier*strike_std[2] > dist) and (
     #             normalize_prob > confidence_interval):
-    if (dist < strike_means[2] + dist_multiplier*strike_std[2]) and (
+    if (10 < dist < strike_means[2] + dist_multiplier*strike_std[2]) and (
                 normalize_prob > confidence_interval):
         return True, [prob_az, prob_alt, dist]
     else:
@@ -2238,26 +2243,29 @@ if __name__ == "__main__":
                     {"Model Type": "Ideal", "Real or Sim": "Real",
                      "Spherical Bouts": "Hunt", "Extrapolate Para":True, "Strike CI": .32}]
 
-    modlist_lowci = [{"Model Type": "Multiple Regression Position",
-                      "Real or Sim": "Real"},
-                     {"Model Type": "Multiple Regression Velocity",
-                      "Real or Sim": "Real"}]
+    # modlist_lowci = [{"Model Type": "Multiple Regression Position",
+    #                   "Real or Sim": "Real"},
+    #                  {"Model Type": "Multiple Regression Velocity",
+    #                   "Real or Sim": "Real"}]
+               #      {"Model Type": "Ideal", "Real or Sim": "Real",
+               #      "Spherical Bouts": "Hunt"}]
+
           
                
 
     
-    # modlist_lowci = [{"Model Type": "Real Coords",
-    #                   "Real or Sim": "Real"},
-    #                  {"Model Type": "Multiple Regression Position",
-    #                   "Real or Sim": "Real"},
-    #                  {"Model Type": "Multiple Regression Velocity",
-    #                   "Real or Sim": "Real"},
-    #                  {"Model Type": "Random", "Real or Sim": "Real",
-    #                   "Spherical Bouts": "Hunt"},
-    #                  {"Model Type": "Ideal", "Real or Sim": "Real",
-    #                   "Spherical Bouts": "Hunt"},
-    #                  {"Model Type": "Ideal", "Real or Sim": "Real",
-    #                   "Spherical Bouts": "Hunt", "Extrapolate Para": True}]
+    modlist_lowci = [{"Model Type": "Real Coords",
+                      "Real or Sim": "Real"},
+                     {"Model Type": "Multiple Regression Position",
+                      "Real or Sim": "Real"},
+                     {"Model Type": "Multiple Regression Velocity",
+                      "Real or Sim": "Real"},
+                     {"Model Type": "Random", "Real or Sim": "Real",
+                      "Spherical Bouts": "Hunt"},
+                     {"Model Type": "Ideal", "Real or Sim": "Real",
+                      "Spherical Bouts": "Hunt"},
+                     {"Model Type": "Ideal", "Real or Sim": "Real",
+                      "Spherical Bouts": "Hunt", "Extrapolate Para": True}]
 
 
 
