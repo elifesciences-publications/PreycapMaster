@@ -420,8 +420,8 @@ def make_regression_plots(x1, y1, x2, y2, labels, colors, lims):
                    str(slope2) + 'x + ' + str(
                        yint2) + ', ' + '$r^{2}$ = ' + str(coeff2**2),
                    color=colors[1], fontsize=14)
-        plot1.set_xlim([0, 3])
-        plot1.set_ylim([0, 3])
+        plot1.set_xlim([0, 6.2])
+        plot1.set_ylim([0, 6.2])
     else:
         plot1.set_xlim([lims[0][0], lims[0][1]])
         plot1.set_ylim([lims[1][0], lims[1][1]])

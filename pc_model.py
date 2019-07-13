@@ -222,6 +222,8 @@ class Abstract_1D_Model:
             data = np.hstack((x[:, np.newaxis], np.zeros(len(x))[:, np.newaxis]))
             plot.set_offsets(data)
             plot.set_facecolors(cp[:num])
+            if num == len(steps):
+                fig.savefig('step_plotter.pdf')
             return (plot, )
 
         plot = ax.scatter([], [], s=400)
@@ -233,6 +235,7 @@ class Abstract_1D_Model:
                     interval=1000,
                     repeat=True, 
                     blit=False)
+
         return line_ani
      
         
