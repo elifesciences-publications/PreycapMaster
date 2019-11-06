@@ -79,7 +79,7 @@ class BayesDB_Simulator:
 
     def set_query_params(self, query_expression, conditioner):
         self.query_params['query_expression'] = query_expression
-        self.query_params['conditiopner'] = conditioner
+        self.query_params['conditioner'] = conditioner
 
     def single_hist(self, query_exp, condition, color, *plotargs):
         self.set_query_params(query_exp, condition)
