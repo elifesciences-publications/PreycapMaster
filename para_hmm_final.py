@@ -346,16 +346,9 @@ if __name__ == '__main__':
     para_caller = ParaStateCaller('091418_5', pmm)
     
 
+# TO DO:
 
-        
-# What needs to be done is to not initialize the ParaMarkovModel
-# with a particular fish. only load in all para velocites and spacings.
-# write a function where the model takes in a particular fish directory
-# from there, set the fish specific variables in ParaMarkovModel
-# so you can look at state calls.
+# Make this program more general so that it can take in a probabilistic model of the para. Model could be created using bayesDB and entering acceleration vectors at each line. However, these shouldn't necessarily be correlated. Want to have the option of your explicit markov model and the probabilistic model.
 
-# Make a second class called ParaStateCaller
-# It will be initialized with a directory for a specific fish.
-# will take in the velocities, addresses, and nonnan indices.
-
+# I think its a good idea to get rid of the current para data which lasts only 5 seconds or so and do large chunks where you can get longer trajectories over time. It's very easy to do -- you just get a paramaster object for a given duration. 
 

@@ -2520,23 +2520,76 @@ def rec_velocity_thresh(rec_length, x_pathlen):
     else:
         return False
 
+
+
+def all_stdevs_and_alignment(directories):
+
+    def std_per_bin(preb, post, binrange, invert):
+        distribution_per_bin = []
+        for br in binrange:
+            d1 = br[0]
+            d2 = br[1]
+            if invert:
+                post[preb < 0] *= -1
+                preb[preb < 0] *= -1
+            if np.sum(np.isfinite(preb[preb.between(d1, d2)])) >= 3:
+                std_bound_post = np.nanstd(post[preb.between(d1, d2)])
+            else:
+                std_bound_post = np.nan
+            distribution_per_bin.append(std_bound_post)
+        return distribution_per_bin
     
-def control_stimuli(directories, nonhunt_clusters):
+    all_errors = []
+    num_bouts = []
+    all_az = []
+    all_alt = []
+    all_dist = []
+    az_bins = [(a, a+5) for a in range(0, 40, 5)]
+    alt_bins = [(a, a+5) for a in range(-5, 55, 10)]
+#    alt_bins = [(a, a+5) for a in range(-10, 55, 5)]
+    dist_bins = [(d, d+.25) for d in [.75, 1, 1.25, 1.5, 1.75, 2, 3, 4, 5]]
+    
     for drct in directories:
-        myexp = pickle.load(open(drct + '/master.pkl', 'rb'))
-        myexp.directory = drct
-        myexp.find_hunts(nonhunt_clusters, [])
-        hd = Hunt_Descriptor(drct)
-        for h_ind in range(len(myexp.hunt_wins)):
-            myexp.current_hunt_ind = h_ind
-            myexp.hunt_wins[h_ind] = [myexp.hunt_wins[h_ind][0],
-                                      myexp.hunt_wins[h_ind][0] + 1]
-            myexp.para_during_hunt(h_ind, True, myexp.hunt_wins)
-            myexp.assign_z_wrap(45)
-            hd.update_hunt_data(-1, 0, [0, -1])
-        myexp.exporter()
-        hd.exporter()
-        para_stimuli(myexp, hd, False, True)
+#        exp = pickle.load(open(drct + '/master.pkl', 'rb'))
+  #      x_diffs = np.nanmedian(np.abs(exp.fishdata.x - exp.fishdata.x2))
+ #       all_errors.append(x_diffs)
+        df = pd.read_csv(drct + '/huntingbouts.csv')
+        str_2_or_1 = (df['Strike Or Abort'] < 3) & (df['Bout Number'] > 0)
+        bout_list = [np.isfinite(df[str_2_or_1].iloc[i]).all() for i in range(df[str_2_or_1].shape[0])]
+        num_bouts.append(np.sum(bout_list))
+        prebout_az = np.degrees(df[str_2_or_1]['Para Az'])
+        prebout_alt = np.degrees(df[str_2_or_1]['Para Alt'])
+        prebout_dist = .0106 * df[str_2_or_1]['Para Dist']
+        postbout_az = np.degrees(df[str_2_or_1]['Postbout Para Az'])
+        postbout_alt = np.degrees(df[str_2_or_1]['Postbout Para Alt'])
+        postbout_dist = .0106 * df[str_2_or_1]['Postbout Para Dist']
+        az_std = std_per_bin(prebout_az, postbout_az, az_bins, 1)
+        alt_std = std_per_bin(prebout_alt, postbout_alt, alt_bins, 0)
+        dist_std = std_per_bin(prebout_dist, postbout_dist, dist_bins, 0)
+        all_az.append(az_std)
+        all_alt.append(alt_std)
+        all_dist.append(dist_std)
+
+    return np.array(all_az), np.array(all_alt), np.array(all_dist), all_errors, num_bouts
+        
+    
+    
+# def control_stimuli(directories, nonhunt_clusters):
+#     for drct in directories:
+#         myexp = pickle.load(open(drct + '/master.pkl', 'rb'))
+#         myexp.directory = drct
+#         myexp.find_hunts(nonhunt_clusters, [])
+#         hd = Hunt_Descriptor(drct)
+#         for h_ind in range(len(myexp.hunt_wins)):
+#             myexp.current_hunt_ind = h_ind
+#             myexp.hunt_wins[h_ind] = [myexp.hunt_wins[h_ind][0],
+#                                       myexp.hunt_wins[h_ind][0] + 1]
+#             myexp.para_during_hunt(h_ind, True, myexp.hunt_wins)
+#             myexp.assign_z_wrap(45)
+#             hd.update_hunt_data(-1, 0, [0, -1])
+#         myexp.exporter()
+#         hd.exporter()
+#         para_stimuli(myexp, hd, False, True)
 
         
 def bouts_during_hunt(hunt_ind, exp, plotornot, *subtract_360):
@@ -4049,7 +4102,7 @@ if __name__ == '__main__':
 
     fish_id = '091418_6'
     drct = os.getcwd() + '/' + fish_id
-    import_exp = True
+    import_exp = False
     import_dim = False
     if import_exp:
         myexp = pickle.load(open(drct + '/master.pkl', 'rb'))
@@ -4066,6 +4119,8 @@ if __name__ == '__main__':
         dim = pickle.load(open(os.getcwd() + '/dim_reduce.pkl', 'rb'))
 #     sbouts = myexp.all_spherical_bouts()
 
+
+    test_wik = ['091418_1', '091418_2', '091418_3', '091418_4', '091418_5', '091418_6']
 
     new_wik = ['090418_3', '090418_4', '090418_5', '090418_7',
                '090518_1', '090518_2', '090518_3', '090518_4', '090518_5', '090518_6',
@@ -4090,7 +4145,7 @@ if __name__ == '__main__':
                       '091118_1', '091118_2', '091118_3', '091118_4', '091118_5',
                       '090418_3', '090418_4']
 
-#    exp_generation_and_clustering(['091418_1'], all_varbs_dict,
+#    exp_generation_and_clustering(['091418_1'], all_arbs_dict,
 #                                  bdict_2, flag_dict, True, False)
 
     
