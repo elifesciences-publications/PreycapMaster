@@ -1333,10 +1333,14 @@ def characterize_strikes(hb_data):
 def make_LM(y, x):
     # if type(x) == 'list':
     # else:
+    add_offset = False
     x = sm.add_constant(x)
 #    mod = sm.RLM(y, x, M=sm.robust.norms.HuberT())
     mod = sm.GLM(y, x)
     fit_mod = mod.fit()
+    if add_offset:
+        offset = np.array([fit_mod.params[0] for i in range(len(x))])
+        fit_mod = sm.GLM(y, x, offset=offset).fit()
     return fit_mod
 
 
